@@ -60,7 +60,14 @@ class Database:
             self._conn = None
 
     async def execute(self, sql: str, params: Sequence[Any] = ()) -> int:
-        """Run a statement and return ``lastrowid`` (0 for statements that insert nothing)."""
+        """Run a statement and return ``cursor.lastrowid``.
+
+        SQLite reports the rowid of the most recent successful insert on the
+        connection, so for ``UPDATE``/``DELETE`` (and other non-inserting
+        statements) this is a stale value, not an affected-row count. The result
+        is also coerced with ``or 0``, so "no insert" and "insert with rowid 0"
+        both yield ``0``. Use :meth:`execute_rowcount` for affected-row counts.
+        """
         cursor = await self.conn.execute(sql, params)
         try:
             return cursor.lastrowid or 0
@@ -112,14 +119,27 @@ class Database:
             if version <= current:
                 continue
             log.info("applying migration %s", name)
-            # ``executescript`` commits any open transaction itself, so the version
-            # row is appended to the script to keep both atomic.
-            async with self._tx_lock:
+            await self._apply_migration(version, sql)
+            current = version
+
+    async def _apply_migration(self, version: int, sql: str) -> None:
+        """Apply one migration script and record its version atomically.
+
+        ``executescript`` implicitly commits any open transaction, so the script
+        is wrapped in an explicit ``BEGIN IMMEDIATE`` ... ``COMMIT``. On failure
+        the open transaction is rolled back explicitly so the connection stays
+        usable, and the original error is re-raised.
+        """
+        async with self._tx_lock:
+            try:
                 await self.conn.executescript(
                     f"BEGIN IMMEDIATE;\n{sql}\n"
                     f"INSERT INTO schema_version (version) VALUES ({version});\nCOMMIT;"
                 )
-            current = version
+            except BaseException:
+                if self.conn.in_transaction:
+                    await self.conn.execute("ROLLBACK")
+                raise
 
 
 def _load_migrations() -> list[tuple[int, str, str]]:

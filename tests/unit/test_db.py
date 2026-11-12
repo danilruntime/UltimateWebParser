@@ -56,6 +56,36 @@ async def test_migrate_is_idempotent(db):
     assert row["version"] == 1
 
 
+async def test_failing_migration_rolls_back_and_keeps_connection_usable(db, monkeypatch):
+    import sqlite3
+
+    from uwp.db import database as database_module
+
+    real_load_migrations = database_module._load_migrations
+    bad = (
+        2,
+        "002_bad.sql",
+        (
+            "CREATE TABLE half_applied (id INTEGER PRIMARY KEY);\n"
+            "INSERT INTO no_such_table (x) VALUES (1);\n"
+        ),
+    )
+    monkeypatch.setattr(
+        database_module, "_load_migrations", lambda: [*real_load_migrations(), bad]
+    )
+    with pytest.raises(sqlite3.OperationalError):
+        await db.migrate()
+    assert (await db.fetchone("SELECT 1 AS one"))["one"] == 1
+    assert await db.fetchone("SELECT * FROM schema_version WHERE version = 2") is None
+    assert await db.fetchone(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='half_applied'"
+    ) is None
+    await db.execute(
+        "INSERT INTO admins (telegram_id, added_at) VALUES (?, ?)", (1, "2026-11-13T00:00:00Z")
+    )
+    assert (await db.fetchone("SELECT COUNT(*) AS n FROM admins"))["n"] == 1
+
+
 async def test_migrate_creates_all_tables(db):
     rows = await db.fetchall("SELECT name FROM sqlite_master WHERE type='table'")
     names = {r["name"] for r in rows}
