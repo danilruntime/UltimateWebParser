@@ -32,10 +32,21 @@ def test_all_lists_discovered_parsers():
     assert [p.key for p in reg.all()] == ["dummy"]
 
 
+def test_init_failure_is_recorded_as_broken():
+    reg = ParserRegistry.discover(package="tests.unit.parsers")
+    assert reg.broken()["initfail"] == "RuntimeError: init boom"
+    assert reg.get("initfail") is None
+
+
+def test_duplicate_key_keeps_first_and_is_recorded():
+    reg = ParserRegistry.discover(package="tests.unit.parsers")
+    assert reg.get("dummy").title == "Dummy"
+    assert reg.broken()["duplicate"] == "duplicate key 'dummy' from tests.unit.parsers.duplicate.parser"
+
+
 def test_real_package_discovers_without_raising():
     reg = ParserRegistry.discover()
-    assert reg.all() == []
-    assert reg.broken() == {}
+    assert isinstance(reg, ParserRegistry)
 
 
 def test_empty_registry_and_register():

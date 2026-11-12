@@ -1,4 +1,5 @@
 """Parser contract: the types every site parser implements and receives."""
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -42,7 +43,7 @@ class ParseContext:
     page: Any
     context: Any
     settings: BaseModel
-    log: Any
+    log: logging.Logger
     artifacts_dir: Path
     site: Any
     profile: Any

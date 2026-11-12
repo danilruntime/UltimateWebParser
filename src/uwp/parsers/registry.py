@@ -37,7 +37,14 @@ class ParserRegistry:
                     f"expected exactly one BaseParser subclass, found {len(classes)}"
                 )
                 continue
-            parser = classes[0]()
+            try:
+                parser = classes[0]()
+            except Exception as exc:  # noqa: BLE001 - a failing constructor marks the parser broken
+                registry._broken[name] = f"{type(exc).__name__}: {exc}"
+                continue
+            if parser.key in registry._parsers:
+                registry._broken[name] = f"duplicate key '{parser.key}' from {module.__name__}"
+                continue
             registry._parsers[parser.key] = parser
         return registry
 
