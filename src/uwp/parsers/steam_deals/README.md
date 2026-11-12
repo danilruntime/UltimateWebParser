@@ -1,0 +1,66 @@
+# Steam deals parser (`steam_deals`)
+
+Scrapes discounted games from the Steam store search page
+(`https://store.steampowered.com/search/?specials=1`). Works on a clean
+profile: `requires_login = False`.
+
+## How it works
+
+- `build_search_url(settings, start)` builds one results page URL
+  (`filter`, `specials=1`, `cc=<region>`, `l=<language>`, `start=`).
+- `run(ctx)` walks pages `start = 0, 50, 100, …` up to `max_pages`, loading each
+  with `page.goto(url, wait_until="domcontentloaded")` and `page.content()`.
+  It stops early when a page yields no rows.
+- `parse_search_page(html, settings)` is pure (no browser, no network): it parses
+  `a.search_result_row` cards, skips rows without a discount, applies the
+  discount/price filters and sorts. Unit tests run it against
+  `tests/fixtures/steam_search.html`, a real page captured with `curl`.
+- If the first page yields zero rows (captcha, region block, markup change) the
+  raw HTML is saved as the `empty.html` artifact and the run fails with
+  `ParseError(kind=blocked, message="Steam returned no results (captcha or region block?)")`.
+- `external_key` for dedup is the Steam app id (`app_id`).
+
+## Settings (`SteamSettings`)
+
+| Field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `region` | str | `us` | Store country code (`us`, `ru`, `de`, …) → `cc=` |
+| `language` | str | `english` | Store page language (`english`, `russian`, …) → `l=` |
+| `filter` | `topsellers` / `newreleases` / `specials` | `topsellers` | Steam search filter |
+| `max_pages` | int 1–10 | `2` | How many result pages to walk (50 games each) |
+| `max_price` | float ≥ 0 | `0` | Max final price; `0` = no limit |
+| `min_discount_percent` | int 0–100 | `0` | Minimum discount percent |
+| `sort` | `relevance` / `discount` / `price` | `relevance` | `relevance` keeps Steam order, `discount` sorts by discount desc, `price` by final price asc |
+
+## Columns
+
+| Key | Title | Notes |
+| --- | --- | --- |
+| `app_id` | App ID | First id of `data-ds-appid` (before any comma) |
+| `title` | Название | `.title` |
+| `url` | Ссылка | Canonical `https://store.steampowered.com/app/<app_id>/` (query stripped) |
+| `discount_percent` | Скидка, % | `-75%` → `75` |
+| `price_original` | Цена без скидки | Float parsed from `$19.99` / `4,99€` |
+| `price_final` | Цена со скидкой | Float; falls back to `data-price-final` cents |
+| `currency` | Валюта | ISO code from the price symbol (`$` → USD, `€` → EUR, …) |
+| `review_summary` | Отзывы | First line of `data-tooltip-html` (e.g. `Overwhelmingly Positive`); empty when no reviews |
+| `review_percent` | Положительных, % | From `97% of the 147,599 user reviews`; `None` when absent |
+| `review_count` | Отзывов, шт | Same tooltip; `None` when absent |
+| `release_date` | Дата выхода | `.search_released` as shown by Steam |
+| `platforms` | Платформы | `win mac linux` → `Windows, macOS, Linux` |
+| `image_url` | Обложка | Capsule `img src` |
+
+## Tests
+
+`.venv/bin/python -m pytest tests/unit/test_steam_parser.py -v`
+
+To refresh the fixture:
+
+```bash
+curl -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36" \
+  "https://store.steampowered.com/search/?filter=topsellers&specials=1&cc=us&l=english" \
+  -o tests/fixtures/steam_search.html
+```
+
+The fixture is the source of truth for the unit tests: if Steam changes its
+markup or the deals change, update the expected values together with it.
