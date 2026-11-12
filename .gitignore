@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.egg-info/
+data/
+.env
+.superpowers/
+.worktrees/
+*.xlsx
+.pytest_cache/
+.ruff_cache/
