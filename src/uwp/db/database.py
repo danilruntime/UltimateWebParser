@@ -60,10 +60,18 @@ class Database:
             self._conn = None
 
     async def execute(self, sql: str, params: Sequence[Any] = ()) -> int:
-        """Run a statement and return ``lastrowid``."""
+        """Run a statement and return ``lastrowid`` (0 for statements that insert nothing)."""
         cursor = await self.conn.execute(sql, params)
         try:
             return cursor.lastrowid or 0
+        finally:
+            await cursor.close()
+
+    async def execute_rowcount(self, sql: str, params: Sequence[Any] = ()) -> int:
+        """Run a statement and return the number of affected rows."""
+        cursor = await self.conn.execute(sql, params)
+        try:
+            return cursor.rowcount
         finally:
             await cursor.close()
 

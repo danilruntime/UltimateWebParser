@@ -94,15 +94,11 @@ class ProfilesRepo:
 
     async def lease(self, profile_id: int, until: datetime) -> bool:
         """Lock a free profile until ``until``; ``False`` if it was not free."""
-        cursor = await self.db.conn.execute(
+        changed = await self.db.execute_rowcount(
             "UPDATE profiles SET status = ?, lease_until = ? WHERE id = ? AND status = ?",
             (ProfileStatus.locked.value, to_db(until), profile_id, ProfileStatus.free.value),
         )
-        try:
-            return cursor.rowcount == 1
-        finally:
-            await cursor.close()
-
+        return changed == 1
     async def release(self, profile_id: int) -> None:
         await self.db.execute(
             "UPDATE profiles SET status = ?, lease_until = NULL WHERE id = ?",
