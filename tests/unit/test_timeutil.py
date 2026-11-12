@@ -1,29 +1,29 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from uwp.timeutil import format_local, from_db, to_db, utcnow
 
 
 def test_roundtrip():
-    dt = datetime(2026, 11, 13, 1, 20, 5, tzinfo=timezone.utc)
+    dt = datetime(2026, 11, 13, 1, 20, 5, tzinfo=UTC)
     assert to_db(dt) == "2026-11-13T01:20:05Z"
     assert from_db(to_db(dt)) == dt
 
 
 def test_format_local_moscow():
-    dt = datetime(2026, 11, 12, 22, 20, tzinfo=timezone.utc)
+    dt = datetime(2026, 11, 12, 22, 20, tzinfo=UTC)
     assert format_local(dt, "Europe/Moscow") == "13.11.2026 01:20"
 
 
 def test_utcnow_is_aware_utc():
     now = utcnow()
-    assert now.tzinfo is timezone.utc
+    assert now.tzinfo is UTC
 
 
 def test_to_db_converts_aware_datetime_to_utc():
-    dt = datetime(2026, 11, 13, 4, 20, 5, tzinfo=timezone.utc)
+    dt = datetime(2026, 11, 13, 4, 20, 5, tzinfo=UTC)
     assert to_db(dt) == "2026-11-13T04:20:05Z"
 
 
 def test_from_db_returns_utc():
     dt = from_db("2026-11-13T01:20:05Z")
-    assert dt.tzinfo is timezone.utc
+    assert dt.tzinfo is UTC

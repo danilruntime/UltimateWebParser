@@ -5,6 +5,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from uwp.timeutil import utcnow
+
 
 class ProfileKind(StrEnum):
     clean = "clean"
@@ -69,6 +71,9 @@ class VncStatus(StrEnum):
 class _Model(BaseModel):
     model_config = ConfigDict(use_enum_values=False)
 
+    # ``id`` is ``None`` for rows that have not been inserted yet; repositories fill it
+    # from the SQLite autoincrement on insert.
+
 
 class Proxy(_Model):
     id: int | None = None
@@ -86,6 +91,7 @@ class Profile(_Model):
     name: str
     kind: ProfileKind
     seed: int
+    # Open sets: the spec defines no closed enum for platform/brand/brand_version.
     platform: str
     brand: str
     brand_version: str
@@ -140,14 +146,14 @@ class Job(_Model):
     heartbeat_at: datetime | None = None
     not_before: datetime | None = None
     error: str | None = None
-    created_at: datetime
+    created_at: datetime = Field(default_factory=utcnow)
 
 
 class Run(_Model):
     id: int | None = None
     job_id: int
     site_id: int
-    started_at: datetime
+    started_at: datetime = Field(default_factory=utcnow)
     finished_at: datetime | None = None
     status: RunStatus
     rows_count: int = 0
@@ -165,17 +171,18 @@ class Item(_Model):
     site_id: int
     external_key: str
     payload: dict[str, Any]
-    first_seen_at: datetime
-    last_seen_at: datetime
+    first_seen_at: datetime = Field(default_factory=utcnow)
+    last_seen_at: datetime = Field(default_factory=utcnow)
 
 
 class Event(_Model):
     id: int | None = None
+    # Open set: event kinds are free-form strings, not a closed enum in the spec.
     kind: str
     site_id: int | None = None
     run_id: int | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime
+    created_at: datetime = Field(default_factory=utcnow)
 
 
 class VncSession(_Model):
@@ -186,6 +193,8 @@ class VncSession(_Model):
     password: str
     token: str
     status: VncStatus
-    started_at: datetime
+    started_at: datetime = Field(default_factory=utcnow)
     expires_at: datetime
     started_by: int | None = None
+    # Updated from the websockify connection count; ``None`` means "no idle stop".
+    last_client_at: datetime | None = None

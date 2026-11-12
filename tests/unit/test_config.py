@@ -53,8 +53,8 @@ def test_explicit_env_overrides_defaults(tmp_path):
     assert s.secret_key == "k" * 32
 
 
-def test_browser_constraints():
-    s = Settings()
+def test_browser_constraints(tmp_path):
+    s = load_settings({"UWP_DATA_DIR": str(tmp_path)})
     assert s.browser_version == "150.0.7871.186"
     assert s.browser_sha256 == (
         "48eff860053efd9ad498d51370f0a1f59f983df39c02a72ad2a8682cdead4055"

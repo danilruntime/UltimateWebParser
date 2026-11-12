@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -22,8 +22,9 @@ from uwp.domain import (
     VncSession,
     VncStatus,
 )
+from uwp.timeutil import utcnow
 
-NOW = datetime(2026, 11, 13, 1, 20, tzinfo=timezone.utc)
+NOW = datetime(2026, 11, 13, 1, 20, tzinfo=UTC)
 
 
 def test_site_rejects_interval_min_greater_than_max():
@@ -145,3 +146,31 @@ def test_vnc_session_defaults():
                    status=VncStatus.requested, started_at=NOW, expires_at=NOW)
     assert v.id is None
     assert v.started_by is None
+    assert v.last_client_at is None
+
+
+def test_vnc_session_accepts_last_client_at():
+    v = VncSession(profile_id=1, port=6000, display=100, password="pw", token="tok",
+                   status=VncStatus.running, expires_at=NOW, last_client_at=NOW)
+    assert v.last_client_at == NOW
+
+
+def test_pre_insert_timestamps_default_to_utc_now():
+    before = utcnow()
+    j = Job(id=1, site_id=1, kind=JobKind.scheduled, status=JobStatus.running)
+    r = Run(job_id=1, site_id=1, status=RunStatus.ok)
+    i = Item(site_id=1, external_key="app/1", payload={})
+    e = Event(kind="run_finished")
+    v = VncSession(profile_id=1, port=6000, display=100, password="pw", token="tok",
+                   status=VncStatus.running, expires_at=NOW)
+    after = utcnow()
+    for dt in (j.created_at, r.started_at, i.first_seen_at, i.last_seen_at,
+               e.created_at, v.started_at):
+        assert dt.tzinfo is UTC
+        assert before <= dt <= after
+
+
+def test_pre_insert_timestamps_are_not_shared():
+    a = Job(site_id=1, kind=JobKind.scheduled, status=JobStatus.queued)
+    b = Job(site_id=1, kind=JobKind.scheduled, status=JobStatus.queued)
+    assert a.created_at is not b.created_at
