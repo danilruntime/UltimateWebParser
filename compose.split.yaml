@@ -6,7 +6,6 @@ services:
     image: ultimate-web-parser:latest
     container_name: uwp-bot
     command: ["bot"]
-    init: true
     restart: unless-stopped
     env_file:
       # Optional: ``docker compose up`` works with plain ``-e`` flags too.
@@ -33,7 +32,6 @@ services:
     image: ultimate-web-parser:latest
     container_name: uwp-worker
     command: ["worker"]
-    init: true
     restart: unless-stopped
     env_file:
       # Optional: ``docker compose up`` works with plain ``-e`` flags too.

@@ -114,3 +114,14 @@ def test_only_the_bot_process_needs_the_proxy_in_split_mode():
     services = text.split("services:", 1)[1]
     assert "bot:" in services
     assert "worker:" not in services
+
+
+def test_compose_does_not_nest_tini_twice():
+    """The image ENTRYPOINT already runs tini; `init: true` adds a second one.
+
+    The old combination printed a TINI_SUBREAPER warning on every start, before
+    any application line.
+    """
+    for name in ("compose.yaml", "compose.split.yaml"):
+        text = (ROOT / name).read_text(encoding="utf-8")
+        assert "init: true" not in text
