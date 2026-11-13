@@ -41,6 +41,13 @@ class ItemsRepo:
         )
         return None if row is None else json.loads(row["payload"])
 
+    async def keys(self, site_id: int) -> set[str]:
+        """Every ``external_key`` already stored for the site."""
+        rows = await self.db.fetchall(
+            "SELECT external_key FROM items WHERE site_id = ?", (site_id,)
+        )
+        return {row["external_key"] for row in rows}
+
     async def count(self, site_id: int) -> int:
         row = await self.db.fetchone(
             "SELECT COUNT(*) AS n FROM items WHERE site_id = ?", (site_id,)

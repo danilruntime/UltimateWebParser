@@ -40,6 +40,7 @@ class JobStatus(StrEnum):
 
 
 class RunStatus(StrEnum):
+    running = "running"
     ok = "ok"
     partial = "partial"
     failed = "failed"

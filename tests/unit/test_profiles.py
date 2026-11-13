@@ -13,6 +13,7 @@ from uwp.profiles import (
     MACHINE_PROFILES,
     ProfileManager,
     browser_flags,
+    identity_from_seed,
     random_identity,
 )
 from uwp.timeutil import utcnow
@@ -76,6 +77,16 @@ def test_identity_country_filter_falls_back_to_full_list():
 
 def test_identity_is_deterministic_for_a_seed():
     assert random_identity(random.Random(3)) == random_identity(random.Random(3))
+
+
+def test_identity_from_seed_keeps_seed_and_is_stable():
+    for i in range(20):
+        original = random_identity(random.Random(i))
+        rebuilt = identity_from_seed(original.seed)
+        assert rebuilt.seed == original.seed
+        assert rebuilt == identity_from_seed(original.seed)
+        assert rebuilt.timezone in TIMEZONES
+        assert rebuilt.locale.split("-")[0] in rebuilt.accept_lang
 
 
 def test_browser_flags_contain_fingerprint_and_proxy(tmp_path):

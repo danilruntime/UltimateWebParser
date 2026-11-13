@@ -126,6 +126,27 @@ def random_identity(rng: random.Random | None = None, country: str | None = None
     )
 
 
+def identity_from_seed(seed: int) -> Identity:
+    """Rebuild the identity of a stored profile from its seed.
+
+    The seed is the fingerprint seed, so it is kept as is; the machine fields
+    are drawn from a generator seeded with it, which makes them stable across
+    runs of a persistent profile.
+    """
+    rng = random.Random(seed)
+    chosen = rng.choices(MACHINE_PROFILES, weights=[p["weight"] for p in MACHINE_PROFILES], k=1)[0]
+    return Identity(
+        seed=seed,
+        platform=chosen["platform"],
+        brand=chosen["brand"],
+        brand_version=chosen["brand_version"],
+        timezone=chosen["timezone"],
+        locale=chosen["locale"],
+        accept_lang=chosen["accept_lang"],
+        viewport=tuple(chosen["viewport"]),
+    )
+
+
 def browser_flags(
     identity: Identity,
     user_data_dir: Path,

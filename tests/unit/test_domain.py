@@ -82,7 +82,7 @@ def test_enum_values():
     assert [e.value for e in ProxyScheme] == ["http", "https", "socks5"]
     assert [e.value for e in JobKind] == ["scheduled", "manual"]
     assert [e.value for e in JobStatus] == ["queued", "running", "done", "failed", "canceled"]
-    assert [e.value for e in RunStatus] == ["ok", "partial", "failed", "canceled"]
+    assert [e.value for e in RunStatus] == ["running", "ok", "partial", "failed", "canceled"]
     assert [e.value for e in ErrorKind] == [
         "login_required", "blocked", "transient", "parser_error", "config_error"
     ]
