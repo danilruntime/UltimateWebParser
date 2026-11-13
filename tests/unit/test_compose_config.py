@@ -57,6 +57,9 @@ def test_entrypoint_execs_the_cli():
     assert "set -e" in text
     assert "setpriv" in text
     assert "chown -R" in text
+    # An existing but unwritable volume must fail with a hint, not with
+    # sqlite's "unable to open database file" traceback.
+    assert "is not writable by uid" in text
 
 
 def test_env_example_lists_the_required_variables():

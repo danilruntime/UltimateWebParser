@@ -43,9 +43,20 @@ fi
 
 prepare_data_dir 2>/dev/null || {
     echo "uwp: cannot create directories in $DATA_DIR (uid $(id -u))" >&2
-    echo "uwp: on the host run: mkdir -p data && sudo chown -R 1000:1000 data" >&2
+    echo "uwp: on the host run: mkdir -p data && sudo chown -R $UWP_UID:$UWP_GID data" >&2
     exit 2
 }
+
+# The directories may exist and still be unwritable (a host `chmod 555`, or a
+# volume owned by a different uid). Probe before the CLI does: otherwise the
+# first symptom is sqlite's "unable to open database file" traceback.
+probe="$DATA_DIR/.uwp-write-test"
+if ! ( : > "$probe" ) 2>/dev/null; then
+    echo "uwp: $DATA_DIR is not writable by uid $(id -u)" >&2
+    echo "uwp: on the host run: sudo chown -R $UWP_UID:$UWP_GID data" >&2
+    exit 2
+fi
+rm -f "$probe"
 
 # XDG dirs keep Chromium's cache inside the writable volume.
 export HOME="${HOME:-/home/uwp}"
