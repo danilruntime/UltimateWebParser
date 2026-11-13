@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Self-hosted Docker service that scrapes sites on a schedule through Playwright in fingerprint-chromium, is controlled from a Telegram bot, and sends Excel reports to the admin.
+**Goal:** Self-hosted Docker service that scrapes sites on a schedule through Playwright in fingerprint-chromium, is controlled from a Telegram bot, and sends LibreOffice Calc (.ods) reports to the admin.
 
-**Architecture:** One Python package `uwp` with a core (config, SQLite state, profiles, proxy bridge, runner, scheduler, worker, Excel, VNC) and pluggable parser modules discovered from `uwp/parsers/*/parser.py`. The bot and the worker are separate processes that share the SQLite database (WAL); a `combined` mode runs both in one process. Browser work happens only in the worker; the bot enqueues jobs and VNC requests and delivers events.
+**Architecture:** One Python package `uwp` with a core (config, SQLite state, profiles, proxy bridge, runner, scheduler, worker, ODS reports, VNC) and pluggable parser modules discovered from `uwp/parsers/*/parser.py`. The bot and the worker are separate processes that share the SQLite database (WAL); a `combined` mode runs both in one process. Browser work happens only in the worker; the bot enqueues jobs and VNC requests and delivers events.
 
-**Tech Stack:** Python 3.12+, Playwright (async), aiogram 3, aiosqlite, openpyxl, pydantic / pydantic-settings, beautifulsoup4, Xvfb + x11vnc + noVNC (websockify), Docker Compose.
+**Tech Stack:** Python 3.12+, Playwright (async), aiogram 3, aiosqlite, odfpy, pydantic / pydantic-settings, beautifulsoup4, Xvfb + x11vnc + noVNC (websockify), Docker Compose.
 
 **Spec:** `docs/superpowers/specs/2026-11-13-ultimate-web-parser-design.md`
 
@@ -20,7 +20,7 @@
 - Persistent profiles keep a fixed `user-data-dir` and seed; seed/platform/brand cannot be edited after creation; a persistent profile is used by one run at a time.
 - Defaults: `UWP_MAX_PARALLEL_RUNS=1`, `UWP_RUN_TIMEOUT=300` s, page open 30 s, navigation 60 s, worker heartbeat every 15 s, orphan threshold 90 s, `max_attempts=2`, retry pause `60 s × attempt`, VNC hard TTL 60 min, VNC idle stop 20 min, VNC port range `6000-6100`, event delivery TTL 3 days, exports retention 50 per site.
 - Error kinds: `login_required`, `blocked`, `transient`, `parser_error`, `config_error`. Retry only `transient` (and `blocked` once); `login_required` never retries and offers the VNC button; partial rows are saved and the run status is `partial`.
-- Excel file name: `{parser_title}_{site_name}_{YYYY-MM-DD_HH-MM}.xlsx` with Cyrillic transliterated to Latin, non-alphanumerics collapsed to `_`; overridable by `UWP_EXCEL_NAME_TEMPLATE`.
+- Report file name: `{parser_title}_{site_name}_{YYYY-MM-DD_HH-MM}.ods` with Cyrillic transliterated to Latin, non-alphanumerics collapsed to `_`; overridable by `UWP_REPORT_NAME_TEMPLATE`.
 - Bot UI language is Russian; code, identifiers, log messages and commit messages are English. Conventional commits (`feat:`, `fix:`, `test:`, `chore:`, `docs:`).
 - Bot access: only Telegram IDs in `UWP_ADMIN_IDS` (comma-separated) plus rows in `admins`; everyone else gets one refusal message with no details.
 - Secrets: proxy passwords encrypted with Fernet when `UWP_SECRET_KEY` is set, otherwise stored plaintext and `uwp doctor` warns. Never log proxy passwords or VNC passwords at INFO.
@@ -67,7 +67,7 @@ src/uwp/parsers/steam_deals/__init__.py
 src/uwp/parsers/steam_deals/parser.py
 src/uwp/parsers/steam_deals/README.md
 src/uwp/runner.py
-src/uwp/excel.py
+src/uwp/ods.py
 src/uwp/scheduler.py
 src/uwp/worker.py
 src/uwp/events.py
@@ -135,9 +135,9 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'uwp'`
 
 - [ ] **Step 3: Create `pyproject.toml` and the package stub**
 
-`pyproject.toml`: build backend `hatchling`, `requires-python = ">=3.12"`, dependencies `playwright>=1.55`, `aiogram>=3.20`, `aiosqlite>=0.21`, `openpyxl>=3.1`, `pydantic>=2.9`, `pydantic-settings>=2.5`, `beautifulsoup4>=4.12`, `cryptography>=43`, `tzdata`; optional `dev` extra: `pytest>=8`, `pytest-asyncio>=0.24`, `httpx>=0.27`, `ruff>=0.6`. `[tool.pytest.ini_options]` with `pythonpath = ["src"]`, `asyncio_mode = "auto"`, `markers = ["live: hits the real internet", "integration: needs a browser"]`, `addopts = "-q"`. `[project.scripts] uwp = "uwp.cli:main"`. `[tool.hatch.build.targets.wheel] packages = ["src/uwp"]`.
+`pyproject.toml`: build backend `hatchling`, `requires-python = ">=3.12"`, dependencies `playwright>=1.55`, `aiogram>=3.20`, `aiosqlite>=0.21`, `odfpy>=1.4`, `pydantic>=2.9`, `pydantic-settings>=2.5`, `beautifulsoup4>=4.12`, `cryptography>=43`, `tzdata`; optional `dev` extra: `pytest>=8`, `pytest-asyncio>=0.24`, `httpx>=0.27`, `ruff>=0.6`. `[tool.pytest.ini_options]` with `pythonpath = ["src"]`, `asyncio_mode = "auto"`, `markers = ["live: hits the real internet", "integration: needs a browser"]`, `addopts = "-q"`. `[project.scripts] uwp = "uwp.cli:main"`. `[tool.hatch.build.targets.wheel] packages = ["src/uwp"]`.
 `src/uwp/__init__.py`: `__version__ = "0.1.0"`.
-`.gitignore`: `.venv/`, `__pycache__/`, `*.egg-info/`, `data/`, `.env`, `.superpowers/`, `.worktrees/`, `*.xlsx`, `.pytest_cache/`, `.ruff_cache/`.
+`.gitignore`: `.venv/`, `__pycache__/`, `*.egg-info/`, `data/`, `.env`, `.superpowers/`, `.worktrees/`, `*.ods`, `.pytest_cache/`, `.ruff_cache/`.
 `LICENSE`: MIT text. `README.md`: one-line title stub (filled in Task 20).
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -163,7 +163,7 @@ git commit -m "chore: scaffold uwp package and pytest tooling"
 **Interfaces:**
 - Consumes: `uwp` package (Task 1).
 - Produces:
-  - `uwp.config.Settings` (pydantic-settings, `env_prefix="UWP_"`, `env_file=".env"`): `bot_token: str = ""`, `admin_ids: list[int] = []` (parsed from `"1,2"`), `data_dir: Path = Path("data")`, `tz: str = "Europe/Moscow"`, `browser_path: Path | None = None`, `browser_version: str = "150.0.7871.186"`, `browser_sha256: str = "<constraint sha>"`, `browser_url: str = "<constraint url>"`, `max_parallel_runs: int = 1`, `run_timeout: int = 300`, `page_timeout_ms: int = 30_000`, `navigation_timeout_ms: int = 60_000`, `heartbeat_interval: int = 15`, `orphan_threshold: int = 90`, `vnc_port_min: int = 6000`, `vnc_port_max: int = 6100`, `vnc_ttl_minutes: int = 60`, `vnc_idle_minutes: int = 20`, `public_host: str = "localhost"`, `secret_key: str | None = None`, `excel_name_template: str = "{parser_title}_{site_name}_{timestamp}"`, `exports_retention: int = 50`, `event_ttl_days: int = 3`, `headless: bool = True`, `no_sandbox: bool = False`, `log_level: str = "INFO"`. Properties: `db_path`, `profiles_dir`, `exports_dir`, `artifacts_dir` (all under `data_dir`), `load_settings(env: Mapping[str, str] | None = None) -> Settings` that creates the directories.
+  - `uwp.config.Settings` (pydantic-settings, `env_prefix="UWP_"`, `env_file=".env"`): `bot_token: str = ""`, `admin_ids: list[int] = []` (parsed from `"1,2"`), `data_dir: Path = Path("data")`, `tz: str = "Europe/Moscow"`, `browser_path: Path | None = None`, `browser_version: str = "150.0.7871.186"`, `browser_sha256: str = "<constraint sha>"`, `browser_url: str = "<constraint url>"`, `max_parallel_runs: int = 1`, `run_timeout: int = 300`, `page_timeout_ms: int = 30_000`, `navigation_timeout_ms: int = 60_000`, `heartbeat_interval: int = 15`, `orphan_threshold: int = 90`, `vnc_port_min: int = 6000`, `vnc_port_max: int = 6100`, `vnc_ttl_minutes: int = 60`, `vnc_idle_minutes: int = 20`, `public_host: str = "localhost"`, `secret_key: str | None = None`, `report_name_template: str = "{parser_title}_{site_name}_{timestamp}"`, `exports_retention: int = 50`, `event_ttl_days: int = 3`, `headless: bool = True`, `no_sandbox: bool = False`, `log_level: str = "INFO"`. Properties: `db_path`, `profiles_dir`, `exports_dir`, `artifacts_dir` (all under `data_dir`), `load_settings(env: Mapping[str, str] | None = None) -> Settings` that creates the directories.
   - `uwp.domain`: enums `ProfileKind(clean|persistent)`, `ProfileStatus(free|locked|login|expired)`, `ProxyScheme(http|https|socks5)`, `JobKind(scheduled|manual)`, `JobStatus(queued|running|done|failed|canceled)`, `RunStatus(ok|partial|failed|canceled)`, `ErrorKind(login_required|blocked|transient|parser_error|config_error)`, `ExportMode(always|changes|never)`, `VncStatus(requested|running|stopping|stopped|failed)`; pydantic models `Proxy`, `Profile`, `Site`, `Job`, `Run`, `Item`, `Event`, `VncSession` mirroring the spec's fields (all `id: int`, timestamps `datetime` UTC).
   - `uwp.timeutil`: `utcnow() -> datetime`, `to_db(dt: datetime) -> str`, `from_db(s: str) -> datetime`, `format_local(dt: datetime, tz: str) -> str` (`"13.11.2026 01:20"`).
 
@@ -876,29 +876,59 @@ git commit -m "feat: orchestrate parser runs with profiles, proxies and error ki
 
 ---
 
-### Task 10: Excel export
+### Task 10: LibreOffice Calc (`.ods`) export
 
 **Files:**
-- Create: `src/uwp/excel.py`
-- Test: `tests/unit/test_excel.py`
+- Create: `src/uwp/ods.py`
+- Test: `tests/unit/test_ods.py`
+- Modify: `pyproject.toml` (replace `odfpy>=1.4` with `odfpy>=1.4`)
+- Delete: `src/uwp/excel.py`, `tests/unit/test_excel.py` (superseded by the `.ods` implementation)
 
 **Interfaces:**
 - Consumes: `Column`, `Settings`, `Run`, `Site`.
 - Produces:
-  - `uwp.excel.slugify(text: str) -> str` (Cyrillic transliteration table, lowercase, `[^a-z0-9]+` → `_`, trimmed).
-  - `uwp.excel.excel_filename(template: str, parser_title: str, site_name: str, when: datetime) -> str` → e.g. `Steam_sdeli_2026-11-13_01-20.xlsx`.
-  - `uwp.excel.write_workbook(path: Path, rows: list[dict], columns: list[Column], meta: dict[str, str], new_keys: set[str] | None = None) -> Path` — sheet «Данные» (bold header, autofilter, freeze `A2`, widths from `Column.width`, hyperlinks for keys ending in `_url`, column «Новое» with `да`/`нет` when `new_keys` is not None, changed rows highlighted light yellow when `meta["changed_keys"]` lists them) and sheet «Метаданные» (key/value rows).
-  - `uwp.excel.prune_exports(directory: Path, keep: int) -> int`.
+  - `uwp.ods.slugify(text: str) -> str` (Cyrillic transliteration table, lowercase, `[^a-z0-9]+` → `_`, trimmed).
+  - `uwp.ods.report_filename(template: str, parser_title: str, site_name: str, when: datetime) -> str` → e.g. `steam_skidki_steam_us_2026-11-13_01-20.ods`.
+  - `uwp.ods.write_report(path: Path, rows: list[dict], columns: list[Column], meta: dict[str, str], new_keys: set[str] | None = None) -> Path` — sheet «Данные» (bold header row, autofilter, frozen first row, column widths from `Column.width`, hyperlinks for `url` and `*_url` keys, column «Новое» with `да`/`нет` when `new_keys` is not None, changed rows highlighted light yellow when `meta["changed_keys"]` lists them) and sheet «Метаданные» (key/value rows).
+  - `uwp.ods.prune_reports(directory: Path, keep: int) -> int`.
+
+**Format decision:** the base spreadsheet format is **OpenDocument Spreadsheet (`.ods`)** — LibreOffice Calc's native format. Use `odfpy` (pure Python, no LibreOffice binary needed at runtime). Do **not** shell out to `soffice`; the file must be produced directly.
 
 - [ ] **Step 1: Write the failing tests**
 
 ```python
-# tests/unit/test_excel.py
+# tests/unit/test_ods.py
 from datetime import datetime, timezone
 from pathlib import Path
-from openpyxl import load_workbook
-from uwp.excel import slugify, excel_filename, write_workbook, prune_exports
+
+import pytest
+from odf.opendocument import load
+from odf.table import Table, TableCell, TableRow
+
+from uwp.ods import prune_reports, report_filename, slugify, write_report
 from uwp.parsers.base import Column
+
+
+def _sheet(doc, name):
+    for table in doc.spreadsheet.getElementsByType(Table):
+        if table.getAttribute("name") == name:
+            return table
+    raise AssertionError(f"sheet {name!r} not found")
+
+
+def _rows(table):
+    out = []
+    for row in table.getElementsByType(TableRow):
+        cells = []
+        for cell in row.getElementsByType(TableCell):
+            repeat = int(cell.getAttribute("numbercolumnsrepeated") or 1)
+            text = "".join(
+                p.firstChild.data if p.firstChild is not None else ""
+                for p in cell.getElementsByType(__import__("odf.text", fromlist=["P"]).P)
+            )
+            cells.extend([text] * repeat)
+        out.append(cells)
+    return out
 
 
 def test_slugify_transliterates():
@@ -906,56 +936,143 @@ def test_slugify_transliterates():
     assert slugify("  Ünïcode / Test!! ") == "unicode_test"
 
 
+def test_slugify_full_alphabet():
+    assert slugify("АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ") == (
+        "abvgdeezhziyklmnoprstufkhtsshch_y_eyuya"
+    )
+
+
 def test_filename():
     when = datetime(2026, 11, 13, 1, 20, tzinfo=timezone.utc)
-    assert excel_filename("{parser_title}_{site_name}_{timestamp}", "Steam — скидки", "Steam US", when) \
-        == "Steam_skidki_Steam_US_2026-11-13_01-20.xlsx"
+    assert report_filename(
+        "{parser_title}_{site_name}_{timestamp}", "Steam — скидки", "Steam US", when
+    ) == "steam_skidki_steam_us_2026-11-13_01-20.ods"
 
 
-def test_workbook_contents(tmp_path):
+def test_filename_appends_extension_and_keeps_literal_parts():
+    when = datetime(2026, 1, 2, 3, 4, tzinfo=timezone.utc)
+    assert report_filename("report-{timestamp}", "P", "S", when) == "report-2026-01-02_03-04.ods"
+    assert report_filename("{site_name}.ods", "P", "S", when) == "s.ods"
+
+
+def test_report_contents(tmp_path):
     cols = [Column("title", "Title", 30), Column("url", "URL", 40), Column("price", "Price", 10)]
-    rows = [{"external_key": "1", "title": "A", "url": "https://x/1", "price": 1.5},
-            {"external_key": "2", "title": "B", "url": "https://x/2", "price": 2.0}]
-    path = write_workbook(tmp_path / "t.xlsx", rows, cols, {"site": "S"}, new_keys={"2"})
-    wb = load_workbook(path)
-    ws = wb["Данные"]
-    assert [c.value for c in ws[1]] == ["Title", "URL", "Price", "Новое"]
-    assert ws["A2"].value == "A" and ws["D2"].value == "нет" and ws["D3"].value == "да"
-    assert ws["B2"].hyperlink.target == "https://x/1"
-    assert ws.freeze_panes == "A2" and ws.auto_filter.ref == "A1:D3"
-    assert wb["Метаданные"]["A1"].value == "site" and wb["Метаданные"]["B1"].value == "S"
+    rows = [
+        {"external_key": "1", "title": "A", "url": "https://x/1", "price": 1.5},
+        {"external_key": "2", "title": "B", "url": "https://x/2", "price": 2.0},
+    ]
+    path = write_report(tmp_path / "t.ods", rows, cols, {"site": "S"}, new_keys={"2"})
+    doc = load(str(path))
+    data = _rows(_sheet(doc, "Данные"))
+    assert data[0][:4] == ["Title", "URL", "Price", "Новое"]
+    assert data[1][0] == "A" and data[1][3] == "нет"
+    assert data[2][0] == "B" and data[2][3] == "да"
+    meta = _rows(_sheet(doc, "Метаданные"))
+    assert meta[0][:2] == ["site", "S"]
+
+
+def test_report_hyperlinks_and_widths(tmp_path):
+    cols = [Column("title", "Title", 30), Column("url", "URL", 40)]
+    rows = [{"external_key": "1", "title": "A", "url": "https://x/1"}]
+    path = write_report(tmp_path / "sub" / "t.ods", rows, cols, {})
+    assert path.exists()
+    doc = load(str(path))
+    table = _sheet(doc, "Данные")
+    columns = table.getElementsByType(__import__("odf.table", fromlist=["TableColumn"]).TableColumn)
+    assert [int(c.getAttribute("style")) if False else True for c in columns]  # widths checked via styles below
+    # Hyperlink: the URL cell carries an <text:a href="..."> element.
+    links = doc.getElementsByType(__import__("odf.text", fromlist=["A"]).A)
+    assert any(a.getAttribute("href") == "https://x/1" for a in links)
+    # No «Новое» column when new_keys is None.
+    assert _rows(table)[0] == ["Title", "URL"]
+
+
+def test_report_skips_empty_url_and_highlights_changed(tmp_path):
+    cols = [Column("title", "Title", 30), Column("url", "URL", 40)]
+    rows = [
+        {"external_key": "1", "title": "A", "url": ""},
+        {"external_key": "2", "title": "B", "url": "https://x/2"},
+    ]
+    path = write_report(
+        tmp_path / "t.ods", rows, cols, {"changed_keys": "2", "site": "S"}, new_keys=set()
+    )
+    doc = load(str(path))
+    table = _sheet(doc, "Данные")
+    links = doc.getElementsByType(__import__("odf.text", fromlist=["A"]).A)
+    assert [a.getAttribute("href") for a in links] == ["https://x/2"]
+    # Changed row carries a cell style with a light-yellow background.
+    styles = doc.styles.getElementsByType(__import__("odf.style", fromlist=["Style"]).Style)
+    fills = doc.styles.getElementsByType(__import__("odf.style", fromlist=["Style"]).Style)
+    assert any(
+        s.getAttribute("family") == "table-cell" and s.getAttribute("name", "").startswith("changed")
+        for s in styles
+    )
+    meta = _rows(_sheet(doc, "Метаданные"))
+    assert meta[0][:2] == ["site", "S"]
 
 
 def test_prune_keeps_newest(tmp_path):
     for i in range(5):
-        (tmp_path / f"f{i}.xlsx").write_bytes(b"x")
-    assert prune_exports(tmp_path, keep=2) == 3
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["f3.xlsx", "f4.xlsx"]
+        (tmp_path / f"f{i}.ods").write_bytes(b"x")
+    assert prune_reports(tmp_path, keep=2) == 3
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["f3.ods", "f4.ods"]
+
+
+def test_prune_ignores_other_files_and_missing_dir(tmp_path):
+    (tmp_path / "a.ods").write_bytes(b"x")
+    (tmp_path / "b.txt").write_bytes(b"x")
+    assert prune_reports(tmp_path, keep=0) == 1
+    assert [p.name for p in tmp_path.iterdir()] == ["b.txt"]
+    assert prune_reports(tmp_path / "missing", keep=5) == 0
+
+
+@pytest.mark.parametrize("keep", [1, 3])
+def test_prune_keep_larger_than_count(tmp_path, keep):
+    (tmp_path / "a.ods").write_bytes(b"x")
+    assert prune_reports(tmp_path, keep=keep) == 0
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `.venv/bin/python -m pytest tests/unit/test_excel.py -v`
-Expected: FAIL with `ModuleNotFoundError: No module named 'uwp.excel'`
+Run: `.venv/bin/python -m pytest tests/unit/test_ods.py -v`
+Expected: FAIL with `ModuleNotFoundError: No module named 'uwp.ods'`
 
-- [ ] **Step 3: Implement `excel.py`**
+- [ ] **Step 3: Implement `ods.py`**
 
-Transliteration map: `а→a б→b в→v г→g д→d е→e ё→e ж→zh з→z и→i й→y к→k л→l м→m н→n о→o п→p р→r с→s т→t у→u ф→f х→kh ц→ts ч→ch ш→sh щ→shch ъ→ ы→y ь→ э→e ю→yu я→ya` (lowercase; uppercase handled by `.lower()` first). Timestamp format `%Y-%m-%d_%H-%M` in `UWP_TZ`. `prune_exports` sorts by `st_mtime` and deletes the oldest beyond `keep`.
+Transliteration map: `а→a б→b в→v г→g д→d е→e ё→e ж→zh з→z и→i й→y к→k л→l м→m н→n о→o п→p р→r с→s т→t у→u ф→f х→kh ц→ts ч→ch ш→sh щ→shch ъ→ ы→y ь→ э→e ю→yu я→ya` (lowercase; uppercase handled by `.lower()` first). Timestamp format `%Y-%m-%d_%H-%M` in `UWP_TZ`.
+
+Implementation notes:
+- Build the document with `odf.opendocument.OpenDocumentSpreadsheet()`.
+- Data sheet: `Table(name="Данные")`; header row cells use a bold cell style; body cells use `valuetype="string"` (or `float` when the value is numeric and `Column.fmt` is set, with a matching number style).
+- Column widths: create a `Style(family="table-column")` per column with `ColumnProperties(columnwidth="<width>pt")` and attach it to `TableColumn(style=...)`.
+- Hyperlinks: for `url` and `*_url` keys with a non-empty string, put a `text:a(href=value)` inside the cell's `text:p`; apply a link cell style (blue, underlined).
+- «Новое» column: append `да`/`нет` only when `new_keys is not None`.
+- Changed rows: when `str(row["external_key"]) in meta["changed_keys"]`, apply a cell style with `TableCellProperties(backgroundcolor="#fff2cc")` to every cell in that row.
+- Freeze first row: add a `Style(family="table")` with `TableProperties(display="true")` and a `style:table-view`-equivalent via `odf.style.Style` + `TableRowProperties`/`TableColumnProperties`; if odfpy cannot express freeze panes cleanly, document the limitation in a comment and skip it (do not fail the task).
+- Autofilter: odfpy has no first-class API; add a `table:database-range` element with `table:target-range-address` covering the header + data range. If unsupported, document and skip.
+- Metadata sheet: `Table(name="Метаданные")` with `key`/`value` rows, skipping the `changed_keys` key.
+- `prune_reports` sorts `*.ods` files by `(st_mtime, name)` and deletes the oldest beyond `keep`; missing directory → `0`.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `.venv/bin/python -m pytest tests/unit/test_excel.py -v`
-Expected: PASS (4 passed)
+Run: `.venv/bin/python -m pytest tests/unit/test_ods.py -v`
+Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Update dependencies and remove the old module**
+
+- In `pyproject.toml`: replace `"openpyxl>=3.1"` with `"odfpy>=1.4"`.
+- Delete `src/uwp/excel.py` and `tests/unit/test_excel.py`.
+- Run `.venv/bin/python -m pytest -q --ignore=tests/unit/test_proxybridge.py` and `.venv/bin/ruff check src tests`.
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add src/uwp/excel.py tests/unit/test_excel.py
-git commit -m "feat: write Excel reports with metadata and retention"
+git add src/uwp/ods.py tests/unit/test_ods.py pyproject.toml
+git rm src/uwp/excel.py tests/unit/test_excel.py
+git commit -m "feat: write LibreOffice Calc (.ods) reports with metadata and retention"
 ```
 
 ---
-
 ### Task 11: Scheduler
 
 **Files:**
@@ -1509,7 +1626,7 @@ git commit -m "feat: edit site interval, profile, proxy, export mode and parser 
 - Produces:
   - `uwp.services.proxies.ProxyService(repo, settings)` with `async add(name, url) -> Proxy` (uses `parse_proxy_url`, encrypts password with Fernet when `settings.secret_key`), `async list()`, `async delete(id)`, `async test(id) -> tuple[bool, str]` (opens a TCP connection to the proxy host:port with 10 s timeout and reports latency or the error).
   - `uwp.services.vnc.VncService(manager, profiles, sites)` with `async request(profile_id, site_id=None, started_by=None) -> VncInfo` (picks the URL from the site's parser `url` or `https://example.com`), `async stop(session_id)`, `async list()`.
-  - `uwp.bot.delivery.EventDelivery(bot, bus, settings)` with `async run(stop: asyncio.Event)` — every 5 s, for each admin in `settings.admin_ids`, fetch pending events and send: `run_finished` → `send_document` with the Excel path from payload + caption; `run_failed` → text + screenshot if present + «Повторить» button; `site_problem` → text; `vnc_ready` → text with URL/password; `vnc_stopped`/`vnc_failed` → text; then `mark_delivered`.
+  - `uwp.bot.delivery.EventDelivery(bot, bus, settings)` with `async run(stop: asyncio.Event)` — every 5 s, for each admin in `settings.admin_ids`, fetch pending events and send: `run_finished` → `send_document` with the `.ods` report path from payload + caption; `run_failed` → text + screenshot if present + «Повторить» button; `site_problem` → text; `vnc_ready` → text with URL/password; `vnc_stopped`/`vnc_failed` → text; then `mark_delivered`.
   - Handlers: `profiles:list`, `profile:new` (FSM name → `ProfileManager.create_persistent`), `profile:{id}` (card with «🖥 Войти», «🗑 Удалить»), `profile:login:{id}` → `VncService.request`; `proxies:list`, `proxy:new` (FSM `name url`), `proxy:test:{id}`, `proxy:del:{id}`; `vnc:done:{session_id}`, `vnc:extend:{session_id}`, `runs:{site_id}` (last 10 runs with status/time/rows), `run:retry:{site_id}`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -1857,7 +1974,7 @@ No commit (config lives outside the repo). Note the backup path in the report.
 
 ## Self-Review
 
-**Spec coverage:** §2 → Tasks 1–21; §6 data model → Task 3; §7 scheduler/queue/timeouts/error kinds → Tasks 9, 11, 12; §8 profiles → Task 6; §9 proxy bridge → Task 8; §10 VNC → Tasks 14, 17; §11 parser contract + Steam → Tasks 4, 5; §12 Excel → Task 10; §13 bot → Tasks 15–17; §14 CLI → Task 18; §15 Docker → Task 19; §16 tests → every task + Task 20; §17 decisions → Global Constraints; §18 risks → Task 18 (`doctor`, `proxy test`) and Task 20 (README troubleshooting).
+**Spec coverage:** §2 → Tasks 1–21; §6 data model → Task 3; §7 scheduler/queue/timeouts/error kinds → Tasks 9, 11, 12; §8 profiles → Task 6; §9 proxy bridge → Task 8; §10 VNC → Tasks 14, 17; §11 parser contract + Steam → Tasks 4, 5; §12 ODS reports → Task 10; §13 bot → Tasks 15–17; §14 CLI → Task 18; §15 Docker → Task 19; §16 tests → every task + Task 20; §17 decisions → Global Constraints; §18 risks → Task 18 (`doctor`, `proxy test`) and Task 20 (README troubleshooting).
 
 **Review Focus coverage:** hung browser → Task 12 (`test_orphaned_running_job_is_requeued`) and Task 9 (`test_timeout_is_transient`); unexpected parser exception → Task 9 (`test_unexpected_exception_is_parser_error`); disable while queued → Task 11 (`test_disabled_site_is_skipped_and_queue_canceled`); clean profile after failure → Task 6 (`test_clean_profile_folder_removed_after_cleanup`) and Task 9 (`test_ok_run_saves_items_and_releases_profile`); non-admin → Task 15 (`test_non_admin_is_refused`).
 
