@@ -101,8 +101,12 @@ class JobsRepo:
         )
 
     async def finish(self, job_id: int, status: JobStatus | str, error: str | None = None) -> None:
+        """Close a job; it no longer holds a worker or a heartbeat."""
         await self.db.execute(
-            "UPDATE jobs SET status = ?, error = ? WHERE id = ?",
+            """UPDATE jobs
+               SET status = ?, error = ?, claimed_by = NULL, claimed_at = NULL,
+                   heartbeat_at = NULL
+               WHERE id = ?""",
             (str(status), error, job_id),
         )
 

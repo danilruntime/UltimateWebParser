@@ -8,6 +8,7 @@ import inspect
 import logging
 import os
 import secrets
+import shlex
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -77,14 +78,13 @@ class _Stack:
         self.client_marker = client_marker
 
     def client_count(self) -> int:
-        """1 while x11vnc reports an attached client, else 0.
-
-        x11vnc's ``-after``/``-gone`` hooks touch and remove ``client_marker``,
-        so this reflects real connections rather than a guess.
-        """
-        if self.client_marker is None:
+        """Live client count recorded by the x11vnc accept/gone hooks."""
+        if self.client_marker is None or not self.client_marker.exists():
             return 0
-        return 1 if self.client_marker.exists() else 0
+        try:
+            return int(self.client_marker.read_text().strip() or 0)
+        except ValueError:
+            return 0
 
     async def stop(self) -> None:
         for process in reversed(self.processes):
@@ -152,14 +152,18 @@ def _default_process_factory(
         browser_env = {**os.environ, "DISPLAY": screen}
         client_marker = password_file.with_suffix(".clients")
         client_marker.unlink(missing_ok=True)
+        marker = shlex.quote(str(client_marker))
+        # x11vnc runs these shells for every client accept/disconnect and
+        # exports RFB_CLIENT_COUNT, so the marker always holds the live count.
+        record_count = f"sh -c 'echo $RFB_CLIENT_COUNT > {marker}'"
         commands = [
             ["Xvfb", screen, "-screen", "0", "1920x1080x24"],
             ["fluxbox", "-display", screen],
             [executable, *args, url],
             ["x11vnc", "-display", screen, "-rfbauth", str(password_file),
              "-rfbport", str(vnc_port), "-localhost", "-forever", "-shared",
-             "-after", f"touch {client_marker}",
-             "-gone", f"rm -f {client_marker}"],
+             "-afteraccept", record_count,
+             "-gone", record_count],
             ["websockify", "--web", "/usr/share/novnc", str(port), f"localhost:{vnc_port}"],
         ]
         processes: list[asyncio.subprocess.Process] = []

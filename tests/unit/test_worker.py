@@ -218,29 +218,33 @@ async def test_site_snapshot_is_updated_after_run(env):
 
 
 async def test_heartbeat_runs_while_job_executes(env):
-    """A long run must keep its heartbeat fresh, not just between loop passes."""
+    """A run longer than ``orphan_threshold`` must keep its heartbeat fresh."""
     db, sites, jobs, sid = env
-    settings = Settings(heartbeat_interval=1, orphan_threshold=90)
-    worker = _worker(settings, db, jobs, sites, FakeRunner())
+    settings = Settings(heartbeat_interval=1, orphan_threshold=1)
     await jobs.create(sid, "scheduled")
-    job = await jobs.claim("w1", now=NOW)
-    beats: list[datetime] = []
+
+    class SlowRunner(FakeRunner):
+        async def run(self, site, job, proxy, cancel=None):
+            await asyncio.sleep(1.4)
+            return self.outcome
+
+    worker = _worker(settings, db, jobs, sites, SlowRunner())
+    beats: list[tuple[int, datetime]] = []
     original = jobs.heartbeat
 
     async def spy(job_id, now):
-        beats.append(now)
+        beats.append((job_id, now))
         await original(job_id, now)
 
     jobs.heartbeat = spy
-    task = asyncio.create_task(worker._beat(job.id))
-    await asyncio.sleep(1.2)
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
 
-    assert len(beats) >= 1
+    await worker.process_one(NOW)
+
+    job = (await jobs.list_for_site(sid))[0]
+    assert str(job.status) == "done"
+    # ``finish`` clears the stamp, so observe the beats themselves.
+    assert beats and all(job_id == job.id for job_id, _ in beats)
+    assert beats[0][1] > NOW
 
 
 async def test_canceled_job_is_finished_not_left_running(env):

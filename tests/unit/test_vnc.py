@@ -41,6 +41,131 @@ def test_vnc_url():
     )
 
 
+class FakeSpawned:
+    """Stands in for ``asyncio.subprocess.Process``."""
+
+    def __init__(self, command, returncode=None):
+        self.command = command
+        self.returncode = returncode
+        self.terminated = False
+        self.exit_code = 0
+
+    async def wait(self):
+        return self.returncode if self.returncode is not None else self.exit_code
+
+    def terminate(self):
+        self.terminated = True
+        self.returncode = -15
+
+    def kill(self):
+        self.terminated = True
+        self.returncode = -9
+
+
+async def _factory_env(tmp_path):
+    settings = load_settings(
+        {"UWP_DATA_DIR": str(tmp_path), "UWP_VNC_PORT_MIN": "6100", "UWP_VNC_PORT_MAX": "6101"}
+    )
+    profile = Profile(
+        id=7,
+        name="p",
+        kind=ProfileKind.persistent,
+        seed=1,
+        platform="windows",
+        brand="Chrome",
+        brand_version="150",
+        timezone="Europe/Moscow",
+        locale="ru-RU",
+        user_data_dir=str(tmp_path / "p"),
+    )
+    return settings, profile
+
+
+async def test_default_factory_builds_the_full_stack(tmp_path, monkeypatch):
+    from uwp import vnc
+
+    settings, profile = await _factory_env(tmp_path)
+    spawned: list[FakeSpawned] = []
+
+    async def fake_spawn(command, **kw):
+        process = FakeSpawned(command)
+        spawned.append(process)
+        return process
+
+    monkeypatch.setattr(vnc, "_spawn", fake_spawn)
+    handle = await vnc._default_process_factory(settings)(
+        display=100,
+        port=6100,
+        password="pw",
+        profile=profile,
+        url="https://example.com",
+        proxy_url=None,
+    )
+
+    names = [p.command[0] for p in spawned]
+    assert names == ["x11vnc", "Xvfb", "fluxbox", "chromium", "x11vnc", "websockify"]
+
+    x11vnc = spawned[-2].command
+    assert "-afteraccept" in x11vnc, "x11vnc only knows -afteraccept/-gone hooks"
+    assert "-after" not in x11vnc
+    # The RFB port must not collide with the published noVNC band.
+    rfb_port = int(x11vnc[x11vnc.index("-rfbport") + 1])
+    assert not (settings.vnc_port_min <= rfb_port <= settings.vnc_port_max)
+
+    await handle.stop()
+    assert all(p.terminated for p in spawned[1:])
+
+
+async def test_default_factory_reports_storepasswd_failure(tmp_path, monkeypatch):
+    from uwp import vnc
+
+    settings, profile = await _factory_env(tmp_path)
+
+    async def fake_spawn(command, **kw):
+        return FakeSpawned(command, returncode=1)
+    monkeypatch.setattr(vnc, "_spawn", fake_spawn)
+
+    with pytest.raises(RuntimeError, match="storepasswd"):
+        await vnc._default_process_factory(settings)(
+            display=100,
+            port=6100,
+            password="pw",
+            profile=profile,
+            url="https://example.com",
+            proxy_url=None,
+        )
+
+
+async def test_default_factory_kills_partial_stack_on_failure(tmp_path, monkeypatch):
+    from uwp import vnc
+
+    settings, profile = await _factory_env(tmp_path)
+    spawned: list[FakeSpawned] = []
+
+    async def fake_spawn(command, **kw):
+        if command[0] == "fluxbox":
+            raise FileNotFoundError("fluxbox")
+        process = FakeSpawned(command)
+        spawned.append(process)
+        return process
+
+    monkeypatch.setattr(vnc, "_spawn", fake_spawn)
+
+    with pytest.raises(FileNotFoundError):
+        await vnc._default_process_factory(settings)(
+            display=100,
+            port=6100,
+            password="pw",
+            profile=profile,
+            url="https://example.com",
+            proxy_url=None,
+        )
+
+    assert [p.command[0] for p in spawned] == ["x11vnc", "Xvfb"]
+    # The storepasswd helper already exited; the running Xvfb must be killed.
+    assert spawned[1].terminated
+
+
 @pytest.fixture
 async def env(tmp_path):
     settings = load_settings(
