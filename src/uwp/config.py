@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     vnc_idle_minutes: int = 20
     public_host: str = "localhost"
     secret_key: str | None = None
-    excel_name_template: str = "{parser_title}_{site_name}_{timestamp}"
+    report_name_template: str = "{parser_title}_{site_name}_{timestamp}"
     exports_retention: int = 50
     event_ttl_days: int = 3
     headless: bool = True

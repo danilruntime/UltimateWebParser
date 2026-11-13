@@ -15,7 +15,7 @@ _COLUMNS: dict[str, tuple[str, Any]] = {
     "status": ("status", str),
     "rows_count": ("rows_count", int),
     "new_count": ("new_count", int),
-    "excel_path": ("excel_path", lambda v: v),
+    "report_path": ("report_path", lambda v: v),
     "artifact_dir": ("artifact_dir", lambda v: v),
     "error": ("error", lambda v: v),
     "duration_ms": ("duration_ms", lambda v: v),
@@ -34,7 +34,7 @@ def _row_to_run(row: aiosqlite.Row) -> Run:
         status=RunStatus(row["status"]),
         rows_count=row["rows_count"],
         new_count=row["new_count"],
-        excel_path=row["excel_path"],
+        report_path=row["report_path"],
         artifact_dir=row["artifact_dir"],
         error=row["error"],
         duration_ms=row["duration_ms"],
@@ -54,7 +54,7 @@ class RunsRepo:
     async def create(self, run: Run) -> int:
         return await self.db.execute(
             """INSERT INTO runs (job_id, site_id, started_at, finished_at, status,
-                                 rows_count, new_count, excel_path, artifact_dir, error,
+                                 rows_count, new_count, report_path, artifact_dir, error,
                                  duration_ms, profile_id, proxy_id)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
@@ -65,7 +65,7 @@ class RunsRepo:
                 str(run.status),
                 run.rows_count,
                 run.new_count,
-                run.excel_path,
+                run.report_path,
                 run.artifact_dir,
                 run.error,
                 run.duration_ms,

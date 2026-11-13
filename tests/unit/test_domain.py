@@ -122,7 +122,7 @@ def test_run_defaults():
     assert r.id is None
     assert r.finished_at is None
     assert r.rows_count == 0 and r.new_count == 0
-    assert r.excel_path is None and r.artifact_dir is None and r.error is None
+    assert r.report_path is None and r.artifact_dir is None and r.error is None
     assert r.duration_ms is None
     assert r.profile_id is None and r.proxy_id is None
 

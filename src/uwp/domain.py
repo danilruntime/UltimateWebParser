@@ -159,7 +159,7 @@ class Run(_Model):
     status: RunStatus
     rows_count: int = 0
     new_count: int = 0
-    excel_path: str | None = None
+    report_path: str | None = None
     artifact_dir: str | None = None
     error: str | None = None
     duration_ms: int | None = None

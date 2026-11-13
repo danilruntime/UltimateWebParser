@@ -79,7 +79,7 @@ CREATE TABLE runs (
     status TEXT NOT NULL,
     rows_count INTEGER NOT NULL DEFAULT 0,
     new_count INTEGER NOT NULL DEFAULT 0,
-    excel_path TEXT,
+    report_path TEXT,
     artifact_dir TEXT,
     error TEXT,
     duration_ms INTEGER,
