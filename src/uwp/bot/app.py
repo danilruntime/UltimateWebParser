@@ -5,7 +5,7 @@ from typing import Any
 
 from aiogram import Bot, Dispatcher
 
-from uwp.bot.handlers import common, sites
+from uwp.bot.handlers import common, profiles, sites
 from uwp.bot.handlers import settings as settings_handlers
 from uwp.bot.middleware import AdminOnlyMiddleware
 from uwp.config import Settings
@@ -24,6 +24,7 @@ class BotDeps:
     profiles: Any = None
     proxies: Any = None
     vnc: Any = None
+    runs: Any = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -37,6 +38,7 @@ def build_dispatcher(settings: Settings, deps: BotDeps) -> Dispatcher:
     dp.include_router(common.build_router(settings, deps.sites))
     dp.include_router(sites.build_router(settings, deps.sites, deps.registry))
     dp.include_router(settings_handlers.build_router(settings, deps))
+    dp.include_router(profiles.build_router(settings, deps))
     return dp
 
 

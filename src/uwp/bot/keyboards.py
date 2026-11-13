@@ -31,6 +31,11 @@ def site_card_kb(site) -> InlineKeyboardMarkup:
                     text=texts.SETTINGS, callback_data=f"site:settings:{site.id}"
                 ),
             ],
+            [
+                InlineKeyboardButton(
+                    text="📜 История", callback_data=f"runs:{site.id}"
+                )
+            ],
             [InlineKeyboardButton(text=texts.BACK, callback_data="sites:list")],
         ]
     )
@@ -44,3 +49,14 @@ def parsers_kb(parsers) -> InlineKeyboardMarkup:
     ]
     rows.append([InlineKeyboardButton(text=texts.BACK, callback_data="sites:list")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def menu_kb() -> InlineKeyboardMarkup:
+    """The main menu: everything an admin may open."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🌐 Сайты", callback_data="sites:list")],
+            [InlineKeyboardButton(text="👤 Профили", callback_data="profiles:list")],
+            [InlineKeyboardButton(text="🌍 Прокси", callback_data="proxies:list")],
+        ]
+    )

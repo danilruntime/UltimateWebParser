@@ -85,3 +85,42 @@ def profile_label(site) -> str:
     if str(site.profile_mode) == "persistent":
         return f"постоянный (id {site.profile_id})" if site.profile_id else "постоянный"
     return "чистый (случайный отпечаток)"
+
+PROFILES_HEADER = "👤 Профили для входа"
+NO_PROFILES = "Пока нет постоянных профилей. Нажмите «➕ Новый профиль»."
+ASK_PROFILE_NAME = "Введите имя нового профиля:"
+PROFILE_CREATED = "✅ Профиль «{name}» создан."
+PROFILE_DELETED = "🗑 Профиль удалён."
+PROFILE_DONE = "✅ Вход в профиль «{name}» завершён."
+PROXIES_HEADER = "🌍 Прокси"
+NO_PROXIES = "Пока нет прокси. Нажмите «➕ Новый прокси»."
+ASK_PROXY = "Отправьте прокси в формате «имя http://user:pass@host:port» (имя необязательно)."
+PROXY_ADDED = "✅ Прокси добавлен."
+PROXY_DELETED = "🗑 Прокси удалён."
+RUNS_HEADER = "📜 Последние прогоны:"
+NO_RUNS = "Прогонов ещё не было."
+MENU = "Главное меню:"
+
+
+def profile_card(profile) -> str:
+    status = {
+        "free": "свободен",
+        "locked": "используется",
+        "login": "ожидает входа",
+        "expired": "истёк",
+    }.get(str(profile.status), str(profile.status))
+    return (
+        f"👤 <b>{profile.name}</b>\n"
+        f"Состояние: {status}\n"
+        f"Отпечаток: {profile.platform}, {profile.brand} {profile.brand_version}\n"
+        f"Часовой пояс: {profile.timezone}, язык: {profile.locale}"
+    )
+
+
+def proxy_card(proxy) -> str:
+    auth = f", пользователь {proxy.username}" if proxy.username else ""
+    country = f"\nСтрана: {proxy.country}" if proxy.country else ""
+    return (
+        f"🌍 <b>{proxy.name}</b>\n"
+        f"{proxy.scheme}://{proxy.host}:{proxy.port}{auth}{country}"
+    )

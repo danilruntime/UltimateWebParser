@@ -1,7 +1,7 @@
-"""Handlers shared by every screen: /start, /help, /id, /sites."""
-from aiogram import Router
+"""Handlers shared by every screen: /start, /help, /id, /sites and the menu."""
+from aiogram import F, Router
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
 
 from uwp.bot import keyboards, texts
 from uwp.timeutil import format_local
@@ -10,7 +10,11 @@ from uwp.timeutil import format_local
 def build_router(settings, sites_service) -> Router:
     router = Router(name="common")
 
-    @router.message(Command("start", "help"))
+    @router.message(Command("start"))
+    async def start_message(message: Message) -> None:
+        await message.answer(texts.MENU, reply_markup=keyboards.menu_kb())
+
+    @router.message(Command("help"))
     async def help_message(message: Message) -> None:
         await message.answer(texts.HELP)
 
@@ -21,6 +25,11 @@ def build_router(settings, sites_service) -> Router:
     @router.message(Command("sites"))
     async def list_sites(message: Message) -> None:
         await send_sites(message, sites_service, settings)
+
+    @router.callback_query(F.data == "menu:main")
+    async def back_to_menu(callback: CallbackQuery) -> None:
+        await callback.message.edit_text(texts.MENU, reply_markup=keyboards.menu_kb())
+        await callback.answer()
 
     return router
 
