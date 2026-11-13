@@ -155,9 +155,39 @@ async def test_create_clean_is_locked_one_shot(mgr, settings):
     p = await mgr.create_clean(run_id=7)
     assert p.kind == ProfileKind.clean
     assert p.status == ProfileStatus.locked
-    assert Path(p.user_data_dir) == settings.profiles_dir / "tmp" / "7"
+    assert Path(p.user_data_dir).parent == settings.profiles_dir / "tmp"
+    assert Path(p.user_data_dir).name.startswith("7-")
     assert p.expires_at is not None
     assert timedelta(hours=23) < p.expires_at - utcnow() <= timedelta(hours=24)
+
+
+async def test_create_clean_twice_for_same_run_is_allowed(mgr):
+    first = await mgr.create_clean(run_id=42)
+    second = await mgr.create_clean(run_id=42)
+    assert first.id != second.id
+    assert first.name != second.name
+    assert first.user_data_dir != second.user_data_dir
+    assert Path(first.user_data_dir).is_dir() and Path(second.user_data_dir).is_dir()
+
+
+async def test_create_clean_removes_folder_when_insert_fails(mgr, settings, monkeypatch):
+    async def boom(profile):
+        raise RuntimeError("insert failed")
+
+    monkeypatch.setattr(mgr.repo, "create", boom)
+    with pytest.raises(RuntimeError):
+        await mgr.create_clean(run_id=43)
+    assert list((settings.profiles_dir / "tmp").iterdir()) == []
+
+
+async def test_create_persistent_removes_folder_when_insert_fails(mgr, settings, monkeypatch):
+    async def boom(profile):
+        raise RuntimeError("insert failed")
+
+    monkeypatch.setattr(mgr.repo, "create", boom)
+    with pytest.raises(RuntimeError):
+        await mgr.create_persistent("P")
+    assert list(settings.profiles_dir.iterdir()) == []
 
 
 async def test_release_clean_marks_expired_and_keeps_folder(mgr):

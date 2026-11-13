@@ -189,16 +189,21 @@ class ProfileManager:
             proxy_id=proxy_id,
             status=ProfileStatus.free,
         )
-        profile.id = await self.repo.create(profile)
+        try:
+            profile.id = await self.repo.create(profile)
+        except BaseException:
+            shutil.rmtree(user_data_dir, ignore_errors=True)
+            raise
         return profile
 
     async def create_clean(self, run_id: int, country: str | None = None) -> Profile:
         """Create a one-shot profile for ``run_id``, locked until released."""
         identity = random_identity(country=country)
-        user_data_dir = self.settings.profiles_dir / "tmp" / str(run_id)
+        suffix = uuid.uuid4().hex[:8]
+        user_data_dir = self.settings.profiles_dir / "tmp" / f"{run_id}-{suffix}"
         user_data_dir.mkdir(parents=True, exist_ok=True)
         profile = Profile(
-            name=f"clean-{run_id}",
+            name=f"clean-{run_id}-{suffix}",
             kind=ProfileKind.clean,
             seed=identity.seed,
             platform=identity.platform,
@@ -210,7 +215,11 @@ class ProfileManager:
             status=ProfileStatus.locked,
             expires_at=utcnow() + CLEAN_TTL,
         )
-        profile.id = await self.repo.create(profile)
+        try:
+            profile.id = await self.repo.create(profile)
+        except BaseException:
+            shutil.rmtree(user_data_dir, ignore_errors=True)
+            raise
         return profile
 
     async def lease(self, profile_id: int, ttl_seconds: int) -> bool:
