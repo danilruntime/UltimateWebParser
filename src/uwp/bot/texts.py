@@ -3,6 +3,7 @@
 No user-visible English may leak from here: the bot speaks Russian only.
 """
 
+
 def esc(value) -> str:
     """Escape a user-supplied string for the HTML parse mode."""
     from html import escape
@@ -18,6 +19,8 @@ SITE_ALREADY_RUNNING = "⏳ Прогон уже идёт или стоит в о
 SITE_ENABLED = "🟢 Сайт включён, первый прогон запустится сразу."
 SITE_DISABLED = "🔴 Сайт выключен, очередь очищена."
 SITE_DELETED = "🗑 Сайт удалён."
+DELETE = "🗑 Удалить"
+CONFIRM_DELETE = "Удалить сайт «{name}»? Очередь прогонов и история будут стёрты."
 NO_SITES = "Пока нет ни одного сайта. Нажмите «➕ Добавить сайт»."
 BACK = "⬅️ Назад"
 RUN_NOW = "▶️ Запустить сейчас"
@@ -28,10 +31,39 @@ ADD_SITE = "➕ Добавить сайт"
 HELP = (
     "Я парсер сайтов под управлением администратора.\n\n"
     "/sites — список сайтов\n"
+    "/runs — последние прогоны\n"
     "/help — эта справка\n"
     "/id — ваш Telegram ID"
 )
 UNKNOWN_COMMAND = "Не понял команду. /help — список команд."
+
+
+def status_label(value) -> str:
+    """Russian name of a run status."""
+    from uwp import labels
+
+    return labels.status(value)
+
+
+def kind_label(value) -> str:
+    """Russian name of a profile kind."""
+    from uwp import labels
+
+    return labels.kind(value)
+
+
+def error_label(value) -> str:
+    """Russian name of an error kind."""
+    from uwp import labels
+
+    return labels.error(value)
+
+
+def export_label(mode) -> str:
+    """Russian name of an export mode."""
+    from uwp import labels
+
+    return labels.export(mode)
 
 
 def site_card(site, next_run_local: str | None) -> str:
@@ -48,7 +80,7 @@ def site_card(site, next_run_local: str | None) -> str:
     if next_run_local:
         lines.append(f"Следующий прогон: {next_run_local}")
     if site.last_status:
-        lines.append(f"Последний прогон: {site.last_status}")
+        lines.append(f"Последний прогон: {status_label(site.last_status)}")
     return "\n".join(lines)
 
 
@@ -59,11 +91,8 @@ def _profile_label(site) -> str:
 
 
 def _export_label(site) -> str:
-    return {
-        "always": "всегда",
-        "changes": "только изменения",
-        "never": "никогда",
-    }.get(str(site.export_mode), str(site.export_mode))
+    return export_label(site.export_mode)
+
 
 ASK_INTERVAL = (
     "Введите интервал в минутах: одно число (например 60) "
@@ -80,18 +109,11 @@ PARAM_SAVED = "✅ Параметр «{name}» сохранён."
 EXPORT_SET = "✅ Экспорт: {mode}"
 
 
-def export_label(mode) -> str:
-    return {
-        "always": "всегда",
-        "changes": "только изменения",
-        "never": "никогда",
-    }.get(str(mode), str(mode))
-
-
 def profile_label(site) -> str:
     if str(site.profile_mode) == "persistent":
         return f"постоянный (id {site.profile_id})" if site.profile_id else "постоянный"
     return "чистый (случайный отпечаток)"
+
 
 PROFILES_HEADER = "👤 Профили для входа"
 NO_PROFILES = "Пока нет постоянных профилей. Нажмите «➕ Новый профиль»."
@@ -101,7 +123,9 @@ PROFILE_DELETED = "🗑 Профиль удалён."
 PROFILE_DONE = "✅ Вход в профиль «{name}» завершён."
 PROXIES_HEADER = "🌍 Прокси"
 NO_PROXIES = "Пока нет прокси. Нажмите «➕ Новый прокси»."
-ASK_PROXY = "Отправьте прокси в формате «имя http://user:pass@host:port» (имя необязательно)."
+ASK_PROXY = (
+    "Отправьте прокси в формате «имя http://user:pass@host:port» (имя необязательно)."
+)
 PROXY_ADDED = "✅ Прокси добавлен."
 PROXY_DELETED = "🗑 Прокси удалён."
 RUNS_HEADER = "📜 Последние прогоны:"

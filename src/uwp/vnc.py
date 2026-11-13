@@ -3,6 +3,7 @@
 The bot only asks for a session and shows the link; everything else (Xvfb,
 window manager, browser, x11vnc, websockify) lives inside the worker.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -21,6 +22,7 @@ from uwp.config import Settings
 from uwp.db.repo.profiles import ProfilesRepo
 from uwp.db.repo.vnc import VncRepo
 from uwp.domain import Profile, ProfileKind, ProfileStatus, VncSession, VncStatus
+from uwp.events import VNC_FAILED, VNC_STOPPED
 from uwp.profiles import browser_flags
 from uwp.timeutil import utcnow
 
@@ -178,11 +180,29 @@ def _default_process_factory(
             ["Xvfb", screen, "-screen", "0", "1920x1080x24"],
             ["fluxbox", "-display", screen],
             [executable, *args, url],
-            ["x11vnc", "-display", screen, "-rfbauth", str(password_file),
-             "-rfbport", str(vnc_port), "-localhost", "-forever", "-shared",
-             "-afteraccept", record_count,
-             "-gone", record_count],
-            ["websockify", "--web", "/usr/share/novnc", str(port), f"localhost:{vnc_port}"],
+            [
+                "x11vnc",
+                "-display",
+                screen,
+                "-rfbauth",
+                str(password_file),
+                "-rfbport",
+                str(vnc_port),
+                "-localhost",
+                "-forever",
+                "-shared",
+                "-afteraccept",
+                record_count,
+                "-gone",
+                record_count,
+            ],
+            [
+                "websockify",
+                "--web",
+                "/usr/share/novnc",
+                str(port),
+                f"localhost:{vnc_port}",
+            ],
         ]
         processes: list[asyncio.subprocess.Process] = []
         try:
@@ -213,21 +233,18 @@ class VncManager:
         profiles: ProfilesRepo,
         sessions: VncRepo,
         process_factory: Any = None,
+        bus: Any = None,
     ) -> None:
         self.settings = settings
         self.profiles = profiles
         self.sessions = sessions
         self.process_factory = process_factory or _default_process_factory(settings)
+        self.bus = bus
         self._handles: dict[int, ProcessHandle] = {}
 
-    async def start(
-        self,
-        profile: Profile,
-        url: str,
-        proxy_url: str | None = None,
-        started_by: int | None = None,
-    ) -> VncInfo:
-        """Start a login session for ``profile`` and return its connection info."""
+    @staticmethod
+    def _check_profile(profile: Profile) -> None:
+        """Reject profiles a login session cannot use."""
         if profile.kind != ProfileKind.persistent:
             raise ValueError("VNC login requires a persistent profile")
         if profile.status != ProfileStatus.free:
@@ -235,6 +252,28 @@ class VncManager:
         if profile.id is None:
             raise ValueError("profile is not stored")
 
+    async def _emit(self, kind: str, session: VncSession, **payload: Any) -> None:
+        """Queue a VNC notification; never let it break the session itself."""
+        if self.bus is None:
+            return
+        try:
+            await self.bus.emit(kind, None, None, payload)
+        except Exception:
+            log.exception("queueing %s for VNC session %s failed", kind, session.id)
+
+    async def reserve(
+        self,
+        profile: Profile,
+        url: str,
+        started_by: int | None = None,
+    ) -> VncInfo:
+        """Book a session in the database without launching anything.
+
+        The bot owns this half: it has no GUI stack of its own, so it writes a
+        ``requested`` row and the worker (same process in combined mode) picks
+        it up and launches the browser.
+        """
+        self._check_profile(profile)
         port = free_port(
             self.settings.vnc_port_min,
             self.settings.vnc_port_max,
@@ -251,31 +290,15 @@ class VncManager:
                 display=display,
                 password=password,
                 token=secrets.token_urlsafe(16),
-                status=VncStatus.running,
+                status=VncStatus.requested,
                 started_at=now,
                 expires_at=expires_at,
                 started_by=started_by,
+                url=url,
             )
         )
         await self.profiles.update(profile.id, status=str(ProfileStatus.login))
-
-        try:
-            started = self.process_factory(
-                display=display,
-                port=port,
-                password=password,
-                profile=profile,
-                url=url,
-                proxy_url=proxy_url,
-            )
-            handle = await started if inspect.isawaitable(started) else started
-        except Exception:
-            log.exception("starting VNC session %s failed", session_id)
-            await self.sessions.update(session_id, status=str(VncStatus.failed))
-            await self.profiles.update(profile.id, status=str(ProfileStatus.free))
-            raise
-        self._handles[session_id] = handle
-        log.info("VNC session %s on port %s started", session_id, port)
+        log.info("VNC session %s reserved on port %s", session_id, port)
         return VncInfo(
             session_id=session_id,
             port=port,
@@ -283,6 +306,72 @@ class VncManager:
             url=vnc_url(self.settings.public_host, port, password),
             expires_at=expires_at,
         )
+
+    async def reserve_and_launch(
+        self,
+        profile: Profile,
+        url: str,
+        proxy_url: str | None = None,
+        started_by: int | None = None,
+    ) -> VncInfo:
+        """Reserve a session and start it now (combined mode, CLI login)."""
+        info = await self.reserve(profile, url, started_by=started_by)
+        session = await self.sessions.get(info.session_id)
+        if session is None:  # pragma: no cover - created a moment ago
+            raise RuntimeError(f"VNC session {info.session_id} disappeared")
+        await self.launch(session, proxy_url=proxy_url)
+        return info
+
+    # Backwards-compatible name used by the CLI and older call sites.
+    start = reserve_and_launch
+
+    async def launch(self, session: VncSession, proxy_url: str | None = None) -> None:
+        """Start the process stack of a reserved session."""
+        profile = await self.profiles.get(session.profile_id)
+        if profile is None:
+            await self.sessions.update(session.id, status=str(VncStatus.failed))
+            raise ValueError(f"profile {session.profile_id} not found")
+        try:
+            started = self.process_factory(
+                display=session.display,
+                port=session.port,
+                password=session.password,
+                profile=profile,
+                url=session.url or "",
+                proxy_url=proxy_url,
+            )
+            handle = await started if inspect.isawaitable(started) else started
+        except Exception as exc:
+            log.exception("starting VNC session %s failed", session.id)
+            await self.sessions.update(session.id, status=str(VncStatus.failed))
+            await self.profiles.update(profile.id, status=str(ProfileStatus.free))
+            await self._emit(
+                VNC_FAILED,
+                session,
+                profile_id=profile.id,
+                session_id=session.id,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+            raise
+        await self.sessions.update(session.id, status=str(VncStatus.running))
+        self._handles[session.id] = handle
+        log.info("VNC session %s on port %s started", session.id, session.port)
+
+    async def request_stop(self, session_id: int) -> None:
+        """Ask for a stop; the process that owns the stack performs it.
+
+        A separate ``uwp vnc stop`` process has no handles, so marking the row
+        ``stopping`` and letting the worker's tick kill it is the only path that
+        works in both combined and split deployments.
+        """
+        session = await self.sessions.get(session_id)
+        if session is None or session.status in (VncStatus.stopped, VncStatus.failed):
+            return
+        if session_id in self._handles:
+            await self.stop(session_id)
+            return
+        await self.sessions.update(session_id, status=str(VncStatus.stopping))
+        log.info("VNC session %s marked for stop", session_id)
 
     async def stop(self, session_id: int) -> None:
         """Stop a session and free its profile; safe to call twice."""
@@ -301,12 +390,48 @@ class VncManager:
         if profile is not None and profile.status == ProfileStatus.login:
             await self.profiles.update(profile.id, status=str(ProfileStatus.free))
 
+    async def reconcile(self, now: datetime) -> None:
+        """Launch requested sessions and finish stops other processes asked for."""
+        for session in await self.sessions.pending_stop():
+            log.info("VNC session %s was stopped elsewhere", session.id)
+            await self.stop(session.id)
+        for session in await self.sessions.pending_start():
+            if session.expires_at <= now:
+                await self.stop(session.id)
+                continue
+            try:
+                await self.launch(session)
+            except Exception:  # already recorded as failed; keep the loop alive
+                log.exception("launching VNC session %s failed", session.id)
+
+    async def _reap(self) -> None:
+        """Kill stacks whose session row another process already finished.
+
+        Without this a split deployment leaks an Xvfb + Chromium + web stack
+        every time the admin presses «Готово» in the bot process.
+        """
+        if not self._handles:
+            return
+        alive = {session.id for session in await self.sessions.active()}
+        for session_id in [sid for sid in self._handles if sid not in alive]:
+            handle = self._handles.pop(session_id, None)
+            log.info("VNC session %s stopped elsewhere; killing it here", session_id)
+            if handle is None:
+                continue
+            try:
+                await handle.stop()
+            except Exception:
+                log.exception("stopping VNC session %s failed", session_id)
+
     async def tick(self, now: datetime) -> None:
-        """Stop sessions past their TTL or idle for too long."""
+        """Start what was requested, stop what expired or sat idle."""
+        await self.reconcile(now)
+        await self._reap()
         idle_after = timedelta(minutes=self.settings.vnc_idle_minutes)
         for session in await self.sessions.active():
             if session.expires_at <= now:
                 log.info("VNC session %s expired", session.id)
+                await self._emit(VNC_STOPPED, session, profile_id=session.profile_id)
                 await self.stop(session.id)
                 continue
             handle = self._handles.get(session.id)
@@ -318,8 +443,12 @@ class VncManager:
                 if clients > 0:
                     await self.sessions.update(session.id, last_client_at=now)
                     continue
-            if session.last_client_at is not None and session.last_client_at + idle_after <= now:
+            if (
+                session.last_client_at is not None
+                and session.last_client_at + idle_after <= now
+            ):
                 log.info("VNC session %s idle", session.id)
+                await self._emit(VNC_STOPPED, session, profile_id=session.profile_id)
                 await self.stop(session.id)
 
     async def list(self) -> list[VncSession]:

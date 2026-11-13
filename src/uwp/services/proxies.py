@@ -5,6 +5,7 @@ import asyncio
 import base64
 import hashlib
 import logging
+import sqlite3
 import time
 from urllib.parse import unquote, urlsplit
 
@@ -65,7 +66,12 @@ class ProxyService:
             proxy.password = _fernet(self.settings.secret_key).encrypt(
                 proxy.password.encode()
             ).decode()
-        proxy.id = await self.repo.create(proxy)
+        try:
+            proxy.id = await self.repo.create(proxy)
+        except sqlite3.IntegrityError:
+            # ``proxies.name`` is UNIQUE; an admin reusing a name deserves a
+            # sentence, not a traceback in the log.
+            raise ValueError(f"прокси с именем «{proxy.name}» уже есть") from None
         return proxy
 
     async def list(self) -> list[Proxy]:

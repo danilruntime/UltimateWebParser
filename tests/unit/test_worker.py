@@ -347,3 +347,64 @@ async def test_a_retried_failure_is_not_announced(env):
     # The job went back to the queue for a retry, so nothing is reported yet.
     assert [event.kind for event in await bus.pending(111, NOW)] == []
     assert str((await jobs.list_for_site(sid))[0].status) == "queued"
+
+
+async def test_a_retry_marks_the_site_as_retrying(env):
+    """The card must not say «ошибка» while a retry is still pending."""
+    db, sites, jobs, sid = env
+    settings = Settings()
+    bus = EventBus(EventsRepo(db), AdminsRepo(db), settings)
+    outcome = RunOutcome(
+        status=RunStatus.failed, error_kind=ErrorKind.transient, error="timeout"
+    )
+    worker = _worker(settings, db, jobs, sites, FakeRunner(outcome))
+    worker.bus = bus
+    await jobs.create(sid, "scheduled")
+
+    await worker.process_one(NOW)
+
+    site = await sites.get(sid)
+    assert site.last_status == "retrying"
+    assert site.consecutive_failures == 1
+
+
+async def test_an_export_failure_still_notifies(env):
+    """A run that produced rows but no file is news, not silence."""
+    db, sites, jobs, sid = env
+    settings = Settings()
+    bus = EventBus(EventsRepo(db), AdminsRepo(db), settings)
+    outcome = RunOutcome(
+        status=RunStatus.ok,
+        rows=[{"external_key": "1", "title": "x"}],
+        report_status="failed",
+        report_error="OSError: disk full",
+    )
+    worker = _worker(settings, db, jobs, sites, FakeRunner(outcome))
+    worker.bus = bus
+    await jobs.create(sid, "scheduled")
+
+    await worker.process_one(NOW)
+
+    events = await bus.pending(111, NOW)
+    assert [event.kind for event in events] == ["run_finished"]
+    assert events[0].payload["report_status"] == "failed"
+    assert "disk full" in events[0].payload["report_error"]
+
+
+async def test_a_skipped_export_in_changes_mode_is_silent(env):
+    db, sites, jobs, sid = env
+    settings = Settings()
+    bus = EventBus(EventsRepo(db), AdminsRepo(db), settings)
+    await sites.update(sid, export_mode="changes")
+    outcome = RunOutcome(
+        status=RunStatus.ok,
+        rows=[{"external_key": "1", "title": "x"}],
+        report_status="skipped",
+    )
+    worker = _worker(settings, db, jobs, sites, FakeRunner(outcome))
+    worker.bus = bus
+    await jobs.create(sid, "scheduled")
+
+    await worker.process_one(NOW)
+
+    assert await bus.pending(111, NOW) == []

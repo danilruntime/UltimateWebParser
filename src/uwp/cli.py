@@ -14,12 +14,9 @@ from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 
 from uwp.config import Settings, load_settings
+from uwp.seed import SEED_SITE_NAME
 
 log = logging.getLogger(__name__)
-
-SEED_PARSER = "steam_deals"
-SEED_SITE_SLUG = "steam_skidki"
-SEED_SITE_NAME = "Steam — скидки"
 
 
 # --- helpers ---------------------------------------------------------------
@@ -57,29 +54,14 @@ def _find_site(sites, slug: str):
 
 
 def cmd_init(settings: Settings) -> int:
-    from uwp.db.repo.admins import AdminsRepo
-    from uwp.db.repo.sites import SitesRepo
-    from uwp.domain import Site
+    from uwp.seed import seed
 
     async def action(db) -> int:
-        repo = SitesRepo(db)
-        admins = AdminsRepo(db)
-        for admin_id in settings.admin_ids:
-            await admins.add(admin_id)
-        if _find_site(await repo.list(), SEED_SITE_SLUG) is None:
-            await repo.create(
-                Site(
-                    slug=SEED_SITE_SLUG,
-                    name=SEED_SITE_NAME,
-                    parser_key=SEED_PARSER,
-                    enabled=False,
-                    interval_min_min=45,
-                    interval_max_min=90,
-                )
-            )
+        created = await seed(db, settings)
+        if created:
             _print(f"Создан сайт «{SEED_SITE_NAME}» (выключен).")
         else:
-            _print("Сайт уже существует, пропускаю.")
+            _print("Сайты уже есть, сид пропущен.")
         _print(f"База данных: {settings.db_path}")
         return 0
 
@@ -163,6 +145,14 @@ def cmd_doctor(settings: Settings, quiet: bool = False) -> int:
         if not failed:
             _print("Всё в порядке.")
     return 1 if failed else 0
+
+
+def browser_url_for(version: str) -> str:
+    """The release URL of a fingerprint-chromium version."""
+    return (
+        "https://github.com/adryfish/fingerprint-chromium/releases/download/"
+        f"{version}/ungoogled-chromium-{version}-1-x86_64_linux.tar.xz"
+    )
 
 
 def cmd_browser_install(
@@ -479,9 +469,18 @@ def cmd_vnc_stop(settings: Settings, session_id: int) -> int:
     from uwp.vnc import VncManager
 
     async def action(db) -> int:
-        repo = ProfilesRepo(db)
-        await VncManager(settings, repo, VncRepo(db)).stop(session_id)
-        _print(f"Сессия {session_id} остановлена.")
+        sessions = VncRepo(db)
+        session = await sessions.get(session_id)
+        if session is None:
+            _print(f"❌ Сессия {session_id} не найдена.")
+            return 1
+        if session.status.value in ("stopped", "failed"):
+            _print(f"Сессия {session_id} уже завершена.")
+            return 0
+        # This process does not own the browser stack, so it can only ask:
+        # the worker's tick kills the processes and frees the profile.
+        await VncManager(settings, ProfilesRepo(db), sessions).request_stop(session_id)
+        _print(f"Сессия {session_id} помечена на остановку; процесс остановит воркер.")
         return 0
 
     return _settle(_with_db(settings, action))
@@ -649,7 +648,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         return cmd_browser_install(
             settings,
             version=args.version or settings.browser_version,
-            url=args.url or settings.browser_url,
+            # ``--version`` alone must change where the archive comes from, or
+            # the SHA check would reject a download of a different release.
+            url=args.url
+            or (
+                browser_url_for(args.version)
+                if args.version
+                else settings.browser_url
+            ),
             dest=args.dest,
             sha256=settings.browser_sha256,
         )

@@ -38,8 +38,13 @@ class RunOutcome:
     meta: dict = field(default_factory=dict)
     notes: str | None = None
     report_path: Path | None = None
+    # ``written`` (file exists), ``skipped`` (export_mode said no) or ``failed``
+    # (writing raised). The admin must be able to tell them apart.
+    report_status: str = "skipped"
+    report_error: str | None = None
     artifacts_dir: Path | None = None
     run_id: int | None = None
+    profile_id: int | None = None
 
 
 def _row_key(row: dict) -> str:
@@ -113,6 +118,7 @@ class Runner:
                 outcome.status = RunStatus.canceled
                 return outcome
             profile = await self._acquire_profile(site, run_id)
+            outcome.profile_id = profile.id
             if proxy is not None:
                 bridge = self._make_bridge(proxy)
                 proxy_url = await bridge.start()
@@ -132,7 +138,7 @@ class Runner:
             outcome.rows = result.rows
             outcome.meta = result.meta
             outcome.notes = result.notes
-            _, new_keys, changed_keys, vanished = await self._save_rows(site, result.rows)
+            new_keys, changed_keys, vanished = await self._save_rows(site, result.rows)
             outcome.new_count = len(new_keys)
             outcome.status = RunStatus.ok
             outcome.duration_ms = int((time.monotonic() - started) * 1000)
@@ -144,7 +150,7 @@ class Runner:
             if exc.partial_rows:
                 outcome.rows = exc.partial_rows
                 try:
-                    _, new_keys, changed_keys, vanished = await self._save_rows(
+                    new_keys, changed_keys, vanished = await self._save_rows(
                         site, exc.partial_rows
                     )
                     outcome.new_count = len(new_keys)
@@ -248,8 +254,11 @@ class Runner:
                 changed_keys=changed_keys,
                 vanished=vanished,
             )
-        except Exception:  # a broken report must not fail an otherwise good run
+            outcome.report_status = "written" if outcome.report_path else "skipped"
+        except Exception as exc:  # a broken report must not fail an otherwise good run
             log.exception("writing the report of site %s failed", site.id)
+            outcome.report_status = "failed"
+            outcome.report_error = f"{type(exc).__name__}: {exc}"
 
     async def _acquire_profile(self, site: Site, run_id: int) -> Profile:
         if site.profile_mode == ProfileKind.persistent:
@@ -304,7 +313,7 @@ class Runner:
 
     async def _save_rows(
         self, site: Site, rows: list[dict]
-    ) -> tuple[int, set[str], set[str], int]:
+    ) -> tuple[set[str], set[str], int]:
         """Store every row; return the new keys, changed keys and vanished count.
 
         ``external_key`` is the dedup key the parser owns (for Steam it is the
@@ -322,6 +331,9 @@ class Runner:
         for row in rows:
             key = _row_key(row)
             if key in seen:
+                log.warning(
+                    "parser of site %s returned duplicate key %s", site.slug, key
+                )
                 continue
             seen.add(key)
             row["external_key"] = key
@@ -334,7 +346,7 @@ class Runner:
             ):
                 changed_keys.add(key)
 
-        return len(new_keys), new_keys, changed_keys, len(before - seen)
+        return new_keys, changed_keys, len(before - seen)
 
 
 

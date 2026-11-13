@@ -19,7 +19,8 @@ services:
     depends_on:
       - worker
     healthcheck:
-      test: ["CMD", "uwp", "doctor", "--quiet"]
+      # Through the entrypoint: the check must run as uid 1000, not root.
+      test: ["CMD", "/entrypoint.sh", "doctor", "--quiet"]
       interval: 60s
       timeout: 30s
       start_period: 30s
@@ -44,7 +45,8 @@ services:
     ports:
       - "6000-6100:6000-6100"
     healthcheck:
-      test: ["CMD", "uwp", "doctor", "--quiet"]
+      # Through the entrypoint: the check must run as uid 1000, not root.
+      test: ["CMD", "/entrypoint.sh", "doctor", "--quiet"]
       interval: 60s
       timeout: 30s
       start_period: 30s

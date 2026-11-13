@@ -78,6 +78,13 @@ class RunsRepo:
         assignments, params = build_update(fields, _COLUMNS)
         await self.db.execute(f"UPDATE runs SET {assignments} WHERE id = ?", (*params, run_id))
 
+    async def recent(self, limit: int = 10) -> list[Run]:
+        """Most recent runs across all sites, newest first."""
+        rows = await self.db.fetchall(
+            "SELECT * FROM runs ORDER BY started_at DESC, id DESC LIMIT ?", (limit,)
+        )
+        return [_row_to_run(r) for r in rows]
+
     async def list_for_site(self, site_id: int, limit: int = 20) -> list[Run]:
         """Most recent runs of a site, newest first."""
         rows = await self.db.fetchall(

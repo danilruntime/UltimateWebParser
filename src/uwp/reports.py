@@ -3,6 +3,7 @@
 The report is written by the runner right after the rows are stored, because
 that is the only place that has the parser columns, the profile and the run id.
 """
+
 from __future__ import annotations
 
 import logging
@@ -10,13 +11,14 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from uwp import __version__
+from uwp import __version__, labels
 from uwp.config import Settings
 from uwp.domain import ExportMode, Profile, Proxy, Site
 from uwp.ods import prune_reports, report_filename, slugify, write_report
 from uwp.parsers.base import BaseParser
 
 log = logging.getLogger(__name__)
+
 
 # A report is only sent when the site is set to ``changes`` and at least one
 # row was new or changed; ``always`` ignores the diff and ``never`` skips it.
@@ -63,7 +65,11 @@ def report_meta(
     else:
         country = f", {proxy.country}" if proxy.country else ""
         proxy_text = f"{proxy.name} ({proxy.scheme}{country})"
-    profile_text = "чистый (ротация)" if profile is None else f"{profile.name} ({profile.kind})"
+    profile_text = (
+        "чистый (ротация)"
+        if profile is None
+        else f"{profile.name} ({labels.kind(profile.kind)})"
+    )
     meta = {
         "Сайт": site.name,
         "Парсер": parser.title,
@@ -121,8 +127,12 @@ def export_report(
         vanished=vanished,
     )
     # The «Новое» column belongs to the change report only.
-    flagged = new_keys if ExportMode(str(site.export_mode)) is ExportMode.changes else None
-    path = write_report(_unique_path(directory / filename), rows, parser.columns, meta, flagged)
+    flagged = (
+        new_keys if ExportMode(str(site.export_mode)) is ExportMode.changes else None
+    )
+    path = write_report(
+        _unique_path(directory / filename), rows, parser.columns, meta, flagged
+    )
     prune_reports(directory, settings.exports_retention)
     log.info("wrote report %s for site %s", path, site.slug)
     return path

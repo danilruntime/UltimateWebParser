@@ -1,7 +1,8 @@
 """Tests for the profile service and the bot keyboards around it."""
 import pytest
 
-from uwp.bot.handlers.profiles import profile_card_kb, profiles_kb, proxies_kb, vnc_kb
+from uwp.bot.handlers.profiles import profile_card_kb, profiles_kb, proxies_kb
+from uwp.bot.keyboards import vnc_session_kb
 from uwp.config import load_settings
 from uwp.db.database import Database
 from uwp.db.repo.profiles import ProfilesRepo
@@ -71,5 +72,5 @@ async def test_proxies_kb_and_vnc_kb():
     flat = [b.callback_data for row in proxies_kb([]).inline_keyboard for b in row]
     assert flat == ["proxy:new", "menu:main"]
 
-    flat = [b.callback_data for row in vnc_kb(9).inline_keyboard for b in row]
+    flat = [b.callback_data for row in vnc_session_kb(9).inline_keyboard for b in row]
     assert flat == ["vnc:done:9", "vnc:extend:9"]

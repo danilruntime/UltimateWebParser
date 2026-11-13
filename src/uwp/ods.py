@@ -2,6 +2,8 @@
 
 Files are produced directly with ``odfpy``; LibreOffice itself is never invoked.
 """
+from __future__ import annotations
+
 import re
 import unicodedata
 from datetime import datetime

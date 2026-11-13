@@ -121,4 +121,17 @@ def test_build_dispatcher_registers_routers():
 
     names = [router.name for router in dp.sub_routers]
 
-    assert names == ["common", "sites", "settings", "profiles"]
+    assert names == ["common", "sites", "settings", "profiles", "fallback"]
+
+
+def test_the_fallback_router_is_registered_last():
+    """A catch-all before the FSM handlers would swallow wizard input."""
+    dp = build_dispatcher(
+        Settings(admin_ids=[1]),
+        BotDeps(sites=object(), registry=object()),
+    )
+
+    names = [router.name for router in dp.sub_routers]
+
+    assert names[-1] == "fallback"
+    assert names.count("fallback") == 1

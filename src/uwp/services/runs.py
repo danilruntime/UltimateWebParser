@@ -1,4 +1,5 @@
 """Run history and retries driven from the bot."""
+
 from uwp.db.repo.jobs import JobsRepo
 from uwp.db.repo.runs import RunsRepo
 from uwp.db.repo.sites import SitesRepo
@@ -15,6 +16,10 @@ class RunsService:
 
     async def recent(self, site_id: int, limit: int = 10) -> list[Run]:
         return await self.runs.list_for_site(site_id, limit=limit)
+
+    async def latest(self, limit: int = 10) -> list[Run]:
+        """The newest runs across every site, for ``/runs``."""
+        return await self.runs.recent(limit=limit)
 
     async def retry(self, site_id: int) -> int | None:
         """Queue a manual run; ``None`` when one is already active."""

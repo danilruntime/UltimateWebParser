@@ -201,3 +201,5 @@ class VncSession(_Model):
     started_by: int | None = None
     # Updated from the websockify connection count; ``None`` means "no idle stop".
     last_client_at: datetime | None = None
+    # The page the login browser opens; the bot fills it, the worker launches.
+    url: str | None = None

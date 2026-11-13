@@ -43,7 +43,9 @@ def test_dockerfile_uses_tini_and_unprivileged_user():
 
     assert 'ENTRYPOINT ["/usr/bin/tini", "--", "/entrypoint.sh"]' in text
     assert 'CMD ["run"]' in text
-    assert "USER uwp" in text
+    # The entrypoint starts as root to fix a fresh volume's ownership, then
+    # drops to the unprivileged user before running the CLI.
+    assert "USER uwp" not in text
     assert "UWP_BROWSER_PATH=/opt/uwp/browser/chrome" in text
     assert "UWP_NO_SANDBOX=true" in text
 
@@ -53,6 +55,8 @@ def test_entrypoint_execs_the_cli():
 
     assert 'exec uwp "$@"' in text
     assert "set -e" in text
+    assert "setpriv" in text
+    assert "chown -R" in text
 
 
 def test_env_example_lists_the_required_variables():

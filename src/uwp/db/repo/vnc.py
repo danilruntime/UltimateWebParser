@@ -1,4 +1,5 @@
 """Repository for VNC login sessions."""
+
 from typing import Any
 
 import aiosqlite
@@ -18,6 +19,7 @@ _COLUMNS: dict[str, tuple[str, Any]] = {
     "expires_at": ("expires_at", dt),
     "started_by": ("started_by", lambda v: v),
     "last_client_at": ("last_client_at", dt),
+    "url": ("url", lambda v: v),
 }
 
 
@@ -34,6 +36,7 @@ def _row_to_session(row: aiosqlite.Row) -> VncSession:
         expires_at=parse_dt(row["expires_at"]),
         started_by=row["started_by"],
         last_client_at=parse_dt(row["last_client_at"]),
+        url=row["url"],
     )
 
 
@@ -42,15 +45,17 @@ class VncRepo:
         self.db = db
 
     async def get(self, session_id: int) -> VncSession | None:
-        row = await self.db.fetchone("SELECT * FROM vnc_sessions WHERE id = ?", (session_id,))
+        row = await self.db.fetchone(
+            "SELECT * FROM vnc_sessions WHERE id = ?", (session_id,)
+        )
         return None if row is None else _row_to_session(row)
 
     async def create(self, session: VncSession) -> int:
         return await self.db.execute(
             """INSERT INTO vnc_sessions (profile_id, port, display, password, token,
                                          status, started_at, expires_at, started_by,
-                                         last_client_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                         last_client_at, url)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 session.profile_id,
                 session.port,
@@ -62,6 +67,7 @@ class VncRepo:
                 dt(session.expires_at),
                 session.started_by,
                 dt(session.last_client_at),
+                session.url,
             ),
         )
 
@@ -76,6 +82,22 @@ class VncRepo:
         rows = await self.db.fetchall(
             "SELECT * FROM vnc_sessions WHERE status IN (?, ?) ORDER BY id",
             (VncStatus.requested.value, VncStatus.running.value),
+        )
+        return [_row_to_session(r) for r in rows]
+
+    async def pending_start(self) -> list[VncSession]:
+        """Sessions the bot asked for but no process has launched yet."""
+        rows = await self.db.fetchall(
+            "SELECT * FROM vnc_sessions WHERE status = ? ORDER BY id",
+            (VncStatus.requested.value,),
+        )
+        return [_row_to_session(r) for r in rows]
+
+    async def pending_stop(self) -> list[VncSession]:
+        """Sessions an admin asked to stop; the owner kills the processes."""
+        rows = await self.db.fetchall(
+            "SELECT * FROM vnc_sessions WHERE status = ? ORDER BY id",
+            (VncStatus.stopping.value,),
         )
         return [_row_to_session(r) for r in rows]
 

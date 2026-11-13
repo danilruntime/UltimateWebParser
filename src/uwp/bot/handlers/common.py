@@ -1,4 +1,5 @@
 """Handlers shared by every screen: /start, /help, /id, /sites and the menu."""
+
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
@@ -7,8 +8,10 @@ from uwp.bot import keyboards, texts
 from uwp.timeutil import format_local
 
 
-def build_router(settings, sites_service) -> Router:
+def build_router(settings, deps) -> Router:
     router = Router(name="common")
+    sites_service = deps.sites
+    runs = deps.runs
 
     @router.message(Command("start"))
     async def start_message(message: Message) -> None:
@@ -26,12 +29,53 @@ def build_router(settings, sites_service) -> Router:
     async def list_sites(message: Message) -> None:
         await send_sites(message, sites_service, settings)
 
+    @router.message(Command("runs"))
+    async def latest_runs(message: Message) -> None:
+        items = await runs.latest(limit=10)
+        if not items:
+            await message.answer(texts.NO_RUNS)
+            return
+        names = {site.id: site.name for site in await sites_service.list()}
+        lines = [texts.RUNS_HEADER]
+        for run in items:
+            name = names.get(run.site_id, f"сайт {run.site_id}")
+            lines.append(
+                f"{_mark(run.status)} {format_local(run.started_at, settings.tz)} — "
+                f"{texts.esc(name)}: {texts.status_label(run.status)}, "
+                f"{run.rows_count} строк"
+            )
+        await message.answer("\n".join(lines))
+
     @router.callback_query(F.data == "menu:main")
     async def back_to_menu(callback: CallbackQuery) -> None:
         await callback.message.edit_text(texts.MENU, reply_markup=keyboards.menu_kb())
         await callback.answer()
 
     return router
+
+
+def build_fallback_router() -> Router:
+    """The catch-all must be registered after every FSM input handler.
+
+    Otherwise it would eat the wizard's text (a profile name, an interval) and
+    the admin would see «Не понял команду» instead of a saved setting.
+    """
+    router = Router(name="fallback")
+
+    @router.message(F.text)
+    async def unknown(message: Message) -> None:
+        await message.answer(texts.UNKNOWN_COMMAND)
+
+    return router
+
+
+def _mark(status) -> str:
+    return {
+        "ok": "✅",
+        "partial": "⚠️",
+        "failed": "❌",
+        "canceled": "⏹",
+    }.get(str(status), "•")
 
 
 async def send_sites(message: Message, sites_service, settings) -> None:

@@ -6,6 +6,7 @@ never mixes, say, a Windows platform with a macOS timezone.
 """
 import random
 import shutil
+import sqlite3
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -212,6 +213,11 @@ class ProfileManager:
         )
         try:
             profile.id = await self.repo.create(profile)
+        except sqlite3.IntegrityError:
+            # ``profiles.name`` is UNIQUE; a duplicate is an admin mistake, not
+            # a crash, and the bot must say so in the wizard.
+            shutil.rmtree(user_data_dir, ignore_errors=True)
+            raise ValueError(f"профиль с именем «{name}» уже есть") from None
         except BaseException:
             shutil.rmtree(user_data_dir, ignore_errors=True)
             raise

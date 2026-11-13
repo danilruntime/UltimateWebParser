@@ -1,4 +1,5 @@
 """Profiles, proxies, VNC login and run history screens."""
+
 import logging
 
 from aiogram import F, Router
@@ -11,7 +12,7 @@ from aiogram.types import (
     Message,
 )
 
-from uwp.bot import texts
+from uwp.bot import keyboards, texts
 from uwp.domain import ProfileStatus
 from uwp.services.vnc import session_text
 from uwp.timeutil import format_local
@@ -44,7 +45,13 @@ def profiles_kb(profiles) -> InlineKeyboardMarkup:
 
 
 def profile_card_kb(profile) -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton(text="🖥 Войти", callback_data=f"profile:login:{profile.id}")]]
+    rows = [
+        [
+            InlineKeyboardButton(
+                text="🖥 Войти", callback_data=f"profile:login:{profile.id}"
+            )
+        ]
+    ]
     if profile.status == ProfileStatus.login:
         rows.append(
             [
@@ -54,7 +61,11 @@ def profile_card_kb(profile) -> InlineKeyboardMarkup:
             ]
         )
     rows.append(
-        [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"profile:del:{profile.id}")]
+        [
+            InlineKeyboardButton(
+                text="🗑 Удалить", callback_data=f"profile:del:{profile.id}"
+            )
+        ]
     )
     rows.append([InlineKeyboardButton(text=texts.BACK, callback_data="profiles:list")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -62,27 +73,18 @@ def profile_card_kb(profile) -> InlineKeyboardMarkup:
 
 def proxies_kb(proxies) -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text=f"🌍 {proxy.name}", callback_data=f"proxy:{proxy.id}")]
+        [
+            InlineKeyboardButton(
+                text=f"🌍 {proxy.name}", callback_data=f"proxy:{proxy.id}"
+            )
+        ]
         for proxy in proxies
     ]
-    rows.append([InlineKeyboardButton(text="➕ Новый прокси", callback_data="proxy:new")])
+    rows.append(
+        [InlineKeyboardButton(text="➕ Новый прокси", callback_data="proxy:new")]
+    )
     rows.append([InlineKeyboardButton(text=texts.BACK, callback_data="menu:main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def vnc_kb(session_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="✅ Готово", callback_data=f"vnc:done:{session_id}"
-                ),
-                InlineKeyboardButton(
-                    text="⏱ +30 мин", callback_data=f"vnc:extend:{session_id}"
-                ),
-            ]
-        ]
-    )
 
 
 def build_router(settings, deps) -> Router:
@@ -153,17 +155,23 @@ def build_router(settings, deps) -> Router:
             await callback.answer(str(exc), show_alert=True)
             return
         await callback.message.answer(
-            session_text(info, settings.vnc_ttl_minutes), reply_markup=vnc_kb(info.session_id)
+            session_text(info, settings.vnc_ttl_minutes),
+            reply_markup=keyboards.vnc_session_kb(info.session_id),
         )
         await callback.answer()
 
     @router.callback_query(F.data.regexp(r"^profile:done:\d+$"))
     async def finish_login(callback: CallbackQuery) -> None:
         profile_id = int(callback.data.rsplit(":", 1)[1])
-        profile = await profiles.get(profile_id)
-        if profile is not None:
+        # Freeing the profile here would let the next run open a second
+        # Chromium on the same user-data-dir while the VNC browser is alive.
+        # Stopping the session is the only correct way to finish a login.
+        session = await vnc.active_session(profile_id)
+        if session is not None:
+            await vnc.mark_done(session.id)
+        else:
             await profiles.release(profile_id)
-            profile = await profiles.get(profile_id)
+        profile = await profiles.get(profile_id)
         await callback.message.edit_text(
             texts.PROFILE_DONE.format(name=profile.name if profile else ""),
             reply_markup=profile_card_kb(profile) if profile else None,
@@ -205,12 +213,21 @@ def build_router(settings, deps) -> Router:
             await callback.answer("Прокси не найден", show_alert=True)
             return
         rows = [
-            [InlineKeyboardButton(text="🔌 Проверить", callback_data=f"proxy:test:{proxy.id}")],
-            [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"proxy:del:{proxy.id}")],
+            [
+                InlineKeyboardButton(
+                    text="🔌 Проверить", callback_data=f"proxy:test:{proxy.id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🗑 Удалить", callback_data=f"proxy:del:{proxy.id}"
+                )
+            ],
             [InlineKeyboardButton(text=texts.BACK, callback_data="proxies:list")],
         ]
         await callback.message.edit_text(
-            texts.proxy_card(proxy), reply_markup=InlineKeyboardMarkup(inline_keyboard=rows)
+            texts.proxy_card(proxy),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
         )
         await callback.answer()
 
@@ -253,11 +270,20 @@ def build_router(settings, deps) -> Router:
         for run in items:
             lines.append(
                 f"{_status_mark(run.status)} {format_local(run.started_at, settings.tz)} — "
-                f"{run.rows_count} строк, новых {run.new_count}"
+                f"{texts.status_label(run.status)}, {run.rows_count} строк, "
+                f"новых {run.new_count}"
             )
         rows = [
-            [InlineKeyboardButton(text="🔁 Повторить", callback_data=f"run:retry:{site_id}")],
-            [InlineKeyboardButton(text=texts.BACK, callback_data=f"site:settings:{site_id}")],
+            [
+                InlineKeyboardButton(
+                    text="🔁 Повторить", callback_data=f"run:retry:{site_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=texts.BACK, callback_data=f"site:settings:{site_id}"
+                )
+            ],
         ]
         await callback.message.edit_text(
             "\n".join(lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=rows)
@@ -287,4 +313,3 @@ def _status_mark(status) -> str:
         "running": "⏳",
         "canceled": "🚫",
     }.get(str(status), "•")
-

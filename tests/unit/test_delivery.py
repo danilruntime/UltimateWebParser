@@ -181,3 +181,87 @@ async def test_expired_events_are_purged(env):
     await delivery.tick(now=utcnow() + timedelta(days=5))
 
     assert await bus.pending(111, utcnow() + timedelta(days=5)) == []
+
+
+async def test_a_failed_export_is_reported_not_silenced(env):
+    """The run was fine, the file was not: the admin must hear why."""
+    settings, bus, _tmp_path = env
+    bot = FakeBot()
+    delivery = EventDelivery(bot, bus, settings)
+    await bus.emit(
+        "run_finished",
+        payload={
+            "site": "Steam",
+            "rows": 10,
+            "new": 2,
+            "report_status": "failed",
+            "report_error": "OSError: no space left on device",
+        },
+    )
+
+    await delivery.tick()
+
+    joined = "\n".join(text for _, text, *_ in bot.messages)
+    assert "Отчёт не создан" in joined
+    assert "no space left" in joined
+    assert bot.documents == []
+
+
+async def test_a_partial_run_says_so_and_lists_the_notes(env):
+    settings, bus, tmp_path = env
+    report = tmp_path / "report.ods"
+    report.write_bytes(b"data")
+    bot = FakeBot()
+    delivery = EventDelivery(bot, bus, settings)
+    await bus.emit(
+        "run_finished",
+        payload={
+            "site": "Steam",
+            "rows": 7,
+            "new": 1,
+            "status": "partial",
+            "notes": "страница 2 не открылась",
+            "report_path": str(report),
+        },
+    )
+
+    await delivery.tick()
+
+    caption = bot.documents[0][2]
+    assert "частичный" in caption
+    assert "страница 2 не открылась" in caption
+
+
+async def test_only_recipients_get_the_report(env):
+    """A muted admin keeps bot access but must not be pinged."""
+    settings, bus, tmp_path = env
+    report = tmp_path / "report.ods"
+    report.write_bytes(b"data")
+    bot = FakeBot()
+    delivery = EventDelivery(bot, bus, settings, recipients=[111])
+    await bus.emit("run_finished", payload={"report_path": str(report), "site": "S"})
+
+    await delivery.tick()
+
+    assert [d[0] for d in bot.documents] == [111]
+
+
+async def test_a_login_wall_offers_the_profile_button(env):
+    settings, bus, _tmp_path = env
+    bot = FakeBot()
+    delivery = EventDelivery(bot, bus, settings)
+    await bus.emit(
+        "run_failed",
+        payload={
+            "text": "нужен вход",
+            "error_kind": "login_required",
+            "profile_id": 7,
+            "site": "Steam",
+            "site_id": 3,
+        },
+    )
+
+    await delivery.tick()
+
+    buttons = bot.messages[0][2].inline_keyboard[0]
+    assert [b.callback_data for b in buttons] == ["profile:login:7", "run:retry:3"]

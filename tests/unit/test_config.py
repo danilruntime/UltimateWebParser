@@ -85,3 +85,19 @@ def test_load_settings_reads_dotenv(tmp_path, monkeypatch):
     assert s.admin_ids == [7, 8]
     assert s.run_timeout == 42
     assert s.db_path == tmp_path / "d" / "uwp.db"
+
+
+def test_two_settings_do_not_share_the_admin_list():
+    """A mutable class default would leak ids between tests and processes."""
+    first = load_settings({})
+    second = load_settings({})
+
+    first.admin_ids.append(999)
+
+    assert second.admin_ids == []
+
+
+def test_explicit_env_does_not_need_a_json_list():
+    settings = load_settings({"UWP_ADMIN_IDS": "111, 222"})
+
+    assert settings.admin_ids == [111, 222]

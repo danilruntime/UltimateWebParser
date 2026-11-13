@@ -2,7 +2,7 @@
 from collections.abc import Mapping
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import (
     BaseSettings,
     DotEnvSettingsSource,
@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="UWP_", env_file=".env", extra="ignore")
 
     bot_token: str = ""
-    admin_ids: list[int] = []
+    admin_ids: list[int] = Field(default_factory=list)
     data_dir: Path = Path("data")
     tz: str = "Europe/Moscow"
     browser_path: Path | None = None
@@ -116,7 +116,13 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         # Explicit values win over the process environment; fields absent from ``env``
         # fall back to the class defaults, so tests never depend on the real environment.
         explicit = {key[4:].lower(): value for key, value in env.items() if key.startswith("UWP_")}
-        defaults = {name: field.get_default() for name, field in Settings.model_fields.items()}
+        # ``call_default_factory=True``: a plain ``get_default()`` returns
+        # ``PydanticUndefined`` for fields declared with ``default_factory``
+        # (``admin_ids``), which would leak the sentinel into the constructor.
+        defaults = {
+            name: field.get_default(call_default_factory=True)
+            for name, field in Settings.model_fields.items()
+        }
         settings = Settings(_env_file=None, **{**defaults, **explicit})
     for directory in (
         settings.data_dir,

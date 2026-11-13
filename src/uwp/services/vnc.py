@@ -1,4 +1,5 @@
 """VNC login sessions driven from the bot."""
+
 from __future__ import annotations
 
 import logging
@@ -8,7 +9,7 @@ from uwp.config import Settings
 from uwp.db.repo.profiles import ProfilesRepo
 from uwp.db.repo.sites import SitesRepo
 from uwp.db.repo.vnc import VncRepo
-from uwp.domain import ProfileStatus, VncSession
+from uwp.domain import VncSession
 from uwp.timeutil import utcnow
 from uwp.vnc import VncInfo, VncManager
 
@@ -29,6 +30,7 @@ class VncService:
         settings: Settings,
         sessions: VncRepo,
         parser_urls: dict[str, str] | None = None,
+        eager_launch: bool = True,
     ) -> None:
         self.manager = manager
         self.profiles = profiles
@@ -36,6 +38,9 @@ class VncService:
         self.settings = settings
         self.sessions = sessions
         self.parser_urls = parser_urls or {}
+        # In split mode the bot process has no GUI stack: it books the session
+        # and the worker launches it on its next tick.
+        self.eager_launch = eager_launch
 
     async def request(
         self,
@@ -48,23 +53,36 @@ class VncService:
         if profile is None:
             raise ValueError(f"профиль {profile_id} не найден")
         url = FALLBACK_URL
+        proxy_id = profile.proxy_id
         if site_id is not None:
             site = await self.sites.get(site_id)
             if site is not None:
                 url = self.parser_urls.get(site.parser_key, FALLBACK_URL)
-        proxy_url = self._proxy_url(profile.proxy_id)
-        info = await self.manager.start(
-            profile, url, proxy_url=proxy_url, started_by=started_by
-        )
-        return info
+                # Site proxy wins over the profile's own, as the spec requires.
+                proxy_id = site.proxy_id or proxy_id
+        proxy_url = self._proxy_url(proxy_id)
+        if self.eager_launch:
+            return await self.manager.reserve_and_launch(
+                profile, url, proxy_url=proxy_url, started_by=started_by
+            )
+        return await self.manager.reserve(profile, url, started_by=started_by)
 
     async def stop(self, session_id: int) -> None:
-        await self.manager.stop(session_id)
+        await self.manager.request_stop(session_id)
 
     async def list(self) -> list[VncSession]:
         return await self.manager.list()
 
-    async def extend(self, session_id: int, minutes: int = EXTEND_MINUTES) -> VncSession:
+    async def active_session(self, profile_id: int) -> VncSession | None:
+        """The login session of ``profile_id`` that is still running, if any."""
+        for session in await self.manager.list():
+            if session.profile_id == profile_id:
+                return session
+        return None
+
+    async def extend(
+        self, session_id: int, minutes: int = EXTEND_MINUTES
+    ) -> VncSession:
         """Push a session's hard TTL further so the admin can keep working."""
         session = await self.sessions.get(session_id)
         if session is None:
@@ -78,15 +96,16 @@ class VncService:
         return max(0, int((session.expires_at - utcnow()).total_seconds() // 60))
 
     async def mark_done(self, session_id: int) -> None:
-        """The admin says login is finished: stop the stack unless already gone."""
+        """The admin says login is finished: stop the stack unless already gone.
+
+        Use the request path, not ``stop``: in split mode the bot process does
+        not own the processes, so it must leave the kill to the worker. The
+        worker frees the profile once the stack is really gone.
+        """
         session = await self.sessions.get(session_id)
         if session is None:
             return
-        await self.manager.stop(session_id)
-        profile = await self.profiles.get(session.profile_id)
-        if profile is not None and profile.status == ProfileStatus.login:
-            await self.profiles.update(profile.id, status=str(ProfileStatus.free))
-
+        await self.manager.request_stop(session_id)
 
     def _proxy_url(self, proxy_id: int | None) -> str | None:
         """A loopback bridge URL for the profile's proxy.

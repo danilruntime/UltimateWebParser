@@ -1,4 +1,5 @@
 """Background delivery of queued events to the admins' Telegram chats."""
+
 import asyncio
 import logging
 from datetime import datetime
@@ -35,10 +36,20 @@ class EventDelivery:
     Telegram outage must never lose a report.
     """
 
-    def __init__(self, bot: Any, bus: EventBus, settings: Settings) -> None:
+    def __init__(
+        self,
+        bot: Any,
+        bus: EventBus,
+        settings: Settings,
+        recipients: list[int] | None = None,
+    ) -> None:
         self.bot = bot
         self.bus = bus
         self.settings = settings
+        # The runtime resolves this as "environment admins ∪ unmuted DB admins".
+        self.recipients = list(
+            recipients if recipients is not None else settings.admin_ids
+        )
         self._last_purge: datetime | None = None
 
     async def run(self, stop: asyncio.Event) -> None:
@@ -55,15 +66,20 @@ class EventDelivery:
     async def tick(self, now: datetime | None = None) -> None:
         """Deliver everything pending; also purge expired events hourly."""
         now = now or utcnow()
-        if self._last_purge is None or (now - self._last_purge).total_seconds() >= PURGE_EVERY_SECONDS:
+        if (
+            self._last_purge is None
+            or (now - self._last_purge).total_seconds() >= PURGE_EVERY_SECONDS
+        ):
             await self.bus.purge(now)
             self._last_purge = now
-        for admin_id in self.settings.admin_ids:
+        for admin_id in self.recipients:
             for event in await self.bus.pending(admin_id, now):
                 try:
                     await self._deliver(admin_id, event)
                 except Exception:
-                    log.exception("delivering event %s to %s failed", event.id, admin_id)
+                    log.exception(
+                        "delivering event %s to %s failed", event.id, admin_id
+                    )
                     continue
                 await self.bus.mark_delivered(event.id, admin_id)
 
@@ -81,35 +97,46 @@ class EventDelivery:
         await self.bot.send_message(admin_id, _text_for(event))
 
     async def _drop(self, event: Event) -> None:
-        for admin_id in self.settings.admin_ids:
+        for admin_id in self.recipients:
             await self.bus.mark_delivered(event.id, admin_id)
 
     async def _send_report(self, admin_id: int, event: Event) -> None:
-        path = (event.payload or {}).get("report_path")
+        payload = event.payload or {}
+        path = payload.get("report_path")
         caption = _caption_for(event)
         if path and Path(path).is_file():
-            await self.bot.send_document(
-                admin_id, FSInputFile(path), caption=caption
+            await self.bot.send_document(admin_id, FSInputFile(path), caption=caption)
+            return
+        if payload.get("report_status") == "failed":
+            # The run was fine but the export was not: say so, do not pretend.
+            reason = payload.get("report_error") or "неизвестная ошибка"
+            await self.bot.send_message(
+                admin_id, f"{caption}\n⚠️ Отчёт не создан: {reason}"
             )
             return
         log.warning("run %s has no report file (%s)", event.run_id, path)
         await self.bot.send_message(admin_id, caption)
 
     async def _send_failure(self, admin_id: int, event: Event) -> None:
-        """Text plus the run's screenshot, with a «Повторить» button when possible."""
+        """Text plus the run's screenshot, with action buttons when possible."""
         payload = event.payload or {}
-        markup = None
+        buttons = []
         if payload.get("site_id") is not None:
-            markup = InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButton(
-                            text="🔁 Повторить",
-                            callback_data=f"run:retry:{payload['site_id']}",
-                        )
-                    ]
-                ]
+            buttons.append(
+                InlineKeyboardButton(
+                    text="🔁 Повторить", callback_data=f"run:retry:{payload['site_id']}"
+                )
             )
+        # A login wall is fixed in the profile, not by retrying blindly.
+        if payload.get("error_kind") == "login_required" and payload.get("profile_id"):
+            buttons.insert(
+                0,
+                InlineKeyboardButton(
+                    text="🖥 Войти в профиль",
+                    callback_data=f"profile:login:{payload['profile_id']}",
+                ),
+            )
+        markup = InlineKeyboardMarkup(inline_keyboard=[buttons]) if buttons else None
         screenshot = payload.get("screenshot")
         if screenshot and Path(screenshot).is_file():
             try:
@@ -120,7 +147,9 @@ class EventDelivery:
                     reply_markup=markup,
                 )
                 # The caption is short, so the full error follows as text.
-                await self.bot.send_message(admin_id, _text_for(event), reply_markup=markup)
+                await self.bot.send_message(
+                    admin_id, _text_for(event), reply_markup=markup
+                )
                 return
             except Exception:
                 log.exception("sending the screenshot of event %s failed", event.id)
@@ -133,7 +162,13 @@ def _caption_for(event: Event) -> str:
     if event.kind == RUN_FINISHED:
         rows = payload.get("rows", 0)
         new = payload.get("new", 0)
-        return f"📊 {site}\nСтрок: {rows}, новых: {new}"
+        head = "⚠️ Прогон частичный" if payload.get("status") == "partial" else "📊"
+        text = f"{head} {site}\nСтрок: {rows}, новых: {new}"
+        if payload.get("notes"):
+            text += f"\n{payload['notes']}"
+        if payload.get("report_status") == "failed":
+            text += "\n⚠️ Отчёт не создан"
+        return text
     if event.kind == RUN_FAILED:
         reason = payload.get("text") or payload.get("error") or "неизвестная ошибка"
         return f"❌ {site}: {reason}"
@@ -159,5 +194,7 @@ def _text_for(event: Event) -> str:
     if event.kind == VNC_STOPPED:
         return "🖥 Сессия входа завершена."
     if event.kind == VNC_FAILED:
-        return "🖥 Не удалось запустить сессию входа: " + str(payload.get("error") or "—")
+        return "🖥 Не удалось запустить сессию входа: " + str(
+            payload.get("error") or "—"
+        )
     return f"Уведомление: {event.kind}"

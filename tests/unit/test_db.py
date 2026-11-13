@@ -52,8 +52,8 @@ def make_profile(name: str = "p1", **kw) -> Profile:
 
 async def test_migrate_is_idempotent(db):
     await db.migrate()
-    row = await db.fetchone("SELECT version FROM schema_version")
-    assert row["version"] == 1
+    row = await db.fetchone("SELECT MAX(version) AS version FROM schema_version")
+    assert row["version"] == 2
 
 
 async def test_failing_migration_rolls_back_and_keeps_connection_usable(db, monkeypatch):
@@ -63,8 +63,8 @@ async def test_failing_migration_rolls_back_and_keeps_connection_usable(db, monk
 
     real_load_migrations = database_module._load_migrations
     bad = (
-        2,
-        "002_bad.sql",
+        99,
+        "099_bad.sql",
         (
             "CREATE TABLE half_applied (id INTEGER PRIMARY KEY);\n"
             "INSERT INTO no_such_table (x) VALUES (1);\n"
@@ -76,7 +76,7 @@ async def test_failing_migration_rolls_back_and_keeps_connection_usable(db, monk
     with pytest.raises(sqlite3.OperationalError):
         await db.migrate()
     assert (await db.fetchone("SELECT 1 AS one"))["one"] == 1
-    assert await db.fetchone("SELECT * FROM schema_version WHERE version = 2") is None
+    assert await db.fetchone("SELECT * FROM schema_version WHERE version = 99") is None
     assert await db.fetchone(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='half_applied'"
     ) is None

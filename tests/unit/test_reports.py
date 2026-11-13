@@ -176,7 +176,7 @@ def test_meta_has_no_proxy_password_and_shows_the_local_time(settings):
     assert "s3cret" not in " ".join(meta.values())
     assert "user" not in meta["Прокси"]
     assert meta["Прокси"] == "DE-1 (http, Германия)"
-    assert meta["Профиль"] == "Steam-RU (persistent)"
+    assert meta["Профиль"] == "Steam-RU (постоянный)"
     assert meta["Время"] == "13.11.2026 15:30"
     assert meta["Новых"] == "2" and meta["Изменённых"] == "1" and meta["Исчезло"] == "3"
     assert meta["changed_keys"] == "1"

@@ -1,4 +1,5 @@
 """Bot assembly: dispatcher with routers, admin gate and polling entry point."""
+
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -30,19 +31,26 @@ class BotDeps:
     extra: dict[str, Any] = field(default_factory=dict)
 
 
-def build_dispatcher(settings: Settings, deps: BotDeps) -> Dispatcher:
-    """Register the admin gate and every router, in a stable order."""
+def build_dispatcher(
+    settings: Settings, deps: BotDeps, admin_ids: set[int] | None = None
+) -> Dispatcher:
+    """Register the admin gate and every router, in a stable order.
+
+    ``admin_ids`` defaults to the environment list; the runtime passes the union
+    with the ``admins`` table so rows created by ``uwp init`` also work.
+    """
     dp = Dispatcher()
-    gate = AdminOnlyMiddleware(set(settings.admin_ids))
+    gate = AdminOnlyMiddleware(set(admin_ids or ()) or set(settings.admin_ids))
     # Outer middleware runs once per update, before handler resolution, so a
     # non-admin gets exactly one refusal even when several handlers match.
     dp.message.outer_middleware(gate)
     dp.callback_query.outer_middleware(gate)
 
-    dp.include_router(common.build_router(settings, deps.sites))
-    dp.include_router(sites.build_router(settings, deps.sites, deps.registry))
+    dp.include_router(common.build_router(settings, deps))
+    dp.include_router(sites.build_router(settings, deps))
     dp.include_router(settings_handlers.build_router(settings, deps))
     dp.include_router(profiles.build_router(settings, deps))
+    dp.include_router(common.build_fallback_router())
     return dp
 
 

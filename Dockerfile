@@ -37,7 +37,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        xvfb x11vnc novnc websockify fluxbox tini \
+        xvfb x11vnc novnc websockify fluxbox tini util-linux \
         ca-certificates curl \
         fonts-liberation fonts-noto-color-emoji \
         libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libasound2 \
@@ -46,6 +46,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 1000 uwp \
     && useradd --uid 1000 --gid uwp --create-home --shell /bin/bash uwp
+
+# ``setpriv`` (util-linux) is how the entrypoint drops root after fixing the
+# data volume; ``getent``/``id`` come with libc-bin in the base image.
 
 WORKDIR /app
 
@@ -63,12 +66,14 @@ RUN chmod +x /entrypoint.sh /opt/uwp/browser/chrome \
     && mkdir -p /data \
     && chown -R uwp:uwp /data /opt/uwp
 
-USER uwp
+# The entrypoint starts as root only to make a fresh volume writable (Docker
+# creates bind mounts as root), then drops to uid 1000 before running the CLI.
 VOLUME ["/data"]
 EXPOSE 6000-6100
 
+# Through the entrypoint so the check runs as uid 1000, not as root.
 HEALTHCHECK --interval=60s --timeout=30s --start-period=30s --retries=3 \
-    CMD ["uwp", "doctor", "--quiet"]
+    CMD ["/entrypoint.sh", "doctor", "--quiet"]
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/entrypoint.sh"]
 CMD ["run"]

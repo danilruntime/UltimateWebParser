@@ -122,28 +122,35 @@ class Worker:
     async def _finish(
         self, job: Job, site: Site, outcome: RunOutcome, now: datetime
     ) -> None:
-        restarted = await self._maybe_retry(job, site, outcome, now)
-        if not restarted:
-            if outcome.status == RunStatus.canceled:
-                status = JobStatus.canceled
-            elif outcome.status in (RunStatus.ok, RunStatus.partial):
-                status = JobStatus.done
-            else:
-                status = JobStatus.failed
-            await self.jobs.finish(job.id, status, outcome.error)
-
         failed = outcome.status == RunStatus.failed
         failures = site.consecutive_failures + 1 if failed else 0
+
+        # A retryable failure goes back to the queue and is retried silently;
+        # the admin hears about it only once the attempts are exhausted.
+        if await self._maybe_retry(job, site, outcome, now):
+            await self.sites.update(
+                site.id,
+                last_run_at=now,
+                last_status="retrying",
+                consecutive_failures=failures,
+            )
+            return
+
+        if outcome.status == RunStatus.canceled:
+            status = JobStatus.canceled
+        elif outcome.status in (RunStatus.ok, RunStatus.partial):
+            status = JobStatus.done
+        else:
+            status = JobStatus.failed
+        await self.jobs.finish(job.id, status, outcome.error)
+
         await self.sites.update(
             site.id,
             last_run_at=now,
             last_status=str(outcome.status),
             consecutive_failures=failures,
         )
-        # A retryable failure is retried silently; the admin hears about it only
-        # once the attempts are exhausted.
-        if not restarted:
-            await self._notify(site, outcome, failures)
+        await self._notify(site, outcome, failures)
 
     async def _notify(self, site: Site, outcome: RunOutcome, failures: int) -> None:
         """Queue the admin notification of a finished run."""
@@ -157,14 +164,30 @@ class Worker:
             "rows": len(outcome.rows),
             "new": outcome.new_count,
             "run_id": outcome.run_id,
+            "notes": outcome.notes or "",
+            "duration_ms": outcome.duration_ms,
         }
         try:
             if outcome.status in (RunStatus.ok, RunStatus.partial):
-                payload = dict(base, report_path=str(outcome.report_path or ""))
+                # ``changes``/``never`` without a file must stay silent; the
+                # admin only hears about an export that was expected and broke.
+                if outcome.report_status == "skipped" and site.export_mode != "always":
+                    return
+                payload = dict(
+                    base,
+                    report_path=str(outcome.report_path or ""),
+                    report_status=outcome.report_status,
+                    report_error=outcome.report_error or "",
+                )
                 await self.bus.emit(RUN_FINISHED, site.id, outcome.run_id, payload)
             elif outcome.status == RunStatus.failed:
-                payload = dict(base, text=outcome.error or "неизвестная ошибка",
-                               error_kind=str(outcome.error_kind or ""))
+                payload = dict(
+                    base,
+                    text=outcome.error or "неизвестная ошибка",
+                    error_kind=str(outcome.error_kind or ""),
+                )
+                if outcome.profile_id is not None:
+                    payload["profile_id"] = outcome.profile_id
                 if outcome.artifacts_dir is not None:
                     screenshot = outcome.artifacts_dir / "screenshot.png"
                     if screenshot.is_file():

@@ -1,4 +1,5 @@
 """Tests for VNC login sessions: port selection, lifecycle and timeouts."""
+
 from datetime import timedelta
 
 import pytest
@@ -108,7 +109,14 @@ async def test_default_factory_builds_the_full_stack(tmp_path, monkeypatch):
     )
 
     names = [p.command[0] for p in spawned]
-    assert names == ["x11vnc", "Xvfb", "fluxbox", str(settings.browser_path), "x11vnc", "websockify"]
+    assert names == [
+        "x11vnc",
+        "Xvfb",
+        "fluxbox",
+        str(settings.browser_path),
+        "x11vnc",
+        "websockify",
+    ]
 
     x11vnc = spawned[-2].command
     assert "-afteraccept" in x11vnc, "x11vnc only knows -afteraccept/-gone hooks"
@@ -250,7 +258,9 @@ async def test_start_and_stop_session(env):
     procs: list[FakeProc] = []
     mgr = _manager(settings, db, procs)
 
-    info = await mgr.start(await profiles.get(pid), "https://store.steampowered.com/login/")
+    info = await mgr.start(
+        await profiles.get(pid), "https://store.steampowered.com/login/"
+    )
 
     assert info.port in (6100, 6101)
     assert len(info.password) == 12
@@ -331,7 +341,9 @@ async def test_idle_countdown_restarts_after_a_client_leaves(env):
     procs[-1].clients = 1
     await mgr.tick(utcnow())
 
-    assert (await repo.get(info.session_id)).last_client_at > utcnow() - timedelta(minutes=1)
+    assert (await repo.get(info.session_id)).last_client_at > utcnow() - timedelta(
+        minutes=1
+    )
 
 
 async def test_second_port_is_used_when_first_is_taken(env):
@@ -378,3 +390,59 @@ async def test_list_returns_active_sessions(env):
     active = await mgr.list()
 
     assert [s.id for s in active] == [info.session_id]
+
+
+async def test_reserved_session_is_launched_by_tick(env):
+    """Split mode: the bot reserves, the worker's tick starts the stack."""
+    settings, db, profiles, pid = env
+    procs: list[FakeProc] = []
+    mgr = _manager(settings, db, procs)
+    repo = VncRepo(db)
+
+    info = await mgr.reserve(await profiles.get(pid), "https://store.steampowered.com/")
+
+    session = await repo.get(info.session_id)
+    assert session.status == VncStatus.requested
+    assert session.url == "https://store.steampowered.com/"
+    assert procs == []
+
+    await mgr.tick(utcnow())
+
+    assert (await repo.get(info.session_id)).status == VncStatus.running
+    assert len(procs) == 1
+    assert procs[0].kw["url"] == "https://store.steampowered.com/"
+
+
+async def test_stop_requested_by_another_process_is_honoured(env):
+    """``uwp vnc stop`` runs in its own process: it can only mark the row."""
+    settings, db, profiles, pid = env
+    procs: list[FakeProc] = []
+    mgr = _manager(settings, db, procs)
+    repo = VncRepo(db)
+    info = await mgr.start(await profiles.get(pid), "https://example.com")
+
+    # A second manager stands in for the CLI process: no handles of its own.
+    cli = VncManager(
+        settings, ProfilesRepo(db), repo, process_factory=lambda **kw: FakeProc(**kw)
+    )
+    await cli.request_stop(info.session_id)
+    assert (await repo.get(info.session_id)).status == VncStatus.stopping
+
+    await mgr.tick(utcnow())
+
+    assert (await repo.get(info.session_id)).status == VncStatus.stopped
+    assert all(p.stopped for p in procs)
+    assert (await profiles.get(pid)).status == ProfileStatus.free
+
+
+async def test_expired_reservation_is_not_launched(env):
+    settings, db, profiles, pid = env
+    procs: list[FakeProc] = []
+    mgr = _manager(settings, db, procs)
+    repo = VncRepo(db)
+    info = await mgr.reserve(await profiles.get(pid), "https://example.com")
+
+    await mgr.tick(info.expires_at + timedelta(seconds=1))
+
+    assert (await repo.get(info.session_id)).status == VncStatus.stopped
+    assert procs == []

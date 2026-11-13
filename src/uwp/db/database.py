@@ -50,10 +50,14 @@ class Database:
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         conn = await aiosqlite.connect(self.path, isolation_level=None)
         conn.row_factory = aiosqlite.Row
+        # ``busy_timeout`` must come before ``journal_mode=WAL``: switching the
+        # journal needs a lock, and two processes opening the file at once (bot
+        # and worker in split mode, or the healthcheck) would otherwise raise
+        # "database is locked" and flap a healthy container.
+        await conn.execute("PRAGMA busy_timeout=5000")
         if self.path != ":memory:":
             await conn.execute("PRAGMA journal_mode=WAL")
         await conn.execute("PRAGMA foreign_keys=ON")
-        await conn.execute("PRAGMA busy_timeout=5000")
         self._conn = conn
 
     async def close(self) -> None:
