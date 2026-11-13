@@ -105,4 +105,4 @@ def test_build_dispatcher_registers_routers():
 
     names = [router.name for router in dp.sub_routers]
 
-    assert names == ["common", "sites", "settings"]
+    assert names == ["common", "sites", "settings", "profiles"]
