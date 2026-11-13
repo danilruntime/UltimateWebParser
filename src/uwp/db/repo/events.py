@@ -58,3 +58,9 @@ class EventsRepo:
                VALUES (?, ?, ?)""",
             (event_id, admin_id, to_db(now or utcnow())),
         )
+
+    async def purge(self, before: datetime) -> int:
+        """Delete events created before ``before``; deliveries cascade."""
+        return await self.db.execute_rowcount(
+            "DELETE FROM events WHERE created_at < ?", (to_db(before),)
+        )
