@@ -108,6 +108,9 @@ class Runtime:
 
 async def build_runtime(settings: Settings, *, with_bot: bool = True) -> Runtime:
     """Open the database, migrate it and construct every collaborator."""
+    # Fail before touching the database: a missing token must not leave an open
+    # connection (and its worker thread) behind.
+    bot = _make_bot(settings) if with_bot else NullBot()
     db = Database(settings.db_path)
     await db.connect()
     await db.migrate()
@@ -152,7 +155,6 @@ async def build_runtime(settings: Settings, *, with_bot: bool = True) -> Runtime
         runs=RunsService(runs, sites, jobs),
     )
 
-    bot = _make_bot(settings) if with_bot else NullBot()
     return Runtime(
         settings=settings,
         db=db,
@@ -167,10 +169,15 @@ async def build_runtime(settings: Settings, *, with_bot: bool = True) -> Runtime
 
 def _make_bot(settings: Settings):
     from aiogram import Bot
+    from aiogram.client.default import DefaultBotProperties
+    from aiogram.enums import ParseMode
 
     if not settings.bot_token:
         raise RuntimeError("UWP_BOT_TOKEN is not set")
-    return Bot(settings.bot_token)
+    return Bot(
+        settings.bot_token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
 
 
 async def run_combined(settings: Settings) -> None:

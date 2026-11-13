@@ -32,10 +32,6 @@ class ParamInput(StatesGroup):
     waiting = State()
 
 
-class ProfileNameInput(StatesGroup):
-    waiting = State()
-
-
 def parse_interval(text: str) -> tuple[int, int]:
     """Parse ``45-90``, ``45 90`` or ``60`` into ``(min, max)`` minutes."""
     match = _INTERVAL_RE.match(text or "")
@@ -136,8 +132,11 @@ def apply_param(parser: BaseParser, site: Site, name: str, raw: str) -> dict[str
     try:
         validated = parser.settings_model(**merged)
     except ValidationError as exc:
-        first = exc.errors()[0]
-        raise ValueError(first["msg"]) from exc
+        error = exc.errors()[0]
+        location = ".".join(str(part) for part in error.get("loc", ())) or name
+        hint = _bounds(field)
+        detail = f" ({hint})" if hint else ""
+        raise ValueError(f"недопустимое значение «{raw}» для {location}{detail}") from exc
     return validated.model_dump()
 
 
@@ -148,10 +147,32 @@ def _convert(raw: str, annotation: Any) -> Any:
             raise ValueError(f"допустимые значения: {', '.join(map(str, values))}")
         return raw
     if annotation is int:
-        return int(raw)
+        try:
+            return int(raw)
+        except ValueError:
+            raise ValueError("введите целое число") from None
     if annotation is float:
-        return float(raw)
+        try:
+            return float(raw)
+        except ValueError:
+            raise ValueError("введите число") from None
     return raw
+
+
+def _bounds(field: Any) -> str:
+    """A Russian hint about the allowed range of a numeric field."""
+    parts = []
+    for constraint in getattr(field, "metadata", ()) or ():
+        for attr, template in (
+            ("ge", "не меньше {}"),
+            ("gt", "больше {}"),
+            ("le", "не больше {}"),
+            ("lt", "меньше {}"),
+        ):
+            value = getattr(constraint, attr, None)
+            if value is not None:
+                parts.append(template.format(value))
+    return ", ".join(parts)
 
 
 def _field_title(field: Any) -> str:
@@ -173,20 +194,22 @@ def build_router(settings, deps) -> Router:
     service = deps.sites
 
     @router.callback_query(F.data.regexp(r"^site:settings:\d+$"))
-    async def open_settings(callback: CallbackQuery) -> None:
+    async def open_settings(callback: CallbackQuery, state: FSMContext) -> None:
+        await state.clear()
         site_id = int(callback.data.rsplit(":", 1)[1])
         site = await service.get(site_id)
         if site is None:
             await callback.answer("Сайт не найден", show_alert=True)
             return
         await callback.message.edit_text(
-            f"⚙️ <b>{site.name}</b>\nВыберите, что изменить:",
+            f"⚙️ <b>{texts.esc(site.name)}</b>\nВыберите, что изменить:",
             reply_markup=settings_kb(site),
         )
         await callback.answer()
 
     @router.callback_query(F.data.regexp(r"^set:back:\d+$"))
-    async def back_to_card(callback: CallbackQuery) -> None:
+    async def back_to_card(callback: CallbackQuery, state: FSMContext) -> None:
+        await state.clear()
         site_id = int(callback.data.rsplit(":", 1)[1])
         site = await service.get(site_id)
         if site is None:
@@ -238,7 +261,8 @@ def build_router(settings, deps) -> Router:
         await callback.answer()
 
     @router.callback_query(F.data.regexp(r"^set:profile:\d+$"))
-    async def choose_profile(callback: CallbackQuery) -> None:
+    async def choose_profile(callback: CallbackQuery, state: FSMContext) -> None:
+        await state.clear()
         site_id = int(callback.data.rsplit(":", 1)[1])
         site = await service.get(site_id)
         if site is None:
@@ -297,7 +321,8 @@ def build_router(settings, deps) -> Router:
         await callback.answer()
 
     @router.callback_query(F.data.regexp(r"^set:proxy:\d+$"))
-    async def choose_proxy(callback: CallbackQuery) -> None:
+    async def choose_proxy(callback: CallbackQuery, state: FSMContext) -> None:
+        await state.clear()
         site_id = int(callback.data.rsplit(":", 1)[1])
         proxies = await deps.proxies.list()
         rows = [
@@ -332,7 +357,8 @@ def build_router(settings, deps) -> Router:
         await callback.answer()
 
     @router.callback_query(F.data.regexp(r"^set:params:\d+$"))
-    async def open_params(callback: CallbackQuery) -> None:
+    async def open_params(callback: CallbackQuery, state: FSMContext) -> None:
+        await state.clear()
         site_id = int(callback.data.rsplit(":", 1)[1])
         site = await service.get(site_id)
         parser = deps.registry.get(site.parser_key) if site else None
@@ -345,14 +371,15 @@ def build_router(settings, deps) -> Router:
         await callback.answer()
 
     @router.callback_query(F.data.regexp(r"^set:\d+$"))
-    async def settings_root(callback: CallbackQuery) -> None:
+    async def settings_root(callback: CallbackQuery, state: FSMContext) -> None:
+        await state.clear()
         site_id = int(callback.data.split(":")[1])
         site = await service.get(site_id)
         if site is None:
             await callback.answer("Сайт не найден", show_alert=True)
             return
         await callback.message.edit_text(
-            f"⚙️ <b>{site.name}</b>", reply_markup=settings_kb(site)
+            f"⚙️ <b>{texts.esc(site.name)}</b>", reply_markup=settings_kb(site)
         )
         await callback.answer()
 

@@ -1,4 +1,6 @@
 """Profile management driven from the bot."""
+from __future__ import annotations
+
 import logging
 
 from uwp.config import Settings

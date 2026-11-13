@@ -44,7 +44,7 @@ async def send_sites(message: Message, sites_service, settings) -> None:
     lines = []
     for site in sites:
         mark = "🟢" if site.enabled else "🔴"
-        lines.append(f"{mark} <b>{site.name}</b>")
+        lines.append(f"{mark} <b>{texts.esc(site.name)}</b>")
         if site.next_run_at is not None:
             lines.append(f"   следующий: {format_local(site.next_run_at, settings.tz)}")
     await message.answer(

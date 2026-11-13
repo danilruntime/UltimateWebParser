@@ -92,7 +92,10 @@ def cmd_doctor(settings: Settings, quiet: bool = False) -> int:
     checks: list[tuple[str, bool, bool]] = []  # (text, ok, is_warning)
 
     def check(name: str, ok: bool, detail: str = "", warning: bool = False) -> None:
-        checks.append((f"{'✅' if ok else ('⚠️' if warning else '❌')} {name}{': ' + detail if detail else ''}", ok, warning))
+        # A detail only explains a problem, so a passing check stays terse.
+        suffix = "" if ok else (f": {detail}" if detail else "")
+        mark = "✅" if ok else ("⚠️" if warning else "❌")
+        checks.append((f"{mark} {name}{suffix}", ok, warning))
 
     for directory in (settings.data_dir, settings.profiles_dir, settings.exports_dir):
         try:
@@ -157,7 +160,8 @@ def cmd_doctor(settings: Settings, quiet: bool = False) -> int:
     if not quiet:
         for text, _ok, _warning in checks:
             _print(text)
-        _print("" if failed else "Всё в порядке.")
+        if not failed:
+            _print("Всё в порядке.")
     return 1 if failed else 0
 
 

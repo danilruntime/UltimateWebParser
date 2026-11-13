@@ -1,4 +1,6 @@
 """Site management used by the bot: create, toggle, run now and edit."""
+from __future__ import annotations
+
 import logging
 import re
 from datetime import datetime
@@ -64,18 +66,21 @@ class SiteService:
             await self.scheduler.on_enabled(site_id, now)
         else:
             await self.scheduler.on_disabled(site_id)
-        site = await self.sites.get(site_id)
-        assert site is not None
-        return site
+        return await self._require(site_id)
 
     async def run_now(self, site_id: int) -> int | None:
         """Queue a manual run; ``None`` when the site already has an active job."""
+        await self._require(site_id)
         return await self.jobs.create(site_id, "manual", priority=10)
 
     async def update(self, site_id: int, **fields: object) -> Site:
         await self.sites.update(site_id, **fields)
+        return await self._require(site_id)
+
+    async def _require(self, site_id: int) -> Site:
         site = await self.sites.get(site_id)
-        assert site is not None
+        if site is None:
+            raise ValueError(f"site {site_id} not found")
         return site
 
     async def delete(self, site_id: int) -> None:

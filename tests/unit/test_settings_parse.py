@@ -99,3 +99,19 @@ def test_export_cycles_always_changes_never():
     assert next_export(ExportMode.always) == ExportMode.changes
     assert next_export(ExportMode.changes) == ExportMode.never
     assert next_export(ExportMode.never) == ExportMode.always
+
+
+def test_apply_param_explains_a_bad_integer_in_russian():
+    parser = SteamDealsParser()
+    site = _site(parser_settings={})
+
+    with pytest.raises(ValueError, match="целое число"):
+        apply_param(parser, site, "max_pages", "abc")
+
+
+def test_apply_param_reports_the_range_in_russian():
+    parser = SteamDealsParser()
+    site = _site(parser_settings={})
+
+    with pytest.raises(ValueError, match="не больше 10"):
+        apply_param(parser, site, "max_pages", "99")

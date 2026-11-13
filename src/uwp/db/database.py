@@ -1,4 +1,6 @@
 """Async SQLite connection wrapper with numbered SQL migrations."""
+from __future__ import annotations
+
 import asyncio
 import logging
 import re
@@ -29,7 +31,7 @@ class Database:
         self._tx_lock = asyncio.Lock()
 
     @classmethod
-    async def in_memory(cls) -> "Database":
+    async def in_memory(cls) -> Database:
         """Open a private in-memory database (for tests)."""
         db = cls(":memory:")
         await db.connect()

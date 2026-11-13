@@ -1,4 +1,6 @@
 """Discovery registry for site parsers."""
+from __future__ import annotations
+
 import importlib
 import inspect
 import pkgutil
@@ -14,7 +16,7 @@ class ParserRegistry:
         self._broken: dict[str, str] = {}
 
     @classmethod
-    def discover(cls, package: str = "uwp.parsers") -> "ParserRegistry":
+    def discover(cls, package: str = "uwp.parsers") -> ParserRegistry:
         """Import every ``<package>.<name>.parser`` module and register its parser."""
         registry = cls()
         pkg = importlib.import_module(package)

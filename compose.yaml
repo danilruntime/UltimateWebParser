@@ -1,0 +1,26 @@
+# Combined deployment: the bot and the worker in one container.
+# Copy to ``.env`` and fill in the token and admin ids.
+services:
+  uwp:
+    build: .
+    image: ultimate-web-parser:latest
+    container_name: uwp
+    init: true
+    restart: unless-stopped
+    env_file:
+      # Optional: ``docker compose up`` works with plain ``-e`` flags too.
+      - path: .env
+        required: false
+    environment:
+      UWP_DATA_DIR: /data
+    volumes:
+      - ./data:/data:z
+    shm_size: 1gb
+    ports:
+      - "6000-6100:6000-6100"
+    healthcheck:
+      test: ["CMD", "uwp", "doctor", "--quiet"]
+      interval: 60s
+      timeout: 30s
+      start_period: 30s
+      retries: 3

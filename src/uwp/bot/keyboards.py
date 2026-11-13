@@ -14,6 +14,7 @@ def sites_list_kb(sites) -> InlineKeyboardMarkup:
             )
         ]
         for site in sites
+        if site.id is not None
     ]
     rows.append([InlineKeyboardButton(text=texts.ADD_SITE, callback_data="site:add")])
     return InlineKeyboardMarkup(inline_keyboard=rows)

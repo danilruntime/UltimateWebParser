@@ -1,4 +1,6 @@
 """Proxy management: parse URLs, store credentials, check reachability."""
+from __future__ import annotations
+
 import asyncio
 import base64
 import hashlib

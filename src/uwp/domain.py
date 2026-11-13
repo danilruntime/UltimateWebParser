@@ -1,4 +1,6 @@
 """Domain enums and plain pydantic models mirroring the SQLite rows."""
+from __future__ import annotations
+
 from datetime import datetime
 from enum import StrEnum
 from typing import Any
@@ -127,7 +129,7 @@ class Site(_Model):
     match_profile_to_proxy_country: bool = False
 
     @model_validator(mode="after")
-    def _check_interval(self) -> "Site":
+    def _check_interval(self) -> Site:
         if self.interval_min_min < 1 or self.interval_max_min < 1:
             raise ValueError("interval bounds must be >= 1 minute")
         if self.interval_min_min > self.interval_max_min:

@@ -4,7 +4,11 @@ from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.types import User
 
 from uwp.bot import texts
+from uwp.bot.app import BotDeps, build_dispatcher
+from uwp.bot.keyboards import site_card_kb, sites_list_kb
 from uwp.bot.middleware import AdminOnlyMiddleware
+from uwp.config import Settings
+from uwp.domain import Site
 
 
 class FakeEvent:
@@ -62,27 +66,42 @@ async def test_message_without_user_is_refused():
 
 
 def test_sites_keyboard_offers_every_site_and_add():
-    from uwp.bot.keyboards import sites_list_kb
-    from uwp.domain import Site
-
     sites = [
-        Site(slug="a", name="A", parser_key="steam_deals", interval_min_min=1,
+        Site(id=1, slug="a", name="A", parser_key="steam_deals", interval_min_min=1,
              interval_max_min=2, enabled=True),
-        Site(slug="b", name="B", parser_key="steam_deals", interval_min_min=1,
+        Site(id=2, slug="b", name="B", parser_key="steam_deals", interval_min_min=1,
              interval_max_min=2),
     ]
 
     rows = sites_list_kb(sites).inline_keyboard
 
-    assert [row[0].callback_data for row in rows] == ["site:None", "site:None", "site:add"]
+    assert [row[0].callback_data for row in rows] == ["site:1", "site:2", "site:add"]
     assert rows[0][0].text == "🟢 A"
     assert rows[1][0].text == "🔴 B"
 
 
-def test_site_card_keyboard_has_toggle_run_settings_back():
-    from uwp.bot.keyboards import site_card_kb
-    from uwp.domain import Site
+def test_sites_keyboard_skips_sites_without_an_id():
+    site = Site(slug="a", name="A", parser_key="steam_deals", interval_min_min=1,
+                interval_max_min=2)
 
+    rows = sites_list_kb([site]).inline_keyboard
+
+    assert [row[0].callback_data for row in rows] == ["site:add"]
+
+
+def test_gate_runs_as_outer_middleware():
+    dp = build_dispatcher(
+        Settings(admin_ids=[1]), BotDeps(sites=object(), registry=object())
+    )
+
+    # Outer middleware runs once per update, before handler resolution, so a
+    # non-admin cannot get one refusal per matching handler.
+    assert len(dp.message.outer_middleware) == 1
+    assert len(dp.callback_query.outer_middleware) == 1
+    assert len(dp.message.middleware) == 0
+
+
+def test_site_card_keyboard_has_toggle_run_settings_back():
     site = Site(
         id=5, slug="a", name="A", parser_key="steam_deals",
         interval_min_min=1, interval_max_min=2, enabled=True,
@@ -95,9 +114,6 @@ def test_site_card_keyboard_has_toggle_run_settings_back():
 
 
 def test_build_dispatcher_registers_routers():
-    from uwp.bot.app import BotDeps, build_dispatcher
-    from uwp.config import Settings
-
     dp = build_dispatcher(
         Settings(admin_ids=[1]),
         BotDeps(sites=object(), registry=object()),

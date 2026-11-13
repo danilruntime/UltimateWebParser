@@ -1,4 +1,6 @@
 """Repository for Telegram admin ids."""
+from __future__ import annotations
+
 from uwp.db.database import Database
 from uwp.timeutil import to_db, utcnow
 

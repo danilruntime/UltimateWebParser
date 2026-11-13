@@ -12,7 +12,6 @@ from aiogram.types import (
 )
 
 from uwp.bot import texts
-from uwp.bot.handlers.settings import ProfileNameInput
 from uwp.domain import ProfileStatus
 from uwp.services.vnc import session_text
 from uwp.timeutil import format_local
@@ -21,6 +20,10 @@ log = logging.getLogger(__name__)
 
 
 class ProxyInput(StatesGroup):
+    waiting = State()
+
+
+class ProfileNameInput(StatesGroup):
     waiting = State()
 
 
@@ -263,7 +266,11 @@ def build_router(settings, deps) -> Router:
 
     @router.callback_query(F.data.regexp(r"^run:retry:\d+$"))
     async def retry_run(callback: CallbackQuery) -> None:
-        job_id = await runs.retry(int(callback.data.rsplit(":", 1)[1]))
+        try:
+            job_id = await runs.retry(int(callback.data.rsplit(":", 1)[1]))
+        except ValueError:
+            await callback.answer("Сайт не найден", show_alert=True)
+            return
         await callback.answer(
             texts.SITE_STARTED if job_id is not None else texts.SITE_ALREADY_RUNNING,
             show_alert=job_id is None,

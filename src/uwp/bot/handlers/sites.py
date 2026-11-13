@@ -28,7 +28,7 @@ def build_router(settings, sites_service, registry) -> Router:
             next_run = (
                 format_local(site.next_run_at, settings.tz) if site.next_run_at else "—"
             )
-            lines.append(f"{mark} <b>{site.name}</b> — след. {next_run}")
+            lines.append(f"{mark} <b>{texts.esc(site.name)}</b> — след. {next_run}")
         await callback.message.edit_text(
             texts.SITES_HEADER + "\n\n" + "\n".join(lines),
             reply_markup=keyboards.sites_list_kb(sites),
@@ -75,7 +75,11 @@ def build_router(settings, sites_service, registry) -> Router:
     @router.callback_query(F.data.startswith("site:run:"))
     async def run_site(callback: CallbackQuery) -> None:
         site_id = int(callback.data.rsplit(":", 1)[1])
-        job_id = await sites_service.run_now(site_id)
+        try:
+            job_id = await sites_service.run_now(site_id)
+        except ValueError:
+            await callback.answer("Сайт не найден", show_alert=True)
+            return
         text = texts.SITE_STARTED if job_id is not None else texts.SITE_ALREADY_RUNNING
         await callback.answer(text, show_alert=job_id is None)
 

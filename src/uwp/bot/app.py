@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 
 from uwp.bot.handlers import common, profiles, sites
 from uwp.bot.handlers import settings as settings_handlers
@@ -32,8 +34,10 @@ def build_dispatcher(settings: Settings, deps: BotDeps) -> Dispatcher:
     """Register the admin gate and every router, in a stable order."""
     dp = Dispatcher()
     gate = AdminOnlyMiddleware(set(settings.admin_ids))
-    dp.message.middleware(gate)
-    dp.callback_query.middleware(gate)
+    # Outer middleware runs once per update, before handler resolution, so a
+    # non-admin gets exactly one refusal even when several handlers match.
+    dp.message.outer_middleware(gate)
+    dp.callback_query.outer_middleware(gate)
 
     dp.include_router(common.build_router(settings, deps.sites))
     dp.include_router(sites.build_router(settings, deps.sites, deps.registry))
@@ -46,7 +50,10 @@ async def run_bot(settings: Settings, deps: BotDeps) -> None:
     """Long-poll Telegram until stopped."""
     if not settings.bot_token:
         raise RuntimeError("UWP_BOT_TOKEN is not set")
-    bot = Bot(settings.bot_token)
+    bot = Bot(
+        settings.bot_token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
     dp = build_dispatcher(settings, deps)
     try:
         await dp.start_polling(bot)

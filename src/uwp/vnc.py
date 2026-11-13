@@ -3,6 +3,8 @@
 The bot only asks for a session and shows the link; everything else (Xvfb,
 window manager, browser, x11vnc, websockify) lives inside the worker.
 """
+from __future__ import annotations
+
 import asyncio
 import inspect
 import logging

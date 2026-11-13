@@ -93,3 +93,11 @@ async def test_list_returns_sites(env):
     await svc.create("steam_deals")
 
     assert len(await svc.list()) == 1
+
+
+async def test_run_now_on_a_missing_site_raises(env):
+    _db, sites, jobs = env
+    svc = SiteService(sites, jobs, Scheduler(sites, jobs), registry=_registry())
+
+    with pytest.raises(ValueError):
+        await svc.run_now(999)

@@ -3,6 +3,13 @@
 No user-visible English may leak from here: the bot speaks Russian only.
 """
 
+def esc(value) -> str:
+    """Escape a user-supplied string for the HTML parse mode."""
+    from html import escape
+
+    return escape(str(value), quote=False)
+
+
 ACCESS_DENIED = "⛔ Доступ только для администратора."
 SITES_HEADER = "🌐 Сайты"
 SITE_ADDED = "Сайт добавлен: {name}"
@@ -31,7 +38,7 @@ def site_card(site, next_run_local: str | None) -> str:
     """The text of one site card."""
     state = "🟢 включён" if site.enabled else "🔴 выключен"
     lines = [
-        f"<b>{site.name}</b>",
+        f"<b>{esc(site.name)}</b>",
         f"Парсер: <code>{site.parser_key}</code>",
         f"Состояние: {state}",
         f"Интервал: каждые {site.interval_min_min}–{site.interval_max_min} мин",
@@ -110,7 +117,7 @@ def profile_card(profile) -> str:
         "expired": "истёк",
     }.get(str(profile.status), str(profile.status))
     return (
-        f"👤 <b>{profile.name}</b>\n"
+        f"👤 <b>{esc(profile.name)}</b>\n"
         f"Состояние: {status}\n"
         f"Отпечаток: {profile.platform}, {profile.brand} {profile.brand_version}\n"
         f"Часовой пояс: {profile.timezone}, язык: {profile.locale}"
@@ -121,6 +128,6 @@ def proxy_card(proxy) -> str:
     auth = f", пользователь {proxy.username}" if proxy.username else ""
     country = f"\nСтрана: {proxy.country}" if proxy.country else ""
     return (
-        f"🌍 <b>{proxy.name}</b>\n"
+        f"🌍 <b>{esc(proxy.name)}</b>\n"
         f"{proxy.scheme}://{proxy.host}:{proxy.port}{auth}{country}"
     )
