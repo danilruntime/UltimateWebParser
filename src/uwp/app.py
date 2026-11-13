@@ -194,12 +194,20 @@ async def build_runtime(
 def _make_bot(settings: Settings):
     from aiogram import Bot
     from aiogram.client.default import DefaultBotProperties
+    from aiogram.client.session.aiohttp import AiohttpSession
     from aiogram.enums import ParseMode
 
     if not settings.bot_token:
         raise RuntimeError("UWP_BOT_TOKEN is not set")
+    session = None
+    if settings.telegram_proxy:
+        # SOCKS/HTTP proxy for Bot API calls only; scraping keeps its own
+        # per-site proxies. aiogram builds the connector from the URL, and
+        # SOCKS additionally requires the ``aiohttp-socks`` extra.
+        session = AiohttpSession(proxy=settings.telegram_proxy)
     return Bot(
         settings.bot_token,
+        session=session,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
 

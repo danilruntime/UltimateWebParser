@@ -66,12 +66,56 @@ docker compose up -d
 | `UWP_BOT_TOKEN` | — | Токен от @BotFather. Без него бот не стартует. |
 | `UWP_ADMIN_IDS` | пусто | Кто имеет доступ к боту. |
 | `UWP_SECRET_KEY` | — | Шифрование паролей прокси. Без ключа они лежат открыто (доктор предупредит). |
+| `UWP_TELEGRAM_PROXY` | — | Прокси только для Bot API, если `api.telegram.org` недоступен. Форматы: `socks5://host:port`, `http://user:pass@host:port`. |
 | `UWP_TZ` | `Europe/Moscow` | Часовой пояс дат в боте и отчётах. |
 | `UWP_PUBLIC_HOST` | `localhost` | Хост, по которому админ открывает noVNC. |
 | `UWP_DATA_DIR` | `/data` в образе | База, профили, отчёты, артефакты. |
 | `UWP_NO_SANDBOX` | `true` в образе | Нужен в Docker: у контейнера нет user namespaces. |
 
 Полный список с комментариями — в `.env.example`.
+
+### Если Telegram недоступен: `UWP_TELEGRAM_PROXY`
+
+Без прокси бот падает на старте с `aiogram.exceptions.TelegramNetworkError:
+HTTP Client says - Request timeout error`, а контейнер уходит в цикл
+перезапусков (`docker compose ps` показывает `Restarting`). Это значит, что
+контейнер не может открыть `api.telegram.org`, — обычно из-за блокировки или
+из-за того, что имя резолвится только в IPv6.
+
+```bash
+UWP_TELEGRAM_PROXY=socks5://127.0.0.1:2080
+```
+
+Прокси применяется **только к Bot API**; парсинг сайтов ходит через прокси,
+привязанные к сайтам, и это разные настройки. Схемы: `socks5://` (нужен пакет
+`aiohttp-socks`, он уже в образе), `socks4://`, `http://` и `https://`; логин и
+пароль — прямо в URL.
+
+Проверка:
+
+```bash
+docker compose exec uwp uwp doctor | grep -i прокси
+```
+
+`doctor` открывает `api.telegram.org` через прокси и печатает причину отказа
+(недоступен порт, таймаут TLS, неверная схема). Пароль в выводе маскируется.
+
+**Прокси на `127.0.0.1` хоста.** В обычном (bridged) контейнере `127.0.0.1` —
+это сам контейнер, поэтому до прокси на хосте он не дотянется. Два способа:
+
+```bash
+# 1. Дать контейнеру сеть хоста (порт 2080 сразу виден как 127.0.0.1)
+docker compose -f compose.yaml -f compose.hostnet.yaml up -d --build
+
+# 2. Слушать на LAN-адресе хоста и указать его в .env
+UWP_TELEGRAM_PROXY=socks5://192.168.1.10:2080
+```
+
+`compose.hostnet.yaml` — overlay на несколько строк; для split-режима есть
+`compose.split.hostnet.yaml`, и там host-сеть получает только `bot` (единственный
+процесс, который ходит в Telegram), а `worker` остаётся в bridge и продолжает
+публиковать порты VNC. VNC-порты в host-сети публиковать не нужно, но такой
+контейнер на машине может быть только один.
 
 ## Повседневное использование
 

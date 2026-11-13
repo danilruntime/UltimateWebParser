@@ -1,0 +1,15 @@
+# Overlay for a Telegram proxy that listens on the host's loopback only.
+#
+# A proxy on ``socks5://127.0.0.1:2080`` is reachable from the host but not
+# from a bridged container: inside the container 127.0.0.1 is the container
+# itself. With host networking the bot shares the host's loopback, so the URL
+# stays exactly as it is.
+#
+#   docker compose -f compose.split.yaml -f compose.split.hostnet.yaml up -d --build
+#
+# Only ``bot`` needs this — it is the sole process that talks to Telegram. The
+# worker stays bridged and keeps publishing the VNC band, so no port collides.
+services:
+  bot:
+    network_mode: host
+    ports: !reset []

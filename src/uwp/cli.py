@@ -68,6 +68,95 @@ def cmd_init(settings: Settings) -> int:
     return _settle(_with_db(settings, action))
 
 
+def _mask_proxy(url: str) -> str:
+    """Hide credentials before a proxy URL reaches a log or a chat."""
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(url)
+    if parts.password is None:
+        return url
+    host = parts.hostname or ""
+    if parts.port:
+        host = f"{host}:{parts.port}"
+    netloc = f"{parts.username}:***@{host}" if parts.username else f"***@{host}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
+def _loopback_in_container(host: str) -> bool:
+    """``127.0.0.1`` inside a container is the container, not the host."""
+    return host in {"127.0.0.1", "::1", "localhost"} and Path("/.dockerenv").exists()
+
+
+def _probe_telegram_proxy(proxy: str, timeout: float = 8.0) -> str | None:
+    """Return ``None`` when Bot API answers through the proxy, else the reason."""
+    import asyncio
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(proxy)
+    scheme = (parts.scheme or "").lower()
+    if scheme not in {"http", "https", "socks5", "socks4"}:
+        return f"неподдерживаемая схема «{scheme or '—'}» (нужно http, https или socks5)"
+    if not parts.hostname or parts.port is None:
+        return "в адресе прокси нет хоста или порта"
+    host = parts.hostname
+
+    async def probe() -> str | None:
+        import aiohttp
+
+        try:
+            _reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, parts.port), timeout=min(timeout, 5)
+            )
+        except (OSError, TimeoutError) as exc:
+            return f"прокси {host}:{parts.port} недоступен: {exc}"
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except OSError:
+            pass
+
+        if scheme.startswith("socks"):
+            try:
+                from aiohttp_socks import ProxyConnector
+            except ImportError:
+                return "для socks-прокси нужен пакет aiohttp-socks"
+            # ``rdns=True`` matters: resolving locally picks the AAAA record
+            # first, and an unreachable IPv6 route turns a 0.5 s call into a
+            # 60 s timeout. aiogram uses the same setting.
+            connector = ProxyConnector.from_url(proxy, rdns=True)
+            session_args: dict = {"connector": connector}
+        else:
+            session_args = {"proxy": proxy}
+        try:
+            async with (
+                aiohttp.ClientSession(**session_args) as session,
+                session.get(
+                    "https://api.telegram.org/",
+                    timeout=aiohttp.ClientTimeout(total=timeout),
+                ) as response,
+            ):
+                if response.status >= 500:
+                    return f"api.telegram.org вернул {response.status}"
+                return None
+        except Exception as exc:  # noqa: BLE001 - any failure is a failed check
+            return f"запрос через прокси не прошёл: {type(exc).__name__}: {exc}"
+
+    reason = asyncio.run(probe())
+    if reason and _loopback_in_container(host):
+        reason += (
+            "; внутри контейнера 127.0.0.1 — это сам контейнер, "
+            "запустите его с network_mode: host или укажите адрес хоста"
+        )
+    return reason
+
+
+def _check_telegram_proxy(proxy: str) -> tuple[str, bool, str]:
+    """``doctor`` row for UWP_TELEGRAM_PROXY."""
+    reason = _probe_telegram_proxy(proxy)
+    label = f"прокси Telegram ({_mask_proxy(proxy)})"
+    return (label, reason is None, reason or "")
+
+
 def cmd_doctor(settings: Settings, quiet: bool = False) -> int:
     from uwp.browser import BrowserUnavailable, resolve_browser
 
@@ -149,6 +238,14 @@ def cmd_doctor(settings: Settings, quiet: bool = False) -> int:
 
     check("UWP_BOT_TOKEN", bool(settings.bot_token), "не задан")
     check("UWP_ADMIN_IDS", bool(settings.admin_ids), "пусто")
+    if settings.telegram_proxy:
+        check(*_check_telegram_proxy(settings.telegram_proxy))
+    else:
+        check(
+            "прокси Telegram",
+            True,
+            "не задан (UWP_TELEGRAM_PROXY): нужен там, где api.telegram.org недоступен",
+        )
     check(
         "UWP_SECRET_KEY",
         bool(settings.secret_key),

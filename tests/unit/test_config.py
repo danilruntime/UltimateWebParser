@@ -101,3 +101,12 @@ def test_explicit_env_does_not_need_a_json_list():
     settings = load_settings({"UWP_ADMIN_IDS": "111, 222"})
 
     assert settings.admin_ids == [111, 222]
+
+
+def test_telegram_proxy_is_optional_and_blank_means_none():
+    assert load_settings({}).telegram_proxy is None
+    assert load_settings({"UWP_TELEGRAM_PROXY": ""}).telegram_proxy is None
+    assert (
+        load_settings({"UWP_TELEGRAM_PROXY": " socks5://127.0.0.1:2080 "}).telegram_proxy
+        == "socks5://127.0.0.1:2080"
+    )

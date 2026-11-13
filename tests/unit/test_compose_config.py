@@ -87,3 +87,30 @@ def test_env_example_lists_the_required_variables():
         "UWP_NO_SANDBOX",
     ):
         assert f"{name}=" in text
+
+
+def test_env_example_documents_the_telegram_proxy():
+    """A blocked api.telegram.org is the most likely first-run failure."""
+    text = (ROOT / ".env.example").read_text(encoding="utf-8")
+
+    assert "UWP_TELEGRAM_PROXY=" in text
+    assert "socks5://" in text
+
+
+def test_hostnet_overlays_exist_for_a_loopback_proxy():
+    """127.0.0.1 inside a bridged container is the container, not the host."""
+    for name in ("compose.hostnet.yaml", "compose.split.hostnet.yaml"):
+        text = (ROOT / name).read_text(encoding="utf-8")
+        assert "network_mode: host" in text
+        # Compose merges sequences, so the published ports must be reset.
+        assert "!reset []" in text
+
+
+def test_only_the_bot_process_needs_the_proxy_in_split_mode():
+    """The worker never talks to Telegram, so it keeps bridged networking."""
+    text = (ROOT / "compose.split.hostnet.yaml").read_text(encoding="utf-8")
+
+    # ``!reset []`` is a Compose tag, so parse by hand rather than with yaml.
+    services = text.split("services:", 1)[1]
+    assert "bot:" in services
+    assert "worker:" not in services

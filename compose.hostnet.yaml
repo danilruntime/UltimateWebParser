@@ -1,0 +1,15 @@
+# Overlay for a proxy that listens on the host's loopback only.
+#
+# A proxy on ``socks5://127.0.0.1:2080`` is reachable from the host but not
+# from a bridged container: inside the container 127.0.0.1 is the container
+# itself. With host networking the container shares the host's loopback, so the
+# URL stays exactly as it is.
+#
+#   docker compose -f compose.yaml -f compose.hostnet.yaml up -d --build
+#
+# The VNC ports need no publishing here: host networking binds them directly.
+# Only one such deployment can run on a machine (the ports are global).
+services:
+  uwp:
+    network_mode: host
+    ports: !reset []

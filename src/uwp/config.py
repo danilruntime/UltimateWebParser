@@ -38,6 +38,10 @@ class Settings(BaseSettings):
 
     bot_token: str = ""
     admin_ids: list[int] = Field(default_factory=list)
+    # Proxy for the Telegram Bot API only. Without it a blocked api.telegram.org
+    # makes start_polling fail with TelegramNetworkError and the container
+    # restart-loops. ``socks5://host:port`` also needs aiohttp-socks.
+    telegram_proxy: str | None = None
     data_dir: Path = Path("data")
     tz: str = "Europe/Moscow"
     browser_path: Path | None = None
@@ -68,6 +72,15 @@ class Settings(BaseSettings):
     def _split_admin_ids(cls, value: object) -> object:
         if isinstance(value, str):
             return [part.strip() for part in value.split(",") if part.strip()]
+        return value
+
+    @field_validator("telegram_proxy", mode="before")
+    @classmethod
+    def _blank_proxy_is_none(cls, value: object) -> object:
+        """``UWP_TELEGRAM_PROXY=`` in .env means "no proxy", not an empty URL."""
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
         return value
 
     @classmethod

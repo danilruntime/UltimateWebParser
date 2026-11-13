@@ -141,3 +141,67 @@ def test_doctor_reports_a_broken_driver(monkeypatch, tmp_path):
     monkeypatch.setattr(cli.subprocess, "run", fake_run)
 
     assert cli.main(["doctor"]) == 1
+
+
+def test_doctor_probes_the_telegram_proxy(capsys, monkeypatch, tmp_path):
+    """A blocked api.telegram.org used to surface only as a restart loop."""
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("UWP_BOT_TOKEN", "1:fake")
+    monkeypatch.setenv("UWP_ADMIN_IDS", "1")
+    monkeypatch.setenv("UWP_TELEGRAM_PROXY", "socks5://127.0.0.1:2080")
+
+    from uwp import cli
+
+    probed: list[str] = []
+
+    def fake_probe(proxy, timeout=8.0):
+        probed.append(proxy)
+
+    monkeypatch.setattr(cli, "_probe_telegram_proxy", fake_probe)
+
+    out_lines = []
+    assert cli.main(["doctor"]) in (0, 1)
+    out_lines.append(capsys.readouterr().out)
+
+    assert probed == ["socks5://127.0.0.1:2080"]
+    assert "✅ прокси Telegram (socks5://127.0.0.1:2080)" in out_lines[0]
+
+
+def test_a_dead_telegram_proxy_fails_the_doctor(capsys, monkeypatch, tmp_path):
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("UWP_BOT_TOKEN", "1:fake")
+    monkeypatch.setenv("UWP_ADMIN_IDS", "1")
+    monkeypatch.setenv("UWP_TELEGRAM_PROXY", "socks5://127.0.0.1:2080")
+
+    from uwp import cli
+
+    monkeypatch.setattr(
+        cli, "_probe_telegram_proxy", lambda proxy, timeout=8.0: "прокси недоступен"
+    )
+
+    assert cli.main(["doctor"]) == 1
+    assert "прокси недоступен" in capsys.readouterr().out
+
+
+def test_the_proxy_password_never_reaches_the_doctor_row(capsys, monkeypatch, tmp_path):
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("UWP_BOT_TOKEN", "1:fake")
+    monkeypatch.setenv("UWP_ADMIN_IDS", "1")
+    monkeypatch.setenv("UWP_TELEGRAM_PROXY", "socks5://alice:s3cret@10.0.0.5:1080")
+
+    from uwp import cli
+
+    monkeypatch.setattr(cli, "_probe_telegram_proxy", lambda proxy, timeout=8.0: None)
+
+    cli.main(["doctor"])
+    out = capsys.readouterr().out
+
+    assert "alice:***@10.0.0.5:1080" in out
+    assert "s3cret" not in out
+
+
+def test_the_proxy_probe_rejects_a_bad_url_without_a_network_call(monkeypatch):
+    from uwp import cli
+
+    assert "схема" in cli._probe_telegram_proxy("ftp://127.0.0.1:21")
+    assert "хоста или порта" in cli._probe_telegram_proxy("socks5://127.0.0.1")
