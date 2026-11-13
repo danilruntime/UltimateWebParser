@@ -205,3 +205,35 @@ def test_the_proxy_probe_rejects_a_bad_url_without_a_network_call(monkeypatch):
 
     assert "схема" in cli._probe_telegram_proxy("ftp://127.0.0.1:21")
     assert "хоста или порта" in cli._probe_telegram_proxy("socks5://127.0.0.1")
+
+
+def test_doctor_offline_never_touches_the_network(capsys, monkeypatch, tmp_path):
+    """The healthcheck must not depend on a third-party proxy's latency."""
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("UWP_BOT_TOKEN", "1:fake")
+    monkeypatch.setenv("UWP_ADMIN_IDS", "1")
+    monkeypatch.setenv("UWP_TELEGRAM_PROXY", "socks5://127.0.0.1:2080")
+
+    from uwp import cli
+
+    def explode(*_a, **_kw):
+        raise AssertionError("--offline must not open a connection")
+
+    monkeypatch.setattr(cli, "_probe_telegram_proxy", explode)
+
+    # Only the URL shape is checked, so the proxy row stays green. The overall
+    # exit code may still be 1 locally (the browser is not installed).
+    assert cli.main(["doctor", "--offline"]) in (0, 1)
+    out = capsys.readouterr().out
+    assert "✅ прокси Telegram (socks5://127.0.0.1:2080)" in out
+
+
+def test_doctor_offline_still_rejects_a_broken_proxy_url(capsys, monkeypatch, tmp_path):
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("UWP_BOT_TOKEN", "1:fake")
+    monkeypatch.setenv("UWP_ADMIN_IDS", "1")
+    monkeypatch.setenv("UWP_TELEGRAM_PROXY", "ftp://127.0.0.1:21")
+
+    from uwp import cli
+
+    assert cli.main(["doctor", "--offline"]) == 1

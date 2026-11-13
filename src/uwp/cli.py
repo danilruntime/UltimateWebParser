@@ -87,9 +87,8 @@ def _loopback_in_container(host: str) -> bool:
     return host in {"127.0.0.1", "::1", "localhost"} and Path("/.dockerenv").exists()
 
 
-def _probe_telegram_proxy(proxy: str, timeout: float = 8.0) -> str | None:
-    """Return ``None`` when Bot API answers through the proxy, else the reason."""
-    import asyncio
+def _proxy_url_problem(proxy: str) -> str | None:
+    """Validate the URL shape without touching the network."""
     from urllib.parse import urlsplit
 
     parts = urlsplit(proxy)
@@ -98,17 +97,30 @@ def _probe_telegram_proxy(proxy: str, timeout: float = 8.0) -> str | None:
         return f"неподдерживаемая схема «{scheme or '—'}» (нужно http, https или socks5)"
     if not parts.hostname or parts.port is None:
         return "в адресе прокси нет хоста или порта"
-    host = parts.hostname
+    return None
+
+
+def _probe_telegram_proxy(proxy: str, timeout: float = 10.0) -> str | None:
+    """Return ``None`` when Bot API answers through the proxy, else the reason."""
+    import asyncio
+    from urllib.parse import urlsplit
+
+    if (problem := _proxy_url_problem(proxy)) is not None:
+        return problem
+    parts = urlsplit(proxy)
+    scheme = (parts.scheme or "").lower()
+    host = parts.hostname or ""
+    port = parts.port or 0
 
     async def probe() -> str | None:
         import aiohttp
 
         try:
             _reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(host, parts.port), timeout=min(timeout, 5)
+                asyncio.open_connection(host, port), timeout=min(timeout, 5)
             )
         except (OSError, TimeoutError) as exc:
-            return f"прокси {host}:{parts.port} недоступен: {exc}"
+            return f"прокси {host}:{port} недоступен: {exc}"
         writer.close()
         try:
             await writer.wait_closed()
@@ -141,7 +153,16 @@ def _probe_telegram_proxy(proxy: str, timeout: float = 8.0) -> str | None:
         except Exception as exc:  # noqa: BLE001 - any failure is a failed check
             return f"запрос через прокси не прошёл: {type(exc).__name__}: {exc}"
 
-    reason = asyncio.run(probe())
+    async def guarded() -> str | None:
+        # A hard wall around the whole probe: the SOCKS handshake inside
+        # ``start_tls`` can outlive aiohttp's own timeout, and a healthcheck on
+        # a flaky upstream proxy must not stretch to a minute.
+        try:
+            return await asyncio.wait_for(probe(), timeout=timeout + 2)
+        except TimeoutError:
+            return f"прокси не ответил за {timeout:.0f} с"
+
+    reason = asyncio.run(guarded())
     if reason and _loopback_in_container(host):
         reason += (
             "; внутри контейнера 127.0.0.1 — это сам контейнер, "
@@ -150,14 +171,22 @@ def _probe_telegram_proxy(proxy: str, timeout: float = 8.0) -> str | None:
     return reason
 
 
-def _check_telegram_proxy(proxy: str) -> tuple[str, bool, str]:
-    """``doctor`` row for UWP_TELEGRAM_PROXY."""
-    reason = _probe_telegram_proxy(proxy)
+def _check_telegram_proxy(proxy: str, online: bool = True) -> tuple[str, bool, str]:
+    """``doctor`` row for UWP_TELEGRAM_PROXY.
+
+    ``online=False`` (the container healthcheck) only validates the URL: the
+    probe crosses a third-party proxy, and its slowness must not mark a working
+    container unhealthy.
+    """
     label = f"прокси Telegram ({_mask_proxy(proxy)})"
+    if not online:
+        problem = _proxy_url_problem(proxy)
+        return (label, problem is None, problem or "")
+    reason = _probe_telegram_proxy(proxy)
     return (label, reason is None, reason or "")
 
 
-def cmd_doctor(settings: Settings, quiet: bool = False) -> int:
+def cmd_doctor(settings: Settings, quiet: bool = False, offline: bool = False) -> int:
     from uwp.browser import BrowserUnavailable, resolve_browser
 
     checks: list[tuple[str, bool, bool]] = []  # (text, ok, is_warning)
@@ -239,7 +268,7 @@ def cmd_doctor(settings: Settings, quiet: bool = False) -> int:
     check("UWP_BOT_TOKEN", bool(settings.bot_token), "не задан")
     check("UWP_ADMIN_IDS", bool(settings.admin_ids), "пусто")
     if settings.telegram_proxy:
-        check(*_check_telegram_proxy(settings.telegram_proxy))
+        check(*_check_telegram_proxy(settings.telegram_proxy, online=not offline))
     else:
         check(
             "прокси Telegram",
@@ -699,6 +728,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor = sub.add_parser("doctor", help="проверить окружение")
     doctor.add_argument("--quiet", action="store_true", help="молчать при успехе")
+    doctor.add_argument(
+        "--offline",
+        action="store_true",
+        help="не ходить в сеть (так его зовёт healthcheck контейнера)",
+    )
 
     browser = sub.add_parser("browser", help="управление браузером")
     browser_sub = browser.add_subparsers(dest="browser_command", required=True)
@@ -782,7 +816,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "init":
         return cmd_init(settings)
     if args.command == "doctor":
-        return cmd_doctor(settings, quiet=args.quiet)
+        return cmd_doctor(settings, quiet=args.quiet, offline=args.offline)
     if args.command == "browser":
         return cmd_browser_install(
             settings,

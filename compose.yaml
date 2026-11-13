@@ -20,7 +20,9 @@ services:
       - "6000-6100:6000-6100"
     healthcheck:
       # Through the entrypoint: the check must run as uid 1000, not root.
-      test: ["CMD", "/entrypoint.sh", "doctor", "--quiet"]
+      # --offline: the proxy probe crosses a third-party proxy, and its
+      # slowness must not mark a working container unhealthy.
+      test: ["CMD", "/entrypoint.sh", "doctor", "--offline", "--quiet"]
       interval: 60s
       timeout: 30s
       start_period: 30s
