@@ -64,7 +64,12 @@ class FakeSpawned:
 
 async def _factory_env(tmp_path):
     settings = load_settings(
-        {"UWP_DATA_DIR": str(tmp_path), "UWP_VNC_PORT_MIN": "6100", "UWP_VNC_PORT_MAX": "6101"}
+        {
+            "UWP_DATA_DIR": str(tmp_path),
+            "UWP_VNC_PORT_MIN": "6100",
+            "UWP_VNC_PORT_MAX": "6101",
+            "UWP_BROWSER_PATH": "/usr/bin/chromium",
+        }
     )
     profile = Profile(
         id=7,
@@ -103,11 +108,13 @@ async def test_default_factory_builds_the_full_stack(tmp_path, monkeypatch):
     )
 
     names = [p.command[0] for p in spawned]
-    assert names == ["x11vnc", "Xvfb", "fluxbox", "chromium", "x11vnc", "websockify"]
+    assert names == ["x11vnc", "Xvfb", "fluxbox", str(settings.browser_path), "x11vnc", "websockify"]
 
     x11vnc = spawned[-2].command
     assert "-afteraccept" in x11vnc, "x11vnc only knows -afteraccept/-gone hooks"
     assert "-after" not in x11vnc
+    hook = x11vnc[x11vnc.index("-afteraccept") + 1]
+    assert hook.startswith('echo "$RFB_CLIENT_COUNT"')
     # The RFB port must not collide with the published noVNC band.
     rfb_port = int(x11vnc[x11vnc.index("-rfbport") + 1])
     assert not (settings.vnc_port_min <= rfb_port <= settings.vnc_port_max)
@@ -123,6 +130,7 @@ async def test_default_factory_reports_storepasswd_failure(tmp_path, monkeypatch
 
     async def fake_spawn(command, **kw):
         return FakeSpawned(command, returncode=1)
+
     monkeypatch.setattr(vnc, "_spawn", fake_spawn)
 
     with pytest.raises(RuntimeError, match="storepasswd"):
@@ -164,6 +172,39 @@ async def test_default_factory_kills_partial_stack_on_failure(tmp_path, monkeypa
     assert [p.command[0] for p in spawned] == ["x11vnc", "Xvfb"]
     # The storepasswd helper already exited; the running Xvfb must be killed.
     assert spawned[1].terminated
+
+
+async def test_client_count_reads_the_hook_marker(tmp_path):
+    from uwp.vnc import _Stack
+
+    marker = tmp_path / "s.clients"
+    stack = _Stack([], tmp_path / "x.passwd", marker)
+    assert stack.client_count() == 0  # no marker yet
+
+    marker.write_text("3\n")
+    assert stack.client_count() == 3
+
+    marker.write_text("0\n")
+    assert stack.client_count() == 0
+
+    marker.write_text("not a number\n")
+    assert stack.client_count() == 0
+
+
+def test_hook_command_survives_awkward_paths(tmp_path):
+    """The x11vnc hook runs through ``sh``; odd paths must not break it."""
+    import shlex
+    import subprocess
+
+    from uwp.vnc import _Stack
+
+    marker = tmp_path / "it's a dir" / "s.clients"
+    marker.parent.mkdir()
+    command = f'echo "$RFB_CLIENT_COUNT" > {shlex.quote(str(marker))}'
+
+    subprocess.run(["sh", "-c", command], env={"RFB_CLIENT_COUNT": "2"}, check=True)
+
+    assert _Stack([], tmp_path / "x.passwd", marker).client_count() == 2
 
 
 @pytest.fixture

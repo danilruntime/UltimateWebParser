@@ -137,7 +137,11 @@ def _default_process_factory(
         # the websockify/noVNC port is published.
         vnc_port = RFB_PORT_BASE + (port - settings.vnc_port_min)
         screen = f":{display}"
-        executable = settings.browser_path or shutil.which("chromium") or "chromium"
+        executable = (
+            str(settings.browser_path)
+            if settings.browser_path
+            else (shutil.which("chromium") or "chromium")
+        )
         args = [
             flag
             for flag in browser_flags(
@@ -153,9 +157,9 @@ def _default_process_factory(
         client_marker = password_file.with_suffix(".clients")
         client_marker.unlink(missing_ok=True)
         marker = shlex.quote(str(client_marker))
-        # x11vnc runs these shells for every client accept/disconnect and
-        # exports RFB_CLIENT_COUNT, so the marker always holds the live count.
-        record_count = f"sh -c 'echo $RFB_CLIENT_COUNT > {marker}'"
+        # x11vnc already runs hooks through ``/bin/sh -c`` and exports
+        # RFB_CLIENT_COUNT, so the whole command is just a redirect.
+        record_count = f'echo "$RFB_CLIENT_COUNT" > {marker}'
         commands = [
             ["Xvfb", screen, "-screen", "0", "1920x1080x24"],
             ["fluxbox", "-display", screen],

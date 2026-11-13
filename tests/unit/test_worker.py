@@ -225,7 +225,7 @@ async def test_heartbeat_runs_while_job_executes(env):
 
     class SlowRunner(FakeRunner):
         async def run(self, site, job, proxy, cancel=None):
-            await asyncio.sleep(1.4)
+            await asyncio.sleep(2.2)
             return self.outcome
 
     worker = _worker(settings, db, jobs, sites, SlowRunner())
@@ -245,6 +245,8 @@ async def test_heartbeat_runs_while_job_executes(env):
     # ``finish`` clears the stamp, so observe the beats themselves.
     assert beats and all(job_id == job.id for job_id, _ in beats)
     assert beats[0][1] > NOW
+    # A 2.2 s run at a 1 s interval must be beaten more than once.
+    assert len(beats) >= 2
 
 
 async def test_canceled_job_is_finished_not_left_running(env):
