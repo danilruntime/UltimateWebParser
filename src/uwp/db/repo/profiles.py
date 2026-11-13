@@ -105,6 +105,14 @@ class ProfilesRepo:
             (ProfileStatus.free.value, profile_id),
         )
 
+    async def release_expired(self, now: datetime) -> int:
+        """Free profiles whose lease ran out; returns how many were released."""
+        return await self.db.execute_rowcount(
+            "UPDATE profiles SET status = ?, lease_until = NULL "
+            "WHERE status = ? AND lease_until IS NOT NULL AND lease_until <= ?",
+            (ProfileStatus.free.value, ProfileStatus.locked.value, to_db(now)),
+        )
+
     async def expired_clean(self, now: datetime) -> None:
         """Mark clean profiles whose ``expires_at`` has passed as expired."""
         await self.db.execute(

@@ -87,6 +87,19 @@ class JobsRepo:
             "UPDATE jobs SET heartbeat_at = ? WHERE id = ?", (to_db(now), job_id)
         )
 
+    async def heartbeat_all(self, worker_id: str, now: datetime) -> None:
+        """Refresh every job this worker owns that is still running."""
+        await self.db.execute(
+            "UPDATE jobs SET heartbeat_at = ? WHERE claimed_by = ? AND status = ?",
+            (to_db(now), worker_id, JobStatus.running.value),
+        )
+
+    async def set_not_before(self, job_id: int, when: datetime) -> None:
+        """Delay a queued job until ``when``."""
+        await self.db.execute(
+            "UPDATE jobs SET not_before = ? WHERE id = ?", (to_db(when), job_id)
+        )
+
     async def finish(self, job_id: int, status: JobStatus | str, error: str | None = None) -> None:
         await self.db.execute(
             "UPDATE jobs SET status = ?, error = ? WHERE id = ?",
