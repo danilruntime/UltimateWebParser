@@ -1,5 +1,6 @@
 """Worker loop: claims jobs, runs parsers and keeps job/site state consistent."""
 import asyncio
+import contextlib
 import logging
 from datetime import datetime, timedelta
 
@@ -68,6 +69,7 @@ class Worker:
         # A cancel may have arrived between queueing and claiming.
         current = await self.jobs.get(job.id)
         if current is not None and current.status == JobStatus.canceled:
+            await self.jobs.finish(job.id, JobStatus.canceled)
             return True
 
         site = await self.sites.get(job.site_id)
@@ -79,6 +81,7 @@ class Worker:
         if site.proxy_id is not None:
             proxy = await self.proxies.get(site.proxy_id)
 
+        beat = asyncio.create_task(self._beat(job.id))
         try:
             outcome = await self.runner.run(site, job, proxy, cancel=asyncio.Event())
         except Exception as exc:  # the runner itself must not kill the worker
@@ -88,9 +91,28 @@ class Worker:
                 error_kind=ErrorKind.parser_error,
                 error=f"{type(exc).__name__}: {exc}",
             )
+        finally:
+            beat.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await beat
 
         await self._finish(job, site, outcome, now)
         return True
+
+    async def _beat(self, job_id: int) -> None:
+        """Refresh a running job's heartbeat until cancelled.
+
+        A run can last up to ``run_timeout`` (300 s), far longer than
+        ``orphan_threshold`` (90 s), so the heartbeat cannot wait for the
+        main loop to come around.
+        """
+        interval = max(1, self.settings.heartbeat_interval)
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await self.jobs.heartbeat(job_id, utcnow())
+            except Exception:
+                log.exception("heartbeat of job %s failed", job_id)
 
     async def _finish(
         self, job: Job, site: Site, outcome: RunOutcome, now: datetime

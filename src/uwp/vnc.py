@@ -19,14 +19,15 @@ from uwp.db.repo.profiles import ProfilesRepo
 from uwp.db.repo.vnc import VncRepo
 from uwp.domain import Profile, ProfileKind, ProfileStatus, VncSession, VncStatus
 from uwp.profiles import browser_flags
-from uwp.timeutil import to_db, utcnow
+from uwp.timeutil import utcnow
 
 log = logging.getLogger(__name__)
 
 PASSWORD_LENGTH = 12
 DISPLAY_BASE = 100
-# The raw RFB port sits below the published noVNC port.
-RFB_PORT_OFFSET = 100
+# Raw RFB listeners live in their own internal band so they can never collide
+# with a published noVNC port (6000-6100).
+RFB_PORT_BASE = 4900
 
 
 class ProcessHandle(Protocol):
@@ -65,17 +66,25 @@ def vnc_url(public_host: str, port: int, password: str) -> str:
 class _Stack:
     """Default process handle: keeps the spawned processes and their files."""
 
-    def __init__(self, processes: list[asyncio.subprocess.Process], password_file: Path) -> None:
+    def __init__(
+        self,
+        processes: list[asyncio.subprocess.Process],
+        password_file: Path,
+        client_marker: Path | None = None,
+    ) -> None:
         self.processes = processes
         self.password_file = password_file
+        self.client_marker = client_marker
 
     def client_count(self) -> int:
-        """Number of clients connected to websockify, as far as we can tell.
+        """1 while x11vnc reports an attached client, else 0.
 
-        Without a websockify status port we cannot know for sure, so the stack
-        reports ``0`` and idle stop is disabled rather than arbitrary.
+        x11vnc's ``-after``/``-gone`` hooks touch and remove ``client_marker``,
+        so this reflects real connections rather than a guess.
         """
-        return 0
+        if self.client_marker is None:
+            return 0
+        return 1 if self.client_marker.exists() else 0
 
     async def stop(self) -> None:
         for process in reversed(self.processes):
@@ -91,6 +100,8 @@ class _Stack:
                 process.kill()
                 await process.wait()
         self.password_file.unlink(missing_ok=True)
+        if self.client_marker is not None:
+            self.client_marker.unlink(missing_ok=True)
 
 
 async def _spawn(command: list[str], **kw: Any) -> asyncio.subprocess.Process:
@@ -118,11 +129,13 @@ def _default_process_factory(
     ) -> ProcessHandle:
         password_file = settings.data_dir / "vnc" / f"{profile.id or 'x'}-{port}.passwd"
         password_file.parent.mkdir(parents=True, exist_ok=True)
-        await _spawn(["x11vnc", "-storepasswd", password, str(password_file)])
+        store = await _spawn(["x11vnc", "-storepasswd", password, str(password_file)])
+        if await store.wait() != 0:
+            raise RuntimeError("x11vnc -storepasswd failed")
 
-        # The RFB port is derived from the published noVNC port and never
-        # exposed outside the worker container.
-        vnc_port = port - RFB_PORT_OFFSET
+        # The RFB listener stays inside the container on a private band; only
+        # the websockify/noVNC port is published.
+        vnc_port = RFB_PORT_BASE + (port - settings.vnc_port_min)
         screen = f":{display}"
         executable = settings.browser_path or shutil.which("chromium") or "chromium"
         args = [
@@ -137,23 +150,28 @@ def _default_process_factory(
             if not flag.startswith("--headless")
         ]
         browser_env = {**os.environ, "DISPLAY": screen}
-        processes = [
-            await _spawn(["Xvfb", screen, "-screen", "0", "1920x1080x24"]),
-            await _spawn(["fluxbox", "-display", screen]),
-            await _spawn([executable, *args, url], env=browser_env),
-            await _spawn(
-                ["x11vnc", "-display", screen, "-rfbauth", str(password_file),
-                 "-rfbport", str(vnc_port), "-localhost", "-forever", "-shared"]
-            ),
+        client_marker = password_file.with_suffix(".clients")
+        client_marker.unlink(missing_ok=True)
+        commands = [
+            ["Xvfb", screen, "-screen", "0", "1920x1080x24"],
+            ["fluxbox", "-display", screen],
+            [executable, *args, url],
+            ["x11vnc", "-display", screen, "-rfbauth", str(password_file),
+             "-rfbport", str(vnc_port), "-localhost", "-forever", "-shared",
+             "-after", f"touch {client_marker}",
+             "-gone", f"rm -f {client_marker}"],
+            ["websockify", "--web", "/usr/share/novnc", str(port), f"localhost:{vnc_port}"],
         ]
-        processes.append(
-            await _spawn(
-                ["websockify", "--web", "/usr/share/novnc",
-                 "--idle-timeout", str(settings.vnc_idle_minutes * 60),
-                 str(port), f"localhost:{vnc_port}"]
-            )
-        )
-        return _Stack(processes, password_file)
+        processes: list[asyncio.subprocess.Process] = []
+        try:
+            for command in commands:
+                env = browser_env if command[0] == executable else None
+                processes.append(await _spawn(command, env=env))
+        except BaseException:
+            # Do not leak a half-started stack: kill whatever did start.
+            await _Stack(processes, password_file, client_marker).stop()
+            raise
+        return _Stack(processes, password_file, client_marker)
 
     return factory
 
@@ -276,7 +294,7 @@ class VncManager:
                 except Exception:  # noqa: BLE001 - a broken handle must not stall tick
                     clients = 0
                 if clients > 0:
-                    await self.sessions.update(session.id, last_client_at=to_db(now))
+                    await self.sessions.update(session.id, last_client_at=now)
                     continue
             if session.last_client_at is not None and session.last_client_at + idle_after <= now:
                 log.info("VNC session %s idle", session.id)

@@ -16,6 +16,10 @@ class FakeProc:
     def __init__(self, **kw):
         self.kw = kw
         self.stopped = False
+        self.clients = 0
+
+    def client_count(self):
+        return self.clients
 
     async def stop(self):
         self.stopped = True
@@ -133,6 +137,36 @@ async def test_session_without_client_is_not_idle_stopped(env):
     await mgr.tick(utcnow())
 
     assert (await VncRepo(db).get(info.session_id)).status == VncStatus.running
+
+
+async def test_connected_client_refreshes_last_client_at(env):
+    settings, db, profiles, pid = env
+    procs: list[FakeProc] = []
+    mgr = _manager(settings, db, procs)
+    info = await mgr.start(await profiles.get(pid), "https://example.com")
+    procs[-1].clients = 1
+
+    now = utcnow()
+    await mgr.tick(now)
+
+    session = await VncRepo(db).get(info.session_id)
+    assert session.status == VncStatus.running
+    # The database keeps whole seconds.
+    assert session.last_client_at == now.replace(microsecond=0)
+
+
+async def test_idle_countdown_restarts_after_a_client_leaves(env):
+    settings, db, profiles, pid = env
+    procs: list[FakeProc] = []
+    mgr = _manager(settings, db, procs)
+    info = await mgr.start(await profiles.get(pid), "https://example.com")
+    repo = VncRepo(db)
+    await repo.update(info.session_id, last_client_at=utcnow() - timedelta(minutes=30))
+
+    procs[-1].clients = 1
+    await mgr.tick(utcnow())
+
+    assert (await repo.get(info.session_id)).last_client_at > utcnow() - timedelta(minutes=1)
 
 
 async def test_second_port_is_used_when_first_is_taken(env):

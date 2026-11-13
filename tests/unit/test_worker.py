@@ -217,6 +217,52 @@ async def test_site_snapshot_is_updated_after_run(env):
     assert site.consecutive_failures == 0
 
 
+async def test_heartbeat_runs_while_job_executes(env):
+    """A long run must keep its heartbeat fresh, not just between loop passes."""
+    db, sites, jobs, sid = env
+    settings = Settings(heartbeat_interval=1, orphan_threshold=90)
+    worker = _worker(settings, db, jobs, sites, FakeRunner())
+    await jobs.create(sid, "scheduled")
+    job = await jobs.claim("w1", now=NOW)
+    beats: list[datetime] = []
+    original = jobs.heartbeat
+
+    async def spy(job_id, now):
+        beats.append(now)
+        await original(job_id, now)
+
+    jobs.heartbeat = spy
+    task = asyncio.create_task(worker._beat(job.id))
+    await asyncio.sleep(1.2)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+    assert len(beats) >= 1
+
+
+async def test_canceled_job_is_finished_not_left_running(env):
+    db, sites, jobs, sid = env
+    jid = await jobs.create(sid, "scheduled")
+    claimed = await jobs.claim("w1", now=NOW)
+
+    async def claim(worker_id, now):
+        return claimed
+
+    jobs.claim = claim
+    # A cancel lands after the claim, so the fresh row is already canceled.
+    await db.execute("UPDATE jobs SET status = 'canceled' WHERE id = ?", (jid,))
+    runner = FakeRunner()
+    worker = _worker(Settings(), db, jobs, sites, runner)
+
+    assert await worker.process_one(NOW) is True
+
+    assert str((await jobs.get(jid)).status) == "canceled"
+    assert runner.calls == 0
+
+
 async def test_run_forever_stops_on_event(env):
     db, sites, jobs, sid = env
     await jobs.create(sid, "scheduled")
