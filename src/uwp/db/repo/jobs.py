@@ -74,6 +74,14 @@ class JobsRepo:
             return None
         return await self.get(row["id"])
 
+    async def list_for_site(self, site_id: int, limit: int = 20) -> list[Job]:
+        """Recent jobs of a site, newest first."""
+        rows = await self.db.fetchall(
+            "SELECT * FROM jobs WHERE site_id = ? ORDER BY id DESC LIMIT ?",
+            (site_id, limit),
+        )
+        return [_row_to_job(r) for r in rows]
+
     async def heartbeat(self, job_id: int, now: datetime) -> None:
         await self.db.execute(
             "UPDATE jobs SET heartbeat_at = ? WHERE id = ?", (to_db(now), job_id)
