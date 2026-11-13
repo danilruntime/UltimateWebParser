@@ -10,7 +10,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from uwp.bot.app import BotDeps, build_dispatcher
+from uwp.bot.app import BotDeps, build_dispatcher, make_bot
 from uwp.bot.delivery import EventDelivery
 from uwp.config import Settings
 from uwp.db.database import Database
@@ -118,7 +118,7 @@ async def build_runtime(
     """Open the database, migrate it and construct every collaborator."""
     # Fail before touching the database: a missing token must not leave an open
     # connection (and its worker thread) behind.
-    bot = _make_bot(settings) if with_bot else NullBot()
+    bot = make_bot(settings) if with_bot else NullBot()
     db = Database(settings.db_path)
     await db.connect()
     fresh = await is_fresh(db)
@@ -188,27 +188,6 @@ async def build_runtime(
         bot=bot,
         admin_ids=admin_ids,
         recipients=recipients,
-    )
-
-
-def _make_bot(settings: Settings):
-    from aiogram import Bot
-    from aiogram.client.default import DefaultBotProperties
-    from aiogram.client.session.aiohttp import AiohttpSession
-    from aiogram.enums import ParseMode
-
-    if not settings.bot_token:
-        raise RuntimeError("UWP_BOT_TOKEN is not set")
-    session = None
-    if settings.telegram_proxy:
-        # SOCKS/HTTP proxy for Bot API calls only; scraping keeps its own
-        # per-site proxies. aiogram builds the connector from the URL, and
-        # SOCKS additionally requires the ``aiohttp-socks`` extra.
-        session = AiohttpSession(proxy=settings.telegram_proxy)
-    return Bot(
-        settings.bot_token,
-        session=session,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
 
 

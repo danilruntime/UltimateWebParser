@@ -164,10 +164,10 @@ async def test_sqlite_integrity_error_is_not_leaked(tmp_path):
 
 def test_the_bot_uses_the_telegram_proxy_when_configured():
     """A blocked api.telegram.org otherwise kills polling on the first getMe."""
-    from uwp.app import _make_bot
+    from uwp.bot.app import make_bot
 
     proxy = "socks5://127.0.0.1:2080"
-    bot = _make_bot(
+    bot = make_bot(
         load_settings(
             {
                 "UWP_BOT_TOKEN": "1:abc",
@@ -181,9 +181,9 @@ def test_the_bot_uses_the_telegram_proxy_when_configured():
 
 
 def test_the_bot_has_no_proxy_by_default():
-    from uwp.app import _make_bot
+    from uwp.bot.app import make_bot
 
-    bot = _make_bot(
+    bot = make_bot(
         load_settings({"UWP_BOT_TOKEN": "1:abc", "UWP_DATA_DIR": "/tmp/uwp-proxy-test"})
     )
 

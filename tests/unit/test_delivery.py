@@ -265,3 +265,40 @@ async def test_a_login_wall_offers_the_profile_button(env):
 
     buttons = bot.messages[0][2].inline_keyboard[0]
     assert [b.callback_data for b in buttons] == ["profile:login:7", "run:retry:3"]
+
+
+async def test_a_chat_not_found_is_dropped_not_retried_forever(env):
+    """A stale admin id used to flood the log every 5 s for the whole event TTL."""
+    from aiogram.exceptions import TelegramBadRequest
+
+    settings, bus, tmp_path = env
+    report = tmp_path / "report.ods"
+    report.write_bytes(b"data")
+    bot = FakeBot()
+
+    async def bad_chat(chat_id, document, caption=None, **kw):
+        raise TelegramBadRequest(
+            method=None, message="Telegram server says - Bad Request: chat not found"
+        )
+
+    bot.send_document = bad_chat
+    delivery = EventDelivery(bot, bus, settings)
+    await bus.emit("run_finished", payload={"report_path": str(report), "site": "S"})
+
+    await delivery.tick()
+
+    assert await bus.pending(111, utcnow()) == []
+    assert await bus.pending(222, utcnow()) == []
+
+
+async def test_a_network_error_is_still_retried(env):
+    settings, bus, tmp_path = env
+    report = tmp_path / "report.ods"
+    report.write_bytes(b"data")
+    bot = FakeBot(fail_documents=True)
+    delivery = EventDelivery(bot, bus, settings)
+    await bus.emit("run_finished", payload={"report_path": str(report), "site": "S"})
+
+    await delivery.tick()
+
+    assert len(await bus.pending(111, utcnow())) == 1

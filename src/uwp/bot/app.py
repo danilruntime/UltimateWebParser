@@ -51,19 +51,66 @@ def build_dispatcher(
     dp.include_router(settings_handlers.build_router(settings, deps))
     dp.include_router(profiles.build_router(settings, deps))
     dp.include_router(common.build_fallback_router())
+    dp.errors.register(handle_update_error)
     return dp
+
+
+async def handle_update_error(event: Any) -> bool:
+    """Log expected Telegram refusals as one line instead of a traceback.
+
+    A stale button (``query is too old``), a repeated press (``message is not
+    modified``) and a user who blocked the bot are normal, not crashes. Return
+    ``True`` to mark the update as handled.
+    """
+    from aiogram.exceptions import TelegramBadRequest
+
+    exc = getattr(event, "exception", event)
+    if isinstance(exc, TelegramBadRequest):
+        text = str(exc).lower()
+        if any(
+            marker in text
+            for marker in (
+                "query is too old",
+                "query id is invalid",
+                "message is not modified",
+                "message can't be deleted",
+                "message to edit not found",
+            )
+        ):
+            log.info("update skipped: %s", exc)
+            return True
+    # Anything else keeps aiogram's own traceback: it is a real bug.
+    return False
 
 
 async def run_bot(settings: Settings, deps: BotDeps) -> None:
     """Long-poll Telegram until stopped."""
-    if not settings.bot_token:
-        raise RuntimeError("UWP_BOT_TOKEN is not set")
-    bot = Bot(
-        settings.bot_token,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
+    bot = make_bot(settings)
     dp = build_dispatcher(settings, deps)
     try:
         await dp.start_polling(bot)
     finally:
         await bot.session.close()
+
+
+def make_bot(settings: Settings) -> Bot:
+    """Build the Bot API client, through ``UWP_TELEGRAM_PROXY`` when set.
+
+    This is the only place that knows about the Telegram transport, so a
+    second call site cannot silently drop the proxy and start timing out.
+    """
+    from aiogram.client.session.aiohttp import AiohttpSession
+
+    if not settings.bot_token:
+        raise RuntimeError("UWP_BOT_TOKEN is not set")
+    session = None
+    if settings.telegram_proxy:
+        # SOCKS/HTTP proxy for Bot API calls only; scraping keeps its own
+        # per-site proxies. aiogram builds the connector from the URL, and
+        # SOCKS additionally requires the ``aiohttp-socks`` package.
+        session = AiohttpSession(proxy=settings.telegram_proxy)
+    return Bot(
+        settings.bot_token,
+        session=session,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )

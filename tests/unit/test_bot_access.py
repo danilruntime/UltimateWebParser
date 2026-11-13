@@ -135,3 +135,31 @@ def test_the_fallback_router_is_registered_last():
 
     assert names[-1] == "fallback"
     assert names.count("fallback") == 1
+
+
+async def test_a_stale_button_press_does_not_print_a_traceback():
+    """Telegram refuses an old callback; that is normal, not a crash."""
+    from aiogram.exceptions import TelegramBadRequest
+
+    from uwp.bot.app import handle_update_error
+
+    class Event:
+        exception = TelegramBadRequest(
+            method=None,
+            message=(
+                "Telegram server says - Bad Request: query is too old and "
+                "response timeout expired or query ID is invalid"
+            ),
+        )
+
+    assert await handle_update_error(Event()) is True
+
+
+async def test_a_real_handler_error_keeps_its_traceback():
+    """Returning False lets aiogram log the exception, so bugs stay visible."""
+    from uwp.bot.app import handle_update_error
+
+    class Event:
+        exception = ValueError("boom")
+
+    assert await handle_update_error(Event()) is False

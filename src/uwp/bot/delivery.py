@@ -76,7 +76,17 @@ class EventDelivery:
             for event in await self.bus.pending(admin_id, now):
                 try:
                     await self._deliver(admin_id, event)
-                except Exception:
+                except Exception as exc:
+                    if _is_permanent(exc):
+                        # Telegram itself refused this chat: "chat not found",
+                        # the bot was blocked, the user is deactivated. Retrying
+                        # cannot help, and a 3-day TTL of 5-second retries turns
+                        # one stale admin id into a log flood.
+                        log.warning(
+                            "dropping event %s for %s: %s", event.id, admin_id, exc
+                        )
+                        await self.bus.mark_delivered(event.id, admin_id)
+                        continue
                     log.exception(
                         "delivering event %s to %s failed", event.id, admin_id
                     )
@@ -154,6 +164,33 @@ class EventDelivery:
             except Exception:
                 log.exception("sending the screenshot of event %s failed", event.id)
         await self.bot.send_message(admin_id, _text_for(event), reply_markup=markup)
+
+
+def _is_permanent(exc: Exception) -> bool:
+    """Is this Telegram error impossible to fix by retrying the same chat?
+
+    A network blip or a 5xx must be retried; a chat the bot cannot write to
+    must not. ``retry_after`` is a flood control limit, not a bad chat.
+    """
+    from aiogram.exceptions import (
+        TelegramBadRequest,
+        TelegramForbiddenError,
+        TelegramNotFound,
+    )
+
+    if isinstance(exc, TelegramBadRequest):
+        message = str(exc).lower()
+        return any(
+            marker in message
+            for marker in (
+                "chat not found",
+                "chat_id is empty",
+                "user is deactivated",
+                "bot was blocked by the user",
+                "bot can't initiate conversation",
+            )
+        )
+    return isinstance(exc, (TelegramForbiddenError, TelegramNotFound))
 
 
 def _caption_for(event: Event) -> str:
