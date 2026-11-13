@@ -64,6 +64,15 @@ def vnc_url(public_host: str, port: int, password: str) -> str:
     )
 
 
+def _record_count_hook(marker: Path) -> str:
+    """Shell command for x11vnc's ``-afteraccept``/``-gone`` hooks.
+
+    x11vnc already runs hooks through ``/bin/sh -c``, so only the redirect is
+    needed; quoting the path protects spaces and quotes.
+    """
+    return f'echo "$RFB_CLIENT_COUNT" > {shlex.quote(str(marker))}'
+
+
 class _Stack:
     """Default process handle: keeps the spawned processes and their files."""
 
@@ -90,14 +99,20 @@ class _Stack:
         for process in reversed(self.processes):
             if process.returncode is not None:
                 continue
-            process.terminate()
+            try:
+                process.terminate()
+            except ProcessLookupError:  # already gone
+                pass
         for process in reversed(self.processes):
             if process.returncode is not None:
                 continue
             try:
                 await asyncio.wait_for(process.wait(), timeout=5)
             except TimeoutError:
-                process.kill()
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
                 await process.wait()
         self.password_file.unlink(missing_ok=True)
         if self.client_marker is not None:
@@ -156,10 +171,7 @@ def _default_process_factory(
         browser_env = {**os.environ, "DISPLAY": screen}
         client_marker = password_file.with_suffix(".clients")
         client_marker.unlink(missing_ok=True)
-        marker = shlex.quote(str(client_marker))
-        # x11vnc already runs hooks through ``/bin/sh -c`` and exports
-        # RFB_CLIENT_COUNT, so the whole command is just a redirect.
-        record_count = f'echo "$RFB_CLIENT_COUNT" > {marker}'
+        record_count = _record_count_hook(client_marker)
         commands = [
             ["Xvfb", screen, "-screen", "0", "1920x1080x24"],
             ["fluxbox", "-display", screen],

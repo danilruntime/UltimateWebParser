@@ -193,14 +193,13 @@ async def test_client_count_reads_the_hook_marker(tmp_path):
 
 def test_hook_command_survives_awkward_paths(tmp_path):
     """The x11vnc hook runs through ``sh``; odd paths must not break it."""
-    import shlex
     import subprocess
 
-    from uwp.vnc import _Stack
+    from uwp.vnc import _record_count_hook, _Stack
 
     marker = tmp_path / "it's a dir" / "s.clients"
     marker.parent.mkdir()
-    command = f'echo "$RFB_CLIENT_COUNT" > {shlex.quote(str(marker))}'
+    command = _record_count_hook(marker)
 
     subprocess.run(["sh", "-c", command], env={"RFB_CLIENT_COUNT": "2"}, check=True)
 
