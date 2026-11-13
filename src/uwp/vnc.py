@@ -33,6 +33,21 @@ DISPLAY_BASE = 100
 # Raw RFB listeners live in their own internal band so they can never collide
 # with a published noVNC port (6000-6100).
 RFB_PORT_BASE = 4900
+# How long Xvfb/x11vnc may take to become ready before the login fails.
+READY_TIMEOUT = 15.0
+# Chromium refuses to navigate to its "unsafe" ports, and the default VNC band
+# starts at 6000 — the X11 port. A link on 6000 opens with ERR_UNSAFE_PORT in
+# the admin's own browser, so those ports are never handed out.
+UNSAFE_PORTS = frozenset(
+    {
+        1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69,
+        77, 79, 87, 95, 101, 102, 103, 104, 109, 110, 111, 113, 115, 117,
+        119, 123, 135, 137, 139, 143, 161, 179, 389, 427, 465, 512, 513,
+        514, 515, 526, 530, 531, 532, 540, 548, 554, 556, 563, 587, 601,
+        636, 989, 990, 993, 995, 1719, 1720, 1723, 2049, 3659, 4045, 5060,
+        5061, 6000, 6566, 6665, 6666, 6667, 6668, 6669, 6697, 10080,
+    }
+)
 
 
 class ProcessHandle(Protocol):
@@ -53,9 +68,13 @@ class VncInfo:
 
 
 def free_port(min_port: int, max_port: int, taken: set[int]) -> int:
-    """Return the first port in ``[min_port, max_port]`` that is not taken."""
+    """Return the first port in ``[min_port, max_port]`` that is not taken.
+
+    Ports Chromium treats as unsafe are skipped: noVNC is opened in the admin's
+    own browser, and ``http://host:6000`` fails with ``ERR_UNSAFE_PORT``.
+    """
     for port in range(min_port, max_port + 1):
-        if port not in taken:
+        if port not in taken and port not in UNSAFE_PORTS:
             return port
     raise RuntimeError("no free VNC port")
 
@@ -85,10 +104,12 @@ class _Stack:
         processes: list[asyncio.subprocess.Process],
         password_file: Path,
         client_marker: Path | None = None,
+        log_file: Any = None,
     ) -> None:
         self.processes = processes
         self.password_file = password_file
         self.client_marker = client_marker
+        self.log_file = log_file
 
     def client_count(self) -> int:
         """Live client count recorded by the x11vnc accept/gone hooks."""
@@ -121,16 +142,59 @@ class _Stack:
         self.password_file.unlink(missing_ok=True)
         if self.client_marker is not None:
             self.client_marker.unlink(missing_ok=True)
+        if self.log_file is not None:
+            self.log_file.close()
 
 
-async def _spawn(command: list[str], **kw: Any) -> asyncio.subprocess.Process:
+async def _spawn(
+    command: list[str],
+    *,
+    stderr: Any = asyncio.subprocess.DEVNULL,
+    **kw: Any,
+) -> asyncio.subprocess.Process:
     log.debug("starting %s", command[0])
     return await asyncio.create_subprocess_exec(
         *command,
         stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,
+        stderr=stderr,
         **kw,
     )
+
+
+async def _wait_for_path(path: Path, timeout: float) -> bool:
+    """Poll until ``path`` exists (Xvfb creates its socket asynchronously)."""
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        if path.exists():
+            return True
+        await asyncio.sleep(0.05)
+    return False
+
+
+async def _wait_for_port(port: int, timeout: float) -> bool:
+    """Poll until something accepts connections on ``127.0.0.1:port``."""
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        try:
+            _reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        except OSError:
+            await asyncio.sleep(0.05)
+            continue
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except OSError:
+            pass
+        return True
+    return False
+
+
+def _log_tail(path: Path, limit: int = 600) -> str:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return ""
+    return text[-limit:]
 
 
 def _default_process_factory(
@@ -176,6 +240,10 @@ def _default_process_factory(
         client_marker = password_file.with_suffix(".clients")
         client_marker.unlink(missing_ok=True)
         record_count = _record_count_hook(client_marker)
+        log_name = password_file.parent / f"{profile.id or 'x'}-{port}.log"
+        log_file = log_name.open("ab")
+        # Each process announces its own failure on stderr; a shared log turns
+        # the old silent "noVNC shows an empty page" into a readable reason.
         commands = [
             ["Xvfb", screen, "-screen", "0", "1920x1080x24"],
             ["fluxbox", "-display", screen],
@@ -205,15 +273,32 @@ def _default_process_factory(
             ],
         ]
         processes: list[asyncio.subprocess.Process] = []
+        stack = _Stack(processes, password_file, client_marker, log_file)
         try:
-            for command in commands:
+            # Xvfb first and wait for its socket: fluxbox, x11vnc and Chromium
+            # all abort with "cannot open display" if they lose that race.
+            processes.append(
+                await _spawn(commands[0], stderr=log_file, env=None)
+            )
+            if not await _wait_for_path(
+                Path(f"/tmp/.X11-unix/X{display}"), READY_TIMEOUT
+            ):
+                raise RuntimeError(
+                    f"Xvfb не поднял дисплей :{display}: {_log_tail(log_name)}"
+                )
+            for command in commands[1:]:
                 env = browser_env if command[0] == executable else None
-                processes.append(await _spawn(command, env=env))
+                processes.append(await _spawn(command, stderr=log_file, env=env))
+            # x11vnc binds its RFB port late; noVNC would show a blank page.
+            if not await _wait_for_port(vnc_port, READY_TIMEOUT):
+                raise RuntimeError(
+                    f"x11vnc не слушает порт {vnc_port}: {_log_tail(log_name)}"
+                )
         except BaseException:
             # Do not leak a half-started stack: kill whatever did start.
-            await _Stack(processes, password_file, client_marker).stop()
+            await stack.stop()
             raise
-        return _Stack(processes, password_file, client_marker)
+        return stack
 
     return factory
 

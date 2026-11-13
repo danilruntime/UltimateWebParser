@@ -106,3 +106,38 @@ def test_parser_install_help_is_available(capsys):
     with pytest.raises(SystemExit):
         main(["browser", "install", "--help"])
     assert "sha256" in capsys.readouterr().out.lower()
+
+
+def test_doctor_checks_the_playwright_driver(capsys, monkeypatch, tmp_path):
+    """A broken driver node used to surface only as a failed run, not a check."""
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("UWP_BOT_TOKEN", "1:fake")
+    monkeypatch.setenv("UWP_ADMIN_IDS", "1")
+
+    main(["doctor"])
+
+    assert "драйвер playwright" in capsys.readouterr().out
+
+
+def test_doctor_reports_a_broken_driver(monkeypatch, tmp_path):
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("UWP_BOT_TOKEN", "1:fake")
+    monkeypatch.setenv("UWP_ADMIN_IDS", "1")
+
+    from uwp import cli
+
+    real_run = cli.subprocess.run
+
+    class _Failed:
+        returncode = 127
+        stdout = ""
+        stderr = "error while loading shared libraries: libatomic.so.1"
+
+    def fake_run(cmd, *args, **kwargs):
+        if str(cmd[0]).endswith("node") and "--version" in cmd:
+            return _Failed()
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+
+    assert cli.main(["doctor"]) == 1

@@ -120,6 +120,33 @@ def cmd_doctor(settings: Settings, quiet: bool = False) -> int:
         found = shutil.which(tool)
         check(tool, found is not None, found or "не найден (нужен только для VNC)", warning=True)
 
+    # Playwright talks to its own bundled Node build, not the system one.  A
+    # missing shared library (``libatomic.so.1`` in a slim Debian image) makes
+    # every run fail with "Connection closed while reading from the driver"
+    # while the browser check above still passes.
+    try:
+        from playwright._impl._driver import compute_driver_executable
+
+        driver = compute_driver_executable()
+        node = str(driver[0] if isinstance(driver, tuple) else driver)
+    except Exception as exc:  # noqa: BLE001 - an import failure is a failed check
+        check("драйвер playwright", False, f"не найден: {exc}")
+    else:
+        try:
+            completed = subprocess.run(
+                [node, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            check("драйвер playwright", False, f"не запускается: {exc}")
+        else:
+            output = (completed.stderr or completed.stdout).strip()
+            first_line = output.splitlines()[0] if output else ""
+            check("драйвер playwright", completed.returncode == 0, first_line)
+
     check("UWP_BOT_TOKEN", bool(settings.bot_token), "не задан")
     check("UWP_ADMIN_IDS", bool(settings.admin_ids), "пусто")
     check(
@@ -380,23 +407,38 @@ def cmd_profile_login(settings: Settings, profile_id: int) -> int:
     from uwp.db.repo.sites import SitesRepo
     from uwp.db.repo.vnc import VncRepo
     from uwp.services.vnc import VncService
+    from uwp.timeutil import utcnow
     from uwp.vnc import VncManager
 
     async def action(db) -> int:
+        from uwp.domain import VncStatus
+
         repo = ProfilesRepo(db)
         profile = await repo.get(profile_id)
         if profile is None:
             _print(f"❌ Профиль {profile_id} не найден.")
             return 1
-        manager = VncManager(settings, repo, VncRepo(db))
-        svc = VncService(manager, repo, SitesRepo(db), settings, VncRepo(db))
+        sessions = VncRepo(db)
+        manager = VncManager(settings, repo, sessions)
+        svc = VncService(manager, repo, SitesRepo(db), settings, sessions)
         info = await svc.request(profile_id)
         _print(f"Ссылка: {info.url}")
         _print(f"Пароль: {info.password}")
         _print("Нажмите Ctrl+C, чтобы завершить сессию.")
         try:
             while True:
-                await asyncio.sleep(3600)
+                await asyncio.sleep(2)
+                # Serve the same tick the worker does: that honours
+                # ``uwp vnc stop`` typed in another terminal, the hard TTL and
+                # the idle timeout, and reaps the stack once the row is gone.
+                await manager.tick(utcnow())
+                session = await sessions.get(info.session_id)
+                if session is None or session.status in (
+                    VncStatus.stopped,
+                    VncStatus.failed,
+                ):
+                    _print("Сессия завершена.")
+                    break
         except (KeyboardInterrupt, asyncio.CancelledError):
             await svc.stop(info.session_id)
             _print("Сессия завершена.")

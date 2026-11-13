@@ -27,7 +27,12 @@ class FakeProc:
 
 
 def test_free_port_skips_taken():
-    assert free_port(6000, 6002, taken={6000, 6001}) == 6002
+    assert free_port(6000, 6002, taken={6001}) == 6002
+
+
+def test_free_port_never_hands_out_chromium_unsafe_ports():
+    """http://host:6000 fails with ERR_UNSAFE_PORT in the admin's browser."""
+    assert free_port(6000, 6001, taken=set()) == 6001
 
 
 def test_free_port_raises_when_exhausted():
@@ -61,6 +66,16 @@ class FakeSpawned:
     def kill(self):
         self.terminated = True
         self.returncode = -9
+
+
+async def _pretend_ready(monkeypatch, vnc):
+    """Skip the real Xvfb/x11vnc readiness probes in unit tests."""
+
+    async def ready(*_args, **_kwargs):
+        return True
+
+    monkeypatch.setattr(vnc, "_wait_for_path", ready)
+    monkeypatch.setattr(vnc, "_wait_for_port", ready)
 
 
 async def _factory_env(tmp_path):
@@ -99,6 +114,7 @@ async def test_default_factory_builds_the_full_stack(tmp_path, monkeypatch):
         return process
 
     monkeypatch.setattr(vnc, "_spawn", fake_spawn)
+    await _pretend_ready(monkeypatch, vnc)
     handle = await vnc._default_process_factory(settings)(
         display=100,
         port=6100,
@@ -140,6 +156,7 @@ async def test_default_factory_reports_storepasswd_failure(tmp_path, monkeypatch
         return FakeSpawned(command, returncode=1)
 
     monkeypatch.setattr(vnc, "_spawn", fake_spawn)
+    await _pretend_ready(monkeypatch, vnc)
 
     with pytest.raises(RuntimeError, match="storepasswd"):
         await vnc._default_process_factory(settings)(
@@ -166,6 +183,7 @@ async def test_default_factory_kills_partial_stack_on_failure(tmp_path, monkeypa
         return process
 
     monkeypatch.setattr(vnc, "_spawn", fake_spawn)
+    await _pretend_ready(monkeypatch, vnc)
 
     with pytest.raises(FileNotFoundError):
         await vnc._default_process_factory(settings)(

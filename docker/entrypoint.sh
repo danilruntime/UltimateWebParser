@@ -59,8 +59,21 @@ fi
 rm -f "$probe"
 
 # XDG dirs keep Chromium's cache inside the writable volume.
-export HOME="${HOME:-/home/uwp}"
+# ``HOME`` is already ``/root`` in the base image, so ``${HOME:-...}`` would
+# keep it and Chromium (now uid 1000) could not create ``~/.local``.
+if [ -n "${UWP_HOME:-}" ]; then
+    HOME="$UWP_HOME"
+else
+    HOME="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6)"
+    HOME="${HOME:-/home/uwp}"
+fi
+export HOME
 export XDG_CACHE_HOME="$DATA_DIR/.cache"
 export XDG_CONFIG_HOME="$DATA_DIR/.config"
+mkdir -p "$HOME/.local/share" 2>/dev/null || {
+    HOME="$DATA_DIR/home"
+    export HOME
+    mkdir -p "$HOME/.local/share"
+}
 
 exec uwp "$@"

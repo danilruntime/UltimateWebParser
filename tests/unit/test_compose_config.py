@@ -38,6 +38,18 @@ def test_dockerfile_pins_browser_sha():
     assert "sha256sum -c" in text
 
 
+def test_dockerfile_installs_the_playwright_driver_libraries():
+    """Without libatomic1 the bundled driver node cannot start at all.
+
+    The symptom is a run failing with "Connection closed while reading from
+    the driver" while every other check (including `doctor`) stays green, so
+    pin the library here instead of rediscovering it from a traceback.
+    """
+    text = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "libatomic1" in text
+
+
 def test_dockerfile_uses_tini_and_unprivileged_user():
     text = (ROOT / "Dockerfile").read_text(encoding="utf-8")
 
