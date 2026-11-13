@@ -57,3 +57,31 @@ def _export_label(site) -> str:
         "changes": "только изменения",
         "never": "никогда",
     }.get(str(site.export_mode), str(site.export_mode))
+
+ASK_INTERVAL = (
+    "Введите интервал в минутах: одно число (например 60) "
+    "или диапазон (например 45-90)."
+)
+INTERVAL_SAVED = "✅ Интервал сайта «{name}»: каждые {low}–{high} мин."
+CHOOSE_PROFILE = "Выберите профиль:"
+PROFILE_SET = "✅ Профиль: {label}"
+CHOOSE_PROXY = "Выберите прокси:"
+PROXY_SET = "✅ Прокси: {name}"
+PARAMS_HEADER = "🔧 Параметры парсера. Нажмите, чтобы изменить:"
+ASK_PARAM = "Введите новое значение параметра «{title}»:"
+PARAM_SAVED = "✅ Параметр «{name}» сохранён."
+EXPORT_SET = "✅ Экспорт: {mode}"
+
+
+def export_label(mode) -> str:
+    return {
+        "always": "всегда",
+        "changes": "только изменения",
+        "never": "никогда",
+    }.get(str(mode), str(mode))
+
+
+def profile_label(site) -> str:
+    if str(site.profile_mode) == "persistent":
+        return f"постоянный (id {site.profile_id})" if site.profile_id else "постоянный"
+    return "чистый (случайный отпечаток)"
