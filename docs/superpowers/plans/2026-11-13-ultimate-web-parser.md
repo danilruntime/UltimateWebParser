@@ -881,7 +881,7 @@ git commit -m "feat: orchestrate parser runs with profiles, proxies and error ki
 **Files:**
 - Create: `src/uwp/ods.py`
 - Test: `tests/unit/test_ods.py`
-- Modify: `pyproject.toml` (replace `odfpy>=1.4` with `odfpy>=1.4`)
+- Modify: `pyproject.toml` (Task 1 already pins `odfpy>=1.4`; confirm it and do not add `openpyxl`)
 - Delete: `src/uwp/excel.py`, `tests/unit/test_excel.py` (superseded by the `.ods` implementation)
 
 **Interfaces:**

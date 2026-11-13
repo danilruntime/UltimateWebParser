@@ -8,7 +8,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from odf.namespaces import TABLENS
+from odf.config import (
+    ConfigItem,
+    ConfigItemMapEntry,
+    ConfigItemMapIndexed,
+    ConfigItemMapNamed,
+    ConfigItemSet,
+)
+from odf.number import Number, NumberStyle
 from odf.opendocument import OpenDocumentSpreadsheet
 from odf.style import (
     Style,
@@ -91,9 +98,12 @@ def _cell_style(
     bold: bool = False,
     link: bool = False,
     background: str | None = None,
+    data_style: str | None = None,
 ) -> Style:
     """Create a table-cell style in ``office:styles`` and return it."""
     style = Style(name=name, family="table-cell")
+    if data_style is not None:
+        style.setAttribute("datastylename", data_style)
     if bold or link:
         props: dict[str, str] = {}
         if bold:
@@ -109,11 +119,30 @@ def _cell_style(
     return style
 
 
+def _number_style(doc: OpenDocumentSpreadsheet, name: str, decimals: int) -> str:
+    """Register a data style rendering numbers with ``decimals`` digits."""
+    style = NumberStyle(name=name)
+    style.addElement(
+        Number(decimalplaces=decimals, minintegerdigits=1, grouping="false")
+    )
+    doc.styles.addElement(style)
+    return name
+
+
 def _column_style(doc: OpenDocumentSpreadsheet, name: str, width: int) -> Style:
     style = Style(name=name, family="table-column")
     style.addElement(TableColumnProperties(columnwidth=f"{width}pt"))
     doc.automaticstyles.addElement(style)
     return style
+
+
+def _fmt_decimals(fmt: str | None) -> int | None:
+    """``"0.00"`` → ``2``; ``None`` or a format without decimals → ``None``."""
+    if not fmt or "." not in fmt:
+        return None
+    tail = fmt.split(".", 1)[1]
+    decimals = len(tail) - len(tail.lstrip("0#"))
+    return decimals
 
 
 def _text_cell(
@@ -155,12 +184,18 @@ def _value_cell(
 
 
 def _add_autofilter(doc: OpenDocumentSpreadsheet, sheet: str, last_col: int, last_row: int) -> None:
-    """Register a ``table:database-range`` so Calc offers autofilter on the data."""
+    """Register a ``table:database-range`` so Calc offers autofilter on the data.
+
+    Must be called after every sheet has been attached: the ODF content model
+    requires all ``table:table`` elements to precede ``table:database-ranges``.
+    """
     ranges = DatabaseRanges()
     ranges.addElement(
         DatabaseRange(
             name="Autofilter",
             targetrangeaddress=f"${sheet}.A1:${sheet}.{_column_letter(last_col)}{last_row}",
+            containsheader="true",
+            displayfilterbuttons="true",
         )
     )
     doc.spreadsheet.addElement(ranges)
@@ -176,23 +211,64 @@ def _column_letter(index: int) -> str:
 
 
 def _freeze_first_row(doc: OpenDocumentSpreadsheet, sheet: str) -> None:
-    """Freeze the header row via the ``table:table-view`` settings of the sheet.
+    """Freeze the header row via Calc's view settings in ``settings.xml``.
 
-    odfpy has no first-class API for view settings, so the element is built
-    directly and attached to the table with grammar checking disabled.
+    Freeze state is not part of ``content.xml``: ODF keeps it in the
+    ``ooo:view-settings`` config item set, which odfpy has no first-class API
+    for, so the config tree is built by hand.
     """
-    from odf.element import Element
+    view = ConfigItemMapEntry()
+    view.setAttribute("name", sheet)
+    for name, type_, value in (
+        ("VerticalSplitMode", "short", "2"),
+        ("VerticalSplitPosition", "short", "1"),
+        ("HorizontalSplitMode", "short", "0"),
+        ("HorizontalSplitPosition", "short", "0"),
+        ("ActiveTable", "string", sheet),
+    ):
+        item = ConfigItem(name=name, type=type_)
+        item.addText(value)
+        view.addElement(item)
 
-    view = Element(
-        qname=(TABLENS, "table-view"),
-        check_grammar=False,
-        attributes={
-            (TABLENS, "vertical-split-mode"): "fixed",
-            (TABLENS, "vertical-split-position"): "1",
-        },
-    )
-    view.setAttrNS(TABLENS, "name", sheet)
-    doc.spreadsheet.getElementsByType(Table)[0].addElement(view, check_grammar=False)
+    tables = ConfigItemMapNamed(name="Tables")
+    tables.addElement(view)
+
+    entry = ConfigItemMapEntry()
+    entry.addElement(tables)
+
+    views = ConfigItemMapIndexed(name="Views")
+    views.addElement(entry)
+
+    view_settings = ConfigItemSet(name="ooo:view-settings")
+    view_settings.addElement(views)
+    doc.settings.addElement(view_settings)
+
+
+def _column_value_styles(
+    doc: OpenDocumentSpreadsheet,
+    columns: list[Column],
+    changed_style: Style,
+) -> list[tuple[Style | None, Style | None]]:
+    """Per-column ``(normal, changed)`` cell styles, with number formats applied."""
+    result: list[tuple[Style | None, Style | None]] = []
+    for index, col in enumerate(columns, start=1):
+        decimals = _fmt_decimals(col.fmt)
+        if decimals is None:
+            result.append((None, changed_style))
+            continue
+        data_style = _number_style(doc, f"num{index}", decimals)
+        result.append(
+            (
+                _cell_style(doc, f"value{index}", data_style=data_style),
+                _cell_style(
+                    doc,
+                    f"value{index}-changed",
+                    background=_CHANGED_BACKGROUND,
+                    data_style=data_style,
+                ),
+            )
+        )
+    return result
 
 
 def write_report(
@@ -235,10 +311,11 @@ def write_report(
     table.addElement(header_row)
 
     changed = _changed_keys(meta)
+    value_styles = _column_value_styles(doc, columns, changed_style)
     for row in rows:
         is_changed = str(row.get("external_key")) in changed
         table_row = TableRow()
-        for col in columns:
+        for index, col in enumerate(columns):
             value = row.get(col.key)
             href = None
             if _is_link_key(col.key) and isinstance(value, str) and value:
@@ -247,15 +324,20 @@ def write_report(
                 style = changed_link_style if is_changed else link_style
                 table_row.addElement(_text_cell(doc, str(value), style, href=href))
             else:
-                table_row.addElement(_value_cell(doc, value, changed_style if is_changed else None))
+                normal_style, changed_column_style = value_styles[index]
+                table_row.addElement(
+                    _value_cell(
+                        doc,
+                        value,
+                        changed_column_style if is_changed else normal_style,
+                    )
+                )
         if new_keys is not None:
             flag = "да" if str(row.get("external_key")) in new_keys else "нет"
             table_row.addElement(_text_cell(doc, flag, changed_style if is_changed else None))
         table.addElement(table_row)
 
     doc.spreadsheet.addElement(table)
-    _add_autofilter(doc, DATA_SHEET, len(headers), len(rows) + 1)
-    _freeze_first_row(doc, DATA_SHEET)
 
     meta_table = Table(name=META_SHEET)
     for key, value in meta.items():
@@ -266,6 +348,10 @@ def write_report(
         meta_row.addElement(_text_cell(doc, str(value)))
         meta_table.addElement(meta_row)
     doc.spreadsheet.addElement(meta_table)
+
+    # All sheets must be attached before the database range is added.
+    _add_autofilter(doc, DATA_SHEET, len(headers), len(rows) + 1)
+    _freeze_first_row(doc, DATA_SHEET)
 
     doc.save(str(path))
     return path

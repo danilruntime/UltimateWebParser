@@ -1,9 +1,11 @@
 from datetime import UTC, datetime
 
 import pytest
+from odf.config import ConfigItem
+from odf.number import Number
 from odf.opendocument import load
 from odf.style import Style, TableColumnProperties
-from odf.table import Table, TableCell, TableColumn, TableRow
+from odf.table import DatabaseRange, Table, TableCell, TableColumn, TableRow
 from odf.text import A, P
 
 from uwp.ods import prune_reports, report_filename, slugify, write_report
@@ -139,6 +141,45 @@ def test_report_skips_empty_url_and_highlights_changed(tmp_path):
     )
     meta = _rows(_sheet(doc, "Метаданные"))
     assert meta[0][:2] == ["site", "S"]
+
+
+def test_report_autofilter_freeze_and_number_format(tmp_path):
+    cols = [
+        Column("title", "Title", 30),
+        Column("url", "URL", 40),
+        Column("price", "Price", 12, "0.00"),
+    ]
+    rows = [{"external_key": "1", "title": "A", "url": "https://x/1", "price": 2.0}]
+    path = write_report(tmp_path / "t.ods", rows, cols, {})
+    doc = load(str(path))
+
+    ranges = doc.spreadsheet.getElementsByType(DatabaseRange)
+    assert len(ranges) == 1
+    assert ranges[0].getAttribute("name") == "Autofilter"
+    assert ranges[0].getAttribute("displayfilterbuttons") == "true"
+    assert ranges[0].getAttribute("targetrangeaddress") == "$Данные.A1:$Данные.C2"
+
+    # database-ranges must follow every sheet in document order.
+    tags = [child.tagName for child in doc.spreadsheet.childNodes]
+    assert tags.index("table:database-ranges") > tags.index("table:table", 1)
+
+    settings = doc.settings.getElementsByType(ConfigItem)
+    frozen = {
+        item.getAttribute("name"): item.firstChild.data
+        for item in settings
+        if item.getAttribute("name") in {"VerticalSplitMode", "VerticalSplitPosition"}
+    }
+    assert frozen == {"VerticalSplitMode": "2", "VerticalSplitPosition": "1"}
+
+    # The "0.00" column gets a data style with two decimals.
+    numbers = doc.styles.getElementsByType(Number)
+    assert [n.getAttribute("decimalplaces") for n in numbers] == ["2"]
+    data_styles = {
+        s.getAttribute("name"): s.getAttribute("datastylename")
+        for s in doc.styles.getElementsByType(Style)
+        if s.getAttribute("datastylename")
+    }
+    assert data_styles["value3"] == "num3"
 
 
 def test_prune_keeps_newest(tmp_path):

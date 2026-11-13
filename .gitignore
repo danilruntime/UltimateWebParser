@@ -5,6 +5,6 @@ data/
 .env
 .superpowers/
 .worktrees/
-*.xlsx
+*.ods
 .pytest_cache/
 .ruff_cache/
