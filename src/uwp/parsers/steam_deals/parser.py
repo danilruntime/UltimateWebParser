@@ -135,6 +135,9 @@ def _parse_row(row: Tag) -> dict | None:
     summary, percent, count = _parse_review(row)
     image = row.select_one("img")
     return {
+        # Per the parser contract every row carries the dedup key; the Steam
+        # store's identity for a game is its app id.
+        "external_key": app_id,
         "app_id": app_id,
         "title": _text(row.select_one(".title")),
         "url": url,

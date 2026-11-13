@@ -10,6 +10,7 @@ from uwp.db.repo.profiles import ProfilesRepo
 from uwp.db.repo.proxies import ProxiesRepo
 from uwp.db.repo.sites import SitesRepo
 from uwp.domain import ErrorKind, Job, JobStatus, ProfileKind, RunStatus, Site
+from uwp.events import RUN_FAILED, RUN_FINISHED, SITE_PROBLEM, EventBus
 from uwp.runner import RunOutcome
 from uwp.scheduler import Scheduler
 from uwp.timeutil import utcnow
@@ -20,6 +21,8 @@ log = logging.getLogger(__name__)
 RETRYABLE = frozenset({ErrorKind.transient, ErrorKind.blocked})
 # Seconds of backoff per already failed attempt.
 RETRY_BACKOFF_SECONDS = 60
+# Consecutive failures after which the admin hears that a site looks broken.
+PROBLEM_AFTER_FAILURES = 3
 
 
 class Worker:
@@ -35,6 +38,7 @@ class Worker:
         runner: object,
         scheduler: Scheduler,
         worker_id: str,
+        bus: EventBus | None = None,
     ) -> None:
         self.settings = settings
         self.jobs = jobs
@@ -44,6 +48,7 @@ class Worker:
         self.runner = runner
         self.scheduler = scheduler
         self.worker_id = worker_id
+        self.bus = bus
 
     async def recover(self, now: datetime) -> None:
         """Requeue jobs of dead workers and release stale profile leases."""
@@ -128,12 +133,52 @@ class Worker:
             await self.jobs.finish(job.id, status, outcome.error)
 
         failed = outcome.status == RunStatus.failed
+        failures = site.consecutive_failures + 1 if failed else 0
         await self.sites.update(
             site.id,
             last_run_at=now,
             last_status=str(outcome.status),
-            consecutive_failures=site.consecutive_failures + 1 if failed else 0,
+            consecutive_failures=failures,
         )
+        # A retryable failure is retried silently; the admin hears about it only
+        # once the attempts are exhausted.
+        if not restarted:
+            await self._notify(site, outcome, failures)
+
+    async def _notify(self, site: Site, outcome: RunOutcome, failures: int) -> None:
+        """Queue the admin notification of a finished run."""
+        if self.bus is None:
+            return
+        base = {
+            "site": site.name,
+            "site_slug": site.slug,
+            "site_id": site.id,
+            "status": str(outcome.status),
+            "rows": len(outcome.rows),
+            "new": outcome.new_count,
+            "run_id": outcome.run_id,
+        }
+        try:
+            if outcome.status in (RunStatus.ok, RunStatus.partial):
+                payload = dict(base, report_path=str(outcome.report_path or ""))
+                await self.bus.emit(RUN_FINISHED, site.id, outcome.run_id, payload)
+            elif outcome.status == RunStatus.failed:
+                payload = dict(base, text=outcome.error or "неизвестная ошибка",
+                               error_kind=str(outcome.error_kind or ""))
+                if outcome.artifacts_dir is not None:
+                    screenshot = outcome.artifacts_dir / "screenshot.png"
+                    if screenshot.is_file():
+                        payload["screenshot"] = str(screenshot)
+                await self.bus.emit(RUN_FAILED, site.id, outcome.run_id, payload)
+                if failures >= PROBLEM_AFTER_FAILURES:
+                    await self.bus.emit(
+                        SITE_PROBLEM,
+                        site.id,
+                        outcome.run_id,
+                        dict(base, text=f"{failures} провала подряд"),
+                    )
+        except Exception:  # a notification is never worth crashing the worker
+            log.exception("queueing a notification for site %s failed", site.slug)
 
     async def _maybe_retry(
         self, job: Job, site: Site, outcome: RunOutcome, now: datetime

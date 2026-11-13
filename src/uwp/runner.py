@@ -16,6 +16,7 @@ from uwp.domain import ErrorKind, Job, Profile, ProfileKind, Proxy, Run, RunStat
 from uwp.parsers.base import BaseParser, ParseContext, ParseError
 from uwp.parsers.registry import ParserRegistry
 from uwp.profiles import Identity, ProfileManager, identity_from_seed
+from uwp.reports import export_report
 from uwp.timeutil import utcnow
 
 log = logging.getLogger(__name__)
@@ -36,6 +37,25 @@ class RunOutcome:
     duration_ms: int = 0
     meta: dict = field(default_factory=dict)
     notes: str | None = None
+    report_path: Path | None = None
+    artifacts_dir: Path | None = None
+    run_id: int | None = None
+
+
+def _row_key(row: dict) -> str:
+    """The dedup key of a row: the parser's ``external_key`` or its first column."""
+    key = row.get("external_key")
+    if key in (None, ""):
+        key = row.get("app_id")
+    if key in (None, ""):
+        # A parser that forgets the key is a parser bug, not a bad config.
+        raise ValueError("parser row has no external_key")
+    return str(key)
+
+
+def _tracked_view(payload: dict, tracked: list[str]) -> dict:
+    """Only the report columns matter when deciding whether a row changed."""
+    return {key: payload.get(key) for key in tracked}
 
 
 def _default_bridge_factory(proxy: Proxy) -> Any:
@@ -81,7 +101,7 @@ class Runner:
             Run(job_id=job.id, site_id=site.id, status=RunStatus.running, proxy_id=proxy.id if proxy else None)
         )
         artifacts_dir = self.settings.artifacts_dir / str(run_id)
-        outcome = RunOutcome(status=RunStatus.failed)
+        outcome = RunOutcome(status=RunStatus.failed, run_id=run_id, artifacts_dir=artifacts_dir)
         profile: Profile | None = None
         session: Any = None
         bridge: Any = None
@@ -112,15 +132,28 @@ class Runner:
             outcome.rows = result.rows
             outcome.meta = result.meta
             outcome.notes = result.notes
-            outcome.new_count = await self._save_rows(site, result.rows)
+            _, new_keys, changed_keys, vanished = await self._save_rows(site, result.rows)
+            outcome.new_count = len(new_keys)
             outcome.status = RunStatus.ok
+            outcome.duration_ms = int((time.monotonic() - started) * 1000)
+            self._export(site, outcome, profile, proxy, new_keys, changed_keys, vanished)
             return outcome
         except ParseError as exc:
             outcome.error_kind = exc.kind
             outcome.error = exc.message
             if exc.partial_rows:
                 outcome.rows = exc.partial_rows
-                outcome.new_count = await self._save_rows(site, exc.partial_rows)
+                try:
+                    _, new_keys, changed_keys, vanished = await self._save_rows(
+                        site, exc.partial_rows
+                    )
+                    outcome.new_count = len(new_keys)
+                    outcome.duration_ms = int((time.monotonic() - started) * 1000)
+                    self._export(
+                        site, outcome, profile, proxy, new_keys, changed_keys, vanished
+                    )
+                except Exception:  # bad partial rows must not mask the real error
+                    log.exception("saving partial rows of run %s failed", run_id)
                 outcome.status = RunStatus.partial
             else:
                 outcome.status = RunStatus.failed
@@ -147,6 +180,9 @@ class Runner:
             outcome.status = RunStatus.failed
             return outcome
         finally:
+            # A failure is much easier to explain with a picture of the page.
+            if outcome.status == RunStatus.failed and session is not None:
+                await self._capture_screenshot(session, artifacts_dir)
             if session is not None:
                 try:
                     await session.close()
@@ -171,9 +207,49 @@ class Runner:
                 error=_stored_error(outcome),
                 rows_count=len(outcome.rows),
                 new_count=outcome.new_count,
+                report_path=str(outcome.report_path) if outcome.report_path else None,
                 artifact_dir=str(artifacts_dir) if artifacts_dir.is_dir() else None,
                 profile_id=profile.id if profile is not None else None,
             )
+
+    async def _capture_screenshot(self, session: Any, artifacts_dir: Path) -> None:
+        """Save what the page looked like when a run failed, for the admin."""
+        try:
+            artifacts_dir.mkdir(parents=True, exist_ok=True)
+            await session.page.screenshot(path=str(artifacts_dir / "screenshot.png"))
+        except Exception:  # a screenshot is nice to have, never required
+            log.debug("screenshot of run in %s failed", artifacts_dir, exc_info=True)
+
+    def _export(
+        self,
+        site: Site,
+        outcome: RunOutcome,
+        profile: Profile | None,
+        proxy: Proxy | None,
+        new_keys: set[str],
+        changed_keys: set[str],
+        vanished: int,
+    ) -> None:
+        """Write the ``.ods`` report of a finished run, if the site wants one."""
+        parser = self.registry.get(site.parser_key)
+        if parser is None or not outcome.rows:
+            return
+        try:
+            outcome.report_path = export_report(
+                self.settings,
+                site=site,
+                parser=parser,
+                rows=outcome.rows,
+                profile=profile,
+                proxy=proxy,
+                when=utcnow(),
+                duration_ms=outcome.duration_ms,
+                new_keys=new_keys,
+                changed_keys=changed_keys,
+                vanished=vanished,
+            )
+        except Exception:  # a broken report must not fail an otherwise good run
+            log.exception("writing the report of site %s failed", site.id)
 
     async def _acquire_profile(self, site: Site, run_id: int) -> Profile:
         if site.profile_mode == ProfileKind.persistent:
@@ -226,15 +302,40 @@ class Runner:
             save_artifact=save_artifact,
         )
 
-    async def _save_rows(self, site: Site, rows: list[dict]) -> int:
+    async def _save_rows(
+        self, site: Site, rows: list[dict]
+    ) -> tuple[int, set[str], set[str], int]:
+        """Store every row; return the new keys, changed keys and vanished count.
+
+        ``external_key`` is the dedup key the parser owns (for Steam it is the
+        app id). It stays on the in-memory rows so the report can flag new and
+        changed lines, but is popped from the stored payload.
+        """
         now = utcnow()
-        new_count = 0
+        parser = self.registry.get(site.parser_key)
+        tracked = [column.key for column in parser.columns] if parser else []
+        before = await self.items.keys(site.id)
+        new_keys: set[str] = set()
+        changed_keys: set[str] = set()
+        seen: set[str] = set()
+
         for row in rows:
-            payload = dict(row)
-            key = str(payload.pop("external_key"))
+            key = _row_key(row)
+            if key in seen:
+                continue
+            seen.add(key)
+            row["external_key"] = key
+            payload = {name: value for name, value in row.items() if name != "external_key"}
+            previous = await self.items.previous_payload(site.id, key)
             if await self.items.upsert(site.id, key, payload, now):
-                new_count += 1
-        return new_count
+                new_keys.add(key)
+            elif previous is not None and _tracked_view(previous, tracked) != _tracked_view(
+                payload, tracked
+            ):
+                changed_keys.add(key)
+
+        return len(new_keys), new_keys, changed_keys, len(before - seen)
+
 
 
 class _ConfigError(Exception):

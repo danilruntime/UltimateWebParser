@@ -129,10 +129,10 @@ async def build_runtime(settings: Settings, *, with_bot: bool = True) -> Runtime
     profiles_manager = ProfileManager(settings, profiles)
     scheduler = Scheduler(sites, jobs)
     runner = Runner(settings, profiles_manager, registry, runs, items)
-    worker = Worker(
-        settings, jobs, sites, profiles, proxies, runner, scheduler, WORKER_ID
-    )
     bus = EventBus(events, admins, settings)
+    worker = Worker(
+        settings, jobs, sites, profiles, proxies, runner, scheduler, WORKER_ID, bus
+    )
 
     site_service = SiteService(sites, jobs, scheduler, registry)
     vnc_manager = VncManager(settings, profiles, sessions)

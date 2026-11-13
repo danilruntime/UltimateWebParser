@@ -1,1 +1,266 @@
 # UltimateWebParser
+
+Самодостаточный сервис для сбора данных с сайтов: Playwright + fingerprint-chromium,
+управление из Telegram-бота, отчёты в LibreOffice Calc (`.ods`), работа по
+расписанию с прокси и профилями браузера.
+
+Первый парсер — скидки в Steam (`https://store.steampowered.com/`), без входа.
+
+- **Модульные парсеры.** Новый сайт = папка в `src/uwp/parsers/`; ядро не трогаем.
+- **Профили браузера.** Чистый (одноразовый, случайный отпечаток) или постоянный
+  (для сайтов со входом, хранится между прогонами).
+- **Прокси на сайт.** Схемы `http`/`https`/`socks5`, пароли шифруются в базе.
+- **Ручной вход через VNC.** Локальный x11vnc + noVNC на свободном порту из
+  диапазона 6000–6100; ссылка и пароль приходят прямо в бота.
+- **Бот с кнопками** (только для админов): сайты, настройки, профили, прокси,
+  история прогонов, повторный запуск.
+- **Отчёты `.ods`** с листами «Данные» и «Метаданные», автофильтром, замороженной
+  шапкой, кликабельными ссылками и подсветкой изменённых строк.
+
+## Быстрый старт
+
+Нужен Docker с Compose (v2).
+
+```bash
+git clone <repo> && cd UltimateWebParser
+cp .env.example .env
+$EDITOR .env      # вписать UWP_BOT_TOKEN и UWP_ADMIN_IDS
+docker compose up -d --build
+```
+
+Через минуту в Telegram: `/start` у своего бота.
+
+Что произойдёт: соберётся образ (внутри fingerprint-chromium и Xvfb), создастся
+база, появится выключенный сайт «Steam — скидки». Включите его кнопкой
+«▶️ Включить» — первый прогон начнётся сразу, не дожидаясь интервала, а отчёт
+придёт в чат.
+
+### Как узнать свой Telegram ID
+
+Напишите боту `/id` — он покажет ваш id. Либо запустите бота без
+`UWP_ADMIN_IDS`: он ответит отказом, но id будет виден в логах
+(`docker compose logs -f uwp`). Впишите его в `.env` и перезапустите:
+
+```bash
+docker compose up -d
+```
+
+`UWP_ADMIN_IDS` — список через запятую (`111,222`). Помимо `.env`, админов можно
+добавлять в таблицу `admins` (это делает `uwp init` из `UWP_ADMIN_IDS`).
+
+### Обязательные и полезные переменные
+
+| Переменная | По умолчанию | Зачем |
+| --- | --- | --- |
+| `UWP_BOT_TOKEN` | — | Токен от @BotFather. Без него бот не стартует. |
+| `UWP_ADMIN_IDS` | пусто | Кто имеет доступ к боту. |
+| `UWP_SECRET_KEY` | — | Шифрование паролей прокси. Без ключа они лежат открыто (доктор предупредит). |
+| `UWP_TZ` | `Europe/Moscow` | Часовой пояс дат в боте и отчётах. |
+| `UWP_PUBLIC_HOST` | `localhost` | Хост, по которому админ открывает noVNC. |
+| `UWP_DATA_DIR` | `/data` в образе | База, профили, отчёты, артефакты. |
+| `UWP_NO_SANDBOX` | `true` в образе | Нужен в Docker: у контейнера нет user namespaces. |
+
+Полный список с комментариями — в `.env.example`.
+
+## Повседневное использование
+
+Всё делается кнопками в боте:
+
+- **📋 Сайты** — список, включение/выключение, запуск сейчас.
+- **⚙️** у сайта — интервал (например `45-90`), профиль, прокси, режим отчёта,
+  параметры парсера (регион, количество страниц, минимальная скидка…).
+- **🖥 Войти в профиль** — открывает VNC-сессию для ручного входа на сайт.
+- **🕘 История** — последние прогоны и кнопка «Повторить».
+
+Интервал задаётся в минутах: `60` — каждые 60 минут, `45-90` — случайно в этом
+диапазоне. Ручной запуск не сдвигает расписание.
+
+Прогоны идут только в воркере. В combined-режиме бот и воркер — один процесс;
+в split-режиме это два контейнера с общей базой SQLite (WAL).
+
+## Ручной вход через VNC
+
+Сайты со входом используют постоянный профиль. Создайте его и попросите сессию:
+
+```bash
+docker compose exec uwp uwp profile create Steam-RU
+docker compose exec uwp uwp profile list
+docker compose exec uwp uwp profile login 1     # печатает ссылку и пароль
+```
+
+То же самое есть в боте: «👤 Профили» → профиль → «🖥 Войти». Ссылка вида
+`http://<UWP_PUBLIC_HOST>:6042/vnc.html?autoconnect=1` открывается в браузере;
+войдите на сайт и нажмите «✅ Готово». Сессия живёт 60 минут (можно продлить на
+30) и закрывается после 20 минут без клиентов.
+
+Порты 6000–6100 должны быть доступны с вашего компьютера: в `compose.yaml` они
+опубликованы. В split-режиме порты принадлежат контейнеру `worker`.
+
+Профиль привязывается к сайту в настройках («👤 Профиль»). Пароль от сайта
+хранится только в профиле браузера, в базе его нет.
+
+## Отчёты
+
+После прогона воркер пишет `.ods` в `data/exports/<slug-сайта>/` и ставит в
+очередь событие; бот отправляет файл админам. Имя —
+`{парсер}_{сайт}_{ГГГГ-ММ-ДД_ЧЧ-ММ}.ods`, шаблон меняется
+`UWP_REPORT_NAME_TEMPLATE`. Хранится последние `UWP_EXPORTS_RETENTION` (50) на
+сайт.
+
+Режим отчёта настраивается на сайт:
+
+- `always` — после каждого прогона (по умолчанию);
+- `changes` — только если есть новые или изменившиеся строки; в файл попадает
+  полный срез, плюс колонка «Новое» и подсветка изменённых строк;
+- `never` — не писать.
+
+Скачать отчёт вручную:
+
+```bash
+docker compose exec uwp uwp export steam_skidki -o /data/report.ods
+docker compose cp uwp:/data/report.ods .
+```
+
+## Как добавить свой парсер
+
+1. Создайте папку `src/uwp/parsers/<ключ>/` с `__init__.py` и `parser.py`.
+2. В `parser.py` объявите ровно один наследник `BaseParser`:
+
+```python
+from typing import ClassVar
+from pydantic import BaseModel, Field
+from uwp.parsers.base import BaseParser, Column, ParseContext, ParseResult
+
+
+class MySettings(BaseModel):
+    max_pages: int = Field(default=1, ge=1, le=5, description="Сколько страниц листать")
+
+
+class MyParser(BaseParser):
+    key = "my_site"
+    title = "Мой сайт"
+    description = "Что собираем"
+    url = "https://example.com/"
+    requires_login = False
+    settings_model = MySettings
+    columns: ClassVar[list[Column]] = [
+        Column("title", "Название", width=40),
+        Column("url", "Ссылка", width=60),
+        Column("price", "Цена", width=12, fmt="0.00"),
+    ]
+
+    async def run(self, ctx: ParseContext) -> ParseResult:
+        settings: MySettings = ctx.settings
+        await ctx.page.goto(self.url, wait_until="domcontentloaded")
+        rows = [{"external_key": "id-1", "title": "…", "url": "…", "price": 1.0}]
+        return ParseResult(rows=rows, meta={"pages": 1})
+```
+
+3. Перезапустите сервис: `docker compose restart uwp`. Парсер появится в
+   `uwp parsers list` и в боте («➕ Добавить сайт»).
+
+Правила:
+
+- **`external_key` обязателен в каждой строке** — по нему считается «новое» и
+  «изменённое» (для Steam это `app_id`). Он не попадает в отчёт, если его нет в
+  `columns`.
+- Ошибки бросайте типизированно: `ParseError(kind=ErrorKind.blocked, message="…",
+  partial_rows=[…])`. Виды: `login_required`, `blocked`, `transient`,
+  `parser_error`, `config_error` — от вида зависят ретраи и уведомления.
+- `columns` задают отчёт: порядок, заголовки, ширину (`width`) и числовой формат
+  (`fmt`, например `"0.00"`). Ключи `url` и `*_url` рендерятся ссылками.
+- Сломанный парсер не роняет сервис: он помечается `broken` и виден в списке.
+- Пишите README рядом с парсером — как в `src/uwp/parsers/steam_deals/`.
+
+Скриншот для разбора проблем: `ctx.save_artifact("screenshot.png", data)`.
+
+## Команды без бота
+
+```bash
+docker compose exec uwp uwp doctor            # диагностика окружения
+docker compose exec uwp uwp parsers list      # установленные парсеры
+docker compose exec uwp uwp site list         # сайты и расписание
+docker compose exec uwp uwp site run steam_skidki
+docker compose exec uwp uwp profile list      # постоянные профили
+docker compose exec uwp uwp proxy test 1      # проверить прокси
+docker compose exec uwp uwp vnc list
+docker compose exec uwp uwp export 12 -o /tmp/run12.ods
+```
+
+`uwp doctor` проверяет: каталоги данных, бинарник браузера и его запуск,
+Xvfb/x11vnc/websockify (только предупреждение), токен, админов, ключ шифрования
+и миграции базы. Код возврата 1, если что-то сломано — на этом держится
+healthcheck контейнера.
+
+## Split-режим (бот и воркер раздельно)
+
+```bash
+docker compose -f compose.split.yaml up -d --build
+```
+
+Два контейнера, общий том `./data`, база SQLite в WAL. Порты VNC публикует
+только `worker`. Полезно, если хочется перезапускать бота, не прерывая прогоны.
+По умолчанию используется combined (`compose.yaml`, команда `run`).
+
+## Требования к хосту и безопасность
+
+- **SELinux.** На Fedora/RHEL том монтируется как `./data:/data:z` — метка уже
+  стоит. Если каталог создан заранее от `root`, выполните
+  `sudo chown -R 1000:1000 data`.
+- **`--no-sandbox`.** В образе `UWP_NO_SANDBOX=true`, иначе Chromium не
+  запускается в контейнере. Это ослабляет изоляцию браузера, поэтому не
+  открывайте в профилях чужие сайты.
+- **TLS.** Бот общается с Telegram по HTTPS, но noVNC и веб-интерфейс — по
+  HTTP. Наружу не выставляйте: если очень нужно, ставьте reverse proxy
+  (Caddy/nginx) с TLS и Basic Auth перед портами 6000–6100, и меняйте
+  `UWP_PUBLIC_HOST` на внешнее имя.
+- **Админы.** Бот игнорирует всех, кого нет в `UWP_ADMIN_IDS`/`admins`, и
+  отвечает одним вежливым отказом. Токен бота — такой же секрет, как пароль.
+- **Ключ шифрования.** `UWP_SECRET_KEY` задавайте до добавления прокси: без
+  него пароли хранятся открыто, а смена ключа делает старые пароли
+  нечитаемыми.
+
+## Обновление
+
+```bash
+git pull
+docker compose up -d --build
+```
+
+Миграции базы применяются автоматически на старте. Данные лежат в `./data` и
+переживают пересборку.
+
+## Разработка без Docker
+
+```bash
+python -m venv .venv && . .venv/bin/activate
+pip install -e ".[dev]"
+uwp browser install            # скачает fingerprint-chromium в data/browser
+uwp doctor
+uwp init && uwp run            # бот + воркер
+```
+
+Тесты:
+
+```bash
+pytest                          # юнит-тесты, без сети и браузера
+UWP_LIVE=1 pytest -m live       # живая страница Steam (нужен интернет)
+UWP_TEST_BROWSER=/path/to/chrome pytest -m integration   # прогон в браузере
+ruff check src tests
+```
+
+## Если что-то не работает
+
+| Симптом | Что делать |
+| --- | --- |
+| Бот молчит | `docker compose logs -f uwp`; проверьте `UWP_BOT_TOKEN`; `uwp doctor`. |
+| «Нет доступа» в боте | Ваш id не в `UWP_ADMIN_IDS`; узнайте его командой `/id` или из логов. |
+| `fingerprint-chromium not found` | `uwp browser install` или проверьте `UWP_BROWSER_PATH`. |
+| Прогон падает с `blocked` | Капча или блок региона: добавьте прокси, смените регион парсера. |
+| Прогон падает с `login_required` | Нужен постоянный профиль и вход через VNC, затем привяжите профиль к сайту. |
+| Отчёт не пришёл | Проверьте режим отчёта сайта (`changes` без изменений молчит) и `uwp export <id>`. |
+| VNC-ссылка не открывается | Порт не опубликован/занят, либо `UWP_PUBLIC_HOST` не тот; `uwp vnc list`. |
+| `database is locked` | Не запускайте два воркера на одном томе: split-режим держит воркер в одном контейнере. |
+| Профиль «занят» | Идёт прогон или висит lease: подождите `UWP_ORPHAN_THRESHOLD`, либо перезапустите воркер. |
+
+Больше деталей — в `uwp doctor` и логах (`UWP_LOG_LEVEL=DEBUG`).

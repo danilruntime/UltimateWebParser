@@ -65,11 +65,25 @@ class FakeParser(BaseParser):
         )
 
 
+class FakePage:
+    """Records ``screenshot`` calls; the runner must tolerate a broken page."""
+
+    def __init__(self, fail: bool = False):
+        self.paths: list[str] = []
+        self.fail = fail
+
+    async def screenshot(self, path=None):
+        if self.fail:
+            raise RuntimeError("page is gone")
+        self.paths.append(path)
+        Path(path).write_bytes(b"png")
+
+
 class FakeSession:
-    def __init__(self):
+    def __init__(self, page=None):
         self.closed = False
         self.context = object()
-        self.page = object()
+        self.page = page or object()
 
     async def close(self):
         self.closed = True
@@ -102,7 +116,7 @@ async def env(tmp_path):
 
     async def fake_launch(*a, **kw):
         launches.append({"args": a, "kwargs": kw})
-        s = FakeSession()
+        s = FakeSession(FakePage())
         sessions.append(s)
         return s
 
@@ -319,3 +333,32 @@ async def test_unknown_parser_is_config_error(env):
     assert out.status == RunStatus.failed and out.error_kind == ErrorKind.config_error
     assert "nope" in out.error
     assert launches == []
+
+
+async def test_failed_run_saves_a_screenshot_for_the_admin(env, tmp_path):
+    runner, site, job, sessions, _, _, _ = env
+    FakeParser.behavior = "login"
+
+    out = await runner.run(site, job, proxy=None)
+
+    shot = tmp_path / "artifacts" / str(out.run_id) / "screenshot.png"
+    assert out.status == RunStatus.failed
+    assert shot.is_file()
+    assert sessions[0].page.paths == [str(shot)]
+    assert out.artifacts_dir == shot.parent
+
+
+async def test_a_broken_screenshot_does_not_change_the_outcome(env):
+    runner, site, job, sessions, _, _, _ = env
+    FakeParser.behavior = "login"
+    runner.launcher = lambda *a, **kw: _broken_session(sessions)
+
+    out = await runner.run(site, job, proxy=None)
+
+    assert out.status == RunStatus.failed and out.error_kind == ErrorKind.login_required
+
+
+async def _broken_session(sessions):
+    session = FakeSession(FakePage(fail=True))
+    sessions.append(session)
+    return session

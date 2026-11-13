@@ -6,6 +6,8 @@ import pytest
 
 from uwp.config import Settings
 from uwp.db.database import Database
+from uwp.db.repo.admins import AdminsRepo
+from uwp.db.repo.events import EventsRepo
 from uwp.db.repo.jobs import JobsRepo
 from uwp.db.repo.profiles import ProfilesRepo
 from uwp.db.repo.proxies import ProxiesRepo
@@ -18,6 +20,7 @@ from uwp.domain import (
     RunStatus,
     Site,
 )
+from uwp.events import EventBus
 from uwp.runner import RunOutcome
 from uwp.worker import Worker
 
@@ -286,3 +289,61 @@ async def test_run_forever_stops_on_event(env):
 
     assert scheduler.ticks >= 1
     assert str((await jobs.list_for_site(sid))[0].status) == "done"
+
+
+async def test_ok_run_emits_a_finished_event(env):
+    db, sites, jobs, sid = env
+    await jobs.create(sid, "scheduled")
+    settings = Settings()
+    bus = EventBus(EventsRepo(db), AdminsRepo(db), settings)
+    # ``events.run_id`` is a foreign key, so an unsaved run id cannot be used.
+    outcome = RunOutcome(status=RunStatus.ok, rows=[{"external_key": "1"}], new_count=1)
+    worker = _worker(settings, db, jobs, sites, FakeRunner(outcome))
+    worker.bus = bus
+
+    await worker.process_one(NOW)
+
+    events = await bus.pending(111, NOW)
+    assert [event.kind for event in events] == ["run_finished"]
+    payload = events[0].payload
+    assert payload["site"] == "S" and payload["rows"] == 1 and payload["new"] == 1
+
+
+async def test_failed_run_emits_a_failure_and_then_a_problem(env):
+    db, sites, jobs, sid = env
+    settings = Settings()
+    bus = EventBus(EventsRepo(db), AdminsRepo(db), settings)
+    outcome = RunOutcome(
+        status=RunStatus.failed,
+        error_kind=ErrorKind.login_required,
+        error="login wall",
+    )
+    worker = _worker(settings, db, jobs, sites, FakeRunner(outcome))
+    worker.bus = bus
+    # Two failures already behind the site, so this third one is a «problem».
+    await sites.update(sid, consecutive_failures=2)
+
+    await jobs.create(sid, "scheduled")
+    await worker.process_one(NOW)
+
+    kinds = [event.kind for event in await bus.pending(111, NOW)]
+    assert kinds == ["run_failed", "site_problem"]
+    assert (await sites.get(sid)).consecutive_failures == 3
+
+
+async def test_a_retried_failure_is_not_announced(env):
+    db, sites, jobs, sid = env
+    settings = Settings()
+    bus = EventBus(EventsRepo(db), AdminsRepo(db), settings)
+    outcome = RunOutcome(
+        status=RunStatus.failed, error_kind=ErrorKind.transient, error="timeout"
+    )
+    worker = _worker(settings, db, jobs, sites, FakeRunner(outcome))
+    worker.bus = bus
+    await jobs.create(sid, "scheduled")
+
+    await worker.process_one(NOW)
+
+    # The job went back to the queue for a retry, so nothing is reported yet.
+    assert [event.kind for event in await bus.pending(111, NOW)] == []
+    assert str((await jobs.list_for_site(sid))[0].status) == "queued"

@@ -50,6 +50,12 @@ def test_parse_fixture_rows():
     assert first["image_url"].startswith("https://shared.akamai.steamstatic.com/")
 
 
+def test_every_row_carries_an_external_key_for_dedup():
+    rows = parse_search_page(_fixture_html(), SteamSettings())
+    assert all(row["external_key"] == row["app_id"] for row in rows)
+    assert len({row["external_key"] for row in rows}) == len(rows)
+
+
 def test_filters_by_min_discount_and_max_price():
     html = _fixture_html()
     rows = parse_search_page(html, SteamSettings(min_discount_percent=80, max_price=6))

@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from aiogram.types import FSInputFile
+from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 
 from uwp.config import Settings
 from uwp.domain import Event
@@ -75,6 +75,9 @@ class EventDelivery:
         if event.kind == RUN_FINISHED:
             await self._send_report(admin_id, event)
             return
+        if event.kind == RUN_FAILED:
+            await self._send_failure(admin_id, event)
+            return
         await self.bot.send_message(admin_id, _text_for(event))
 
     async def _drop(self, event: Event) -> None:
@@ -91,6 +94,37 @@ class EventDelivery:
             return
         log.warning("run %s has no report file (%s)", event.run_id, path)
         await self.bot.send_message(admin_id, caption)
+
+    async def _send_failure(self, admin_id: int, event: Event) -> None:
+        """Text plus the run's screenshot, with a «Повторить» button when possible."""
+        payload = event.payload or {}
+        markup = None
+        if payload.get("site_id") is not None:
+            markup = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="🔁 Повторить",
+                            callback_data=f"run:retry:{payload['site_id']}",
+                        )
+                    ]
+                ]
+            )
+        screenshot = payload.get("screenshot")
+        if screenshot and Path(screenshot).is_file():
+            try:
+                await self.bot.send_photo(
+                    admin_id,
+                    FSInputFile(screenshot),
+                    caption=_caption_for(event),
+                    reply_markup=markup,
+                )
+                # The caption is short, so the full error follows as text.
+                await self.bot.send_message(admin_id, _text_for(event), reply_markup=markup)
+                return
+            except Exception:
+                log.exception("sending the screenshot of event %s failed", event.id)
+        await self.bot.send_message(admin_id, _text_for(event), reply_markup=markup)
 
 
 def _caption_for(event: Event) -> str:

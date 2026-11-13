@@ -17,6 +17,7 @@ class FakeBot:
     def __init__(self, fail_documents: bool = False):
         self.documents = []
         self.messages = []
+        self.photos = []
         self.fail_documents = fail_documents
 
     async def send_document(self, chat_id, document, caption=None, **kw):
@@ -26,7 +27,11 @@ class FakeBot:
         return True
 
     async def send_message(self, chat_id, text, reply_markup=None, **kw):
-        self.messages.append((chat_id, text))
+        self.messages.append((chat_id, text, reply_markup))
+        return True
+
+    async def send_photo(self, chat_id, photo, caption=None, reply_markup=None, **kw):
+        self.photos.append((chat_id, str(photo.path), caption, reply_markup))
         return True
 
 
@@ -85,7 +90,7 @@ async def test_text_events_are_sent_as_messages(env):
 
     await delivery.tick()
 
-    joined = "\n".join(text for _, text in bot.messages)
+    joined = "\n".join(text for _, text, *_ in bot.messages)
     assert "http://x:6000/vnc.html" in joined
     assert "403" in joined
 
@@ -113,6 +118,46 @@ async def test_run_failed_carries_a_retry_button(env):
     await delivery.tick()
 
     assert "boom" in bot.messages[0][1]
+
+
+async def test_failure_sends_the_screenshot_and_a_retry_button(env):
+    settings, bus, tmp_path = env
+    shot = tmp_path / "screenshot.png"
+    shot.write_bytes(b"png")
+    bot = FakeBot()
+    delivery = EventDelivery(bot, bus, settings)
+    await bus.emit(
+        "run_failed",
+        payload={"text": "капча", "screenshot": str(shot), "site": "Steam", "site_id": 5},
+    )
+
+    await delivery.tick()
+
+    assert bot.photos and bot.photos[0][1] == str(shot)
+    caption, markup = bot.photos[0][2], bot.photos[0][3]
+    assert "Steam" in caption
+    assert markup.inline_keyboard[0][0].callback_data == "run:retry:5"
+    # The full error follows as text, since a caption is too short for it.
+    assert any("капча" in text for _, text, *_ in bot.messages)
+
+
+async def test_a_broken_screenshot_falls_back_to_text(env):
+    settings, bus, tmp_path = env
+    shot = tmp_path / "screenshot.png"
+    shot.write_bytes(b"png")
+    bot = FakeBot()
+    delivery = EventDelivery(bot, bus, settings)
+    await bus.emit("run_failed", payload={"text": "boom", "screenshot": str(shot)})
+
+    async def broken_photo(*_a, **_kw):
+        raise RuntimeError("photo rejected")
+
+    bot.send_photo = broken_photo
+
+    await delivery.tick()
+
+    assert any("boom" in text for _, text, *_ in bot.messages)
+    assert await bus.pending(111, utcnow()) == []
 
 
 async def test_run_forever_stops(env):
