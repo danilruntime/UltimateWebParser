@@ -8,7 +8,14 @@ from uwp.config import load_settings
 from uwp.db.database import Database
 from uwp.db.repo.profiles import ProfilesRepo
 from uwp.db.repo.vnc import VncRepo
-from uwp.domain import Profile, ProfileKind, ProfileStatus, VncStatus
+from uwp.domain import (
+    Profile,
+    ProfileKind,
+    ProfileStatus,
+    Proxy,
+    ProxyScheme,
+    VncStatus,
+)
 from uwp.timeutil import utcnow
 from uwp.vnc import VncManager, free_port, vnc_url
 
@@ -262,13 +269,51 @@ async def env(tmp_path):
     await db.close()
 
 
-def _manager(settings, db, procs):
+class FakeBridge:
+    """Stands in for the loopback proxy bridge of a login session."""
+
+    def __init__(self, proxy):
+        self.proxy = proxy
+        self.url = f"http://127.0.0.1:{7000 + len(proxy.name)}"
+        self.stopped = False
+
+    async def start(self):
+        return self.url
+
+    async def stop(self):
+        self.stopped = True
+
+
+class FakeProxies:
+    """Resolves proxy rows, already decrypted, for the VNC manager."""
+
+    def __init__(self, proxy=None):
+        self.proxy = proxy
+
+    async def resolved(self, proxy_id):
+        return self.proxy
+
+
+def _manager(settings, db, procs, proxies=None, bridges=None):
     def factory(**kw):
         proc = FakeProc(**kw)
         procs.append(proc)
         return proc
 
-    return VncManager(settings, ProfilesRepo(db), VncRepo(db), process_factory=factory)
+    def bridge_factory(proxy):
+        bridge = FakeBridge(proxy)
+        if bridges is not None:
+            bridges.append(bridge)
+        return bridge
+
+    return VncManager(
+        settings,
+        ProfilesRepo(db),
+        VncRepo(db),
+        process_factory=factory,
+        proxies=proxies,
+        bridge_factory=bridge_factory,
+    )
 
 
 async def test_start_and_stop_session(env):
@@ -389,6 +434,91 @@ async def test_second_port_is_used_when_first_is_taken(env):
     first_session = await VncRepo(db).get(first.session_id)
     second_session = await VncRepo(db).get(second.session_id)
     assert first_session.display != second_session.display
+
+
+async def test_a_stopping_session_keeps_its_port(env):
+    """A port is not free until the stack that listened on it is gone."""
+    settings, db, profiles, pid = env
+    procs: list[FakeProc] = []
+    mgr = _manager(settings, db, procs)
+    repo = VncRepo(db)
+    first = await mgr.start(await profiles.get(pid), "https://example.com")
+
+    cli = VncManager(
+        settings, ProfilesRepo(db), repo, process_factory=lambda **kw: FakeProc(**kw)
+    )
+    await cli.request_stop(first.session_id)
+    assert (await repo.get(first.session_id)).status == VncStatus.stopping
+
+    second_pid = await profiles.create(
+        Profile(
+            name="p2",
+            kind=ProfileKind.persistent,
+            seed=2,
+            platform="windows",
+            brand="Chrome",
+            brand_version="150",
+            timezone="Europe/Moscow",
+            locale="ru-RU",
+            user_data_dir=str(settings.profiles_dir / "p2"),
+        )
+    )
+    second = await mgr.reserve(
+        await profiles.get(second_pid), "https://example.com"
+    )
+
+    assert second.port != first.port
+
+
+async def _stored_proxy(db, name="P"):
+    """A real proxy row, so the session's foreign key holds."""
+    from uwp.db.repo.proxies import ProxiesRepo
+
+    proxy = Proxy(name=name, scheme=ProxyScheme.http, host="127.0.0.1", port=3128)
+    proxy.id = await ProxiesRepo(db).create(proxy)
+    return proxy
+
+
+async def test_a_session_with_a_proxy_launches_a_bridge(env):
+    """The login browser must leave through the same proxy as the parse runs."""
+    settings, db, profiles, pid = env
+    procs: list[FakeProc] = []
+    bridges: list[FakeBridge] = []
+    proxy = await _stored_proxy(db)
+    mgr = _manager(
+        settings, db, procs, proxies=FakeProxies(proxy), bridges=bridges
+    )
+
+    info = await mgr.reserve_and_launch(
+        await profiles.get(pid), "https://example.com", proxy_id=proxy.id
+    )
+
+    assert len(bridges) == 1
+    assert bridges[0].proxy is proxy
+    assert procs[0].kw["proxy_url"] == bridges[0].url
+    await mgr.stop(info.session_id)
+    assert bridges[0].stopped
+
+
+async def test_a_reserved_session_remembers_its_proxy(env):
+    """Split mode: the bot books the session, the worker launches the stack."""
+    settings, db, profiles, pid = env
+    procs: list[FakeProc] = []
+    bridges: list[FakeBridge] = []
+    proxy = await _stored_proxy(db)
+    mgr = _manager(
+        settings, db, procs, proxies=FakeProxies(proxy), bridges=bridges
+    )
+
+    info = await mgr.reserve(
+        await profiles.get(pid), "https://example.com", proxy_id=proxy.id
+    )
+    assert (await VncRepo(db).get(info.session_id)).proxy_id == proxy.id
+
+    await mgr.tick(utcnow())
+
+    assert len(bridges) == 1
+    assert procs[0].kw["proxy_url"] == bridges[0].url
 
 
 async def test_start_requires_persistent_profile(env):

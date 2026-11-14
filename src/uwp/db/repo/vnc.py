@@ -20,6 +20,7 @@ _COLUMNS: dict[str, tuple[str, Any]] = {
     "started_by": ("started_by", lambda v: v),
     "last_client_at": ("last_client_at", dt),
     "url": ("url", lambda v: v),
+    "proxy_id": ("proxy_id", lambda v: v),
 }
 
 
@@ -37,6 +38,7 @@ def _row_to_session(row: aiosqlite.Row) -> VncSession:
         started_by=row["started_by"],
         last_client_at=parse_dt(row["last_client_at"]),
         url=row["url"],
+        proxy_id=row["proxy_id"],
     )
 
 
@@ -54,8 +56,8 @@ class VncRepo:
         return await self.db.execute(
             """INSERT INTO vnc_sessions (profile_id, port, display, password, token,
                                          status, started_at, expires_at, started_by,
-                                         last_client_at, url)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                         last_client_at, url, proxy_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 session.profile_id,
                 session.port,
@@ -68,6 +70,7 @@ class VncRepo:
                 session.started_by,
                 dt(session.last_client_at),
                 session.url,
+                session.proxy_id,
             ),
         )
 
@@ -122,8 +125,18 @@ class VncRepo:
         return [_row_to_session(r) for r in rows]
 
     async def taken_ports(self) -> set[int]:
+        """Ports whose stack may still be listening.
+
+        ``stopping`` counts: the admin pressed «Готово», the row flipped, but
+        the worker has not killed websockify yet. Reusing the port would make
+        the new session fail to bind and time out with ``VNC_FAILED``.
+        """
         rows = await self.db.fetchall(
-            "SELECT port FROM vnc_sessions WHERE status IN (?, ?)",
-            (VncStatus.requested.value, VncStatus.running.value),
+            "SELECT port FROM vnc_sessions WHERE status IN (?, ?, ?)",
+            (
+                VncStatus.requested.value,
+                VncStatus.running.value,
+                VncStatus.stopping.value,
+            ),
         )
         return {r["port"] for r in rows}

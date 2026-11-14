@@ -54,3 +54,8 @@ class EventBus:
         if removed:
             log.info("purged %s expired events", removed)
         return removed
+
+    async def live_ids(self) -> set[int]:
+        """Ids of the events still stored; used to prune in-memory bookkeeping."""
+        rows = await self.events.list_ids()
+        return set(rows)

@@ -20,10 +20,13 @@ class FakeBot:
         self.photos = []
         self.fail_documents = fail_documents
         self.document_attempts = 0
+        # Per-chat failures, for tests that need one admin to succeed and one
+        # to fail: ``fail_documents`` fails every chat.
+        self.fail_for: set[int] = set()
 
     async def send_document(self, chat_id, document, caption=None, **kw):
         self.document_attempts += 1
-        if self.fail_documents:
+        if self.fail_documents or chat_id in self.fail_for:
             raise RuntimeError("telegram is down")
         self.documents.append((chat_id, str(document.path), caption))
         return True
@@ -106,37 +109,83 @@ async def test_the_retry_backoff_grows_with_each_failure(env):
     report = tmp_path / "report.ods"
     report.write_bytes(b"data")
     bot = FakeBot(fail_documents=True)
-    delivery = EventDelivery(bot, bus, settings)
+    delivery = EventDelivery(bot, bus, settings, recipients=[111])
     await bus.emit("run_finished", payload={"report_path": str(report), "site": "S"})
     t0 = utcnow()
 
-    await delivery.tick(t0)  # first failure: wait 10 s
-    await delivery.tick(t0 + timedelta(seconds=10))  # second failure: wait 20 s
+    await delivery.tick(t0)  # failure 1: next attempt at +10 s
+    await delivery.tick(t0 + timedelta(seconds=10))  # failure 2: at +20 s
+    await delivery.tick(t0 + timedelta(seconds=30))  # failure 3: at +40 s
     attempts = bot.document_attempts
-    await delivery.tick(t0 + timedelta(seconds=20))  # too early for the second wait
 
+    await delivery.tick(t0 + timedelta(seconds=60))  # 30 s after the third: too early
     assert bot.document_attempts == attempts
 
+    await delivery.tick(t0 + timedelta(seconds=70))  # 40 s after the third: due
+    assert bot.document_attempts > attempts
 
-async def test_a_successful_send_clears_the_backoff(env):
+
+async def test_the_retry_backoff_stops_at_one_minute(env):
     settings, bus, tmp_path = env
     report = tmp_path / "report.ods"
     report.write_bytes(b"data")
     bot = FakeBot(fail_documents=True)
-    delivery = EventDelivery(bot, bus, settings)
+    delivery = EventDelivery(bot, bus, settings, recipients=[111])
+    await bus.emit("run_finished", payload={"report_path": str(report), "site": "S"})
+    t0 = utcnow()
+
+    # Delays are 10/20/40 then the 60 s cap; attempts happen at 0, 10, 30, 70, 130.
+    # Without the cap the fifth wait would be 80 s and fire at +150.
+    for offset in (0, 10, 30, 70, 130):
+        await delivery.tick(t0 + timedelta(seconds=offset))
+    attempts = bot.document_attempts
+
+    await delivery.tick(t0 + timedelta(seconds=189))  # 59 s after the fifth
+    assert bot.document_attempts == attempts
+
+    await delivery.tick(t0 + timedelta(seconds=190))  # 60 s: capped, not 80
+    assert bot.document_attempts > attempts
+
+
+async def test_a_successful_send_leaves_no_backoff_key(env):
+    """A delivered event must not keep a counter: the dict must not grow forever."""
+    settings, bus, tmp_path = env
+    report = tmp_path / "report.ods"
+    report.write_bytes(b"data")
+    bot = FakeBot()
+    bot.fail_for = {111}
+    delivery = EventDelivery(bot, bus, settings, recipients=[111])
+    await bus.emit("run_finished", payload={"report_path": str(report), "site": "S"})
+    t0 = utcnow()
+
+    await delivery.tick(t0)  # fails once for 111: a key appears
+    assert delivery._retry
+
+    bot.fail_for = set()
+    await delivery.tick(t0 + timedelta(seconds=10))  # succeeds
+
+    assert delivery._retry == {}
+
+
+async def test_purging_forgets_retry_state_of_gone_events(env):
+    """Otherwise one entry per purged (admin, event) lives for the whole process."""
+    settings, bus, tmp_path = env
+    report = tmp_path / "report.ods"
+    report.write_bytes(b"data")
+    bot = FakeBot()
+    bot.fail_for = {111}
+    delivery = EventDelivery(bot, bus, settings, recipients=[111])
     await bus.emit("run_finished", payload={"report_path": str(report), "site": "S"})
     t0 = utcnow()
 
     await delivery.tick(t0)
-    bot.fail_documents = False
-    await delivery.tick(t0 + timedelta(seconds=10))
-    assert await bus.pending(111, utcnow()) == []
+    assert delivery._retry
+    stale = set(delivery._retry)
 
-    await bus.emit("run_finished", payload={"report_path": str(report), "site": "S"})
-    before = bot.document_attempts
-    await delivery.tick(t0 + timedelta(seconds=11))
+    # An hour later the TTL has taken the event and the prune runs.
+    await delivery.tick(t0 + timedelta(days=settings.event_ttl_days + 1))
 
-    assert bot.document_attempts > before
+    assert stale.isdisjoint(delivery._retry)
 
 
 async def test_text_events_are_sent_as_messages(env):

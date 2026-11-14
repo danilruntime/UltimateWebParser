@@ -148,37 +148,51 @@ def identity_from_seed(seed: int) -> Identity:
     )
 
 
+# Viewport per platform, as measured on a maximised 1080p window. Only the
+# platform is needed: a macOS screen is smaller than a laptop Windows screen.
+_PLATFORM_VIEWPORT: dict[str, tuple[int, int]] = {
+    "macos": (1512, 982),
+    "windows": (1920, 1080),
+    "linux": (1920, 1080),
+}
+_DEFAULT_VIEWPORT = (1920, 1080)
+
+
+def _accept_lang(locale: str) -> str:
+    """``ru-RU`` → ``ru-RU,ru``, the shape Chromium expects."""
+    language = locale.split("-")[0]
+    return locale if language == locale else f"{locale},{language}"
+
+
+def _viewport(platform: str) -> tuple[int, int]:
+    return _PLATFORM_VIEWPORT.get(platform, _DEFAULT_VIEWPORT)
+
+
 def identity_from_profile(profile: Profile) -> Identity:
     """Rebuild the launch identity of a stored profile from the row itself.
 
     The row keeps seed, platform, brand, brand version, timezone and locale, but
-    not ``accept_lang``/``viewport``. Those two come from the machine profile the
-    row was drawn from, matched on the fields it does keep. Rebuilding from the
-    seed alone is wrong: ``random_identity(country=...)`` narrows the candidate
-    list *before* drawing, so a seed that produced a German machine may map back
-    to a Japanese one.
+    not ``accept_lang``/``viewport``. The five stored fields are used verbatim;
+    the two missing ones are derived from them, never re-drawn.
+
+    Rebuilding the machine from the seed is wrong twice over. ``random_identity``
+    narrows the candidate list *before* drawing (``country=...``), so one seed
+    maps back to a different machine; and matching the row against
+    :data:`MACHINE_PROFILES` would silently relaunch a *different* machine for
+    every existing profile the day that table is bumped. The row is the truth:
+    the admin sees these values in the profile card, so the browser must launch
+    them too.
     """
-    for machine in MACHINE_PROFILES:
-        if (
-            machine["platform"] == profile.platform
-            and machine["brand"] == profile.brand
-            and machine["brand_version"] == profile.brand_version
-            and machine["timezone"] == profile.timezone
-            and machine["locale"] == profile.locale
-        ):
-            return Identity(
-                seed=profile.seed,
-                platform=profile.platform,
-                brand=profile.brand,
-                brand_version=profile.brand_version,
-                timezone=profile.timezone,
-                locale=profile.locale,
-                accept_lang=machine["accept_lang"],
-                viewport=tuple(machine["viewport"]),
-            )
-    # A hand-edited or older row: keep it coherent rather than launching with a
-    # half-filled identity.
-    return identity_from_seed(profile.seed)
+    return Identity(
+        seed=profile.seed,
+        platform=profile.platform,
+        brand=profile.brand,
+        brand_version=profile.brand_version,
+        timezone=profile.timezone,
+        locale=profile.locale,
+        accept_lang=_accept_lang(profile.locale),
+        viewport=_viewport(profile.platform),
+    )
 
 
 def browser_flags(

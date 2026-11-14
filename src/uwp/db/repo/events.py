@@ -64,3 +64,7 @@ class EventsRepo:
         return await self.db.execute_rowcount(
             "DELETE FROM events WHERE created_at < ?", (to_db(before),)
         )
+
+    async def list_ids(self) -> list[int]:
+        rows = await self.db.fetchall("SELECT id FROM events")
+        return [r["id"] for r in rows]

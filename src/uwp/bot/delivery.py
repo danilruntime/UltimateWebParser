@@ -79,6 +79,7 @@ class EventDelivery:
             or (now - self._last_purge).total_seconds() >= PURGE_EVERY_SECONDS
         ):
             await self.bus.purge(now)
+            await self._prune_retries()
             self._last_purge = now
         for admin_id in self.recipients:
             for event in await self.bus.pending(admin_id, now):
@@ -106,6 +107,19 @@ class EventDelivery:
                     continue
                 self._retry.pop(key, None)
                 await self.bus.mark_delivered(event.id, admin_id)
+
+    async def _prune_retries(self) -> None:
+        """Forget keys of events that no longer exist.
+
+        Purged events would otherwise leave one entry per (admin, event) for the
+        life of the process: only a delivered or permanently-failed event pops
+        its own key, and a purged one never gets either.
+        """
+        if not self._retry:
+            return
+        live = await self.bus.live_ids()
+        for key in [key for key in self._retry if key[1] not in live]:
+            del self._retry[key]
 
     def _is_due(self, key: tuple[int, int], now: datetime) -> bool:
         """Has the backoff of this (admin, event) pair run out?"""

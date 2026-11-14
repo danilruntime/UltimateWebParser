@@ -131,23 +131,50 @@ def test_identity_from_profile_recovers_accept_lang_and_viewport():
     assert identity.seed == 123
 
 
-def test_identity_from_profile_falls_back_to_seed_for_unknown_machine(tmp_path):
-    """A row that matches no machine profile still launches coherently."""
+def test_identity_from_profile_keeps_the_row_fields_when_the_table_moves_on():
+    """A brand-version bump in MACHINE_PROFILES must not rewrite existing profiles."""
     profile = Profile(
-        name="odd",
+        name="windows-150",
         kind=ProfileKind.persistent,
         seed=random_identity(random.Random(4)).seed,
         platform="windows",
-        brand="Opera",
-        brand_version="99",
-        timezone="Mars/Olympus",
-        locale="xx-XX",
-        user_data_dir=str(tmp_path),
+        brand="Chrome",
+        brand_version="149",
+        timezone="Europe/Moscow",
+        locale="ru-RU",
+        user_data_dir="/tmp/x",
     )
 
     identity = identity_from_profile(profile)
 
-    assert identity == identity_from_seed(profile.seed)
+    assert identity.timezone == "Europe/Moscow"
+    assert identity.locale == "ru-RU"
+    assert identity.platform == "windows"
+    assert identity.brand_version == "149"
+    # Only the two fields the row does not store are derived.
+    assert identity.accept_lang.startswith("ru")
+    assert identity.viewport == (1920, 1080)
+
+
+def test_identity_from_profile_derives_a_plausible_viewport_for_an_unknown_machine():
+    profile = Profile(
+        name="odd",
+        kind=ProfileKind.persistent,
+        seed=1,
+        platform="macos",
+        brand="Vivaldi",
+        brand_version="99",
+        timezone="Mars/Olympus",
+        locale="xx-XX",
+        user_data_dir="/tmp/y",
+    )
+
+    identity = identity_from_profile(profile)
+
+    assert identity.timezone == "Mars/Olympus"
+    assert identity.locale == "xx-XX"
+    assert identity.accept_lang.startswith("xx")
+    assert identity.viewport == (1512, 982)  # a macOS screen, from the platform
 
 
 def test_browser_flags_contain_fingerprint_and_proxy(tmp_path):

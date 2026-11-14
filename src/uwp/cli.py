@@ -530,8 +530,10 @@ def cmd_profile_delete(settings: Settings, profile_id: int) -> int:
 
 def cmd_profile_login(settings: Settings, profile_id: int) -> int:
     from uwp.db.repo.profiles import ProfilesRepo
+    from uwp.db.repo.proxies import ProxiesRepo
     from uwp.db.repo.sites import SitesRepo
     from uwp.db.repo.vnc import VncRepo
+    from uwp.services.proxies import ProxyService
     from uwp.services.vnc import VncService
     from uwp.timeutil import utcnow
     from uwp.vnc import VncManager
@@ -545,7 +547,9 @@ def cmd_profile_login(settings: Settings, profile_id: int) -> int:
             _print(f"❌ Профиль {profile_id} не найден.")
             return 1
         sessions = VncRepo(db)
-        manager = VncManager(settings, repo, sessions)
+        manager = VncManager(
+            settings, repo, sessions, proxies=ProxyService(ProxiesRepo(db), settings)
+        )
         svc = VncService(manager, repo, SitesRepo(db), settings, sessions)
         info = await svc.request(profile_id)
         _print(f"Ссылка: {info.url}")
