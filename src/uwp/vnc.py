@@ -82,8 +82,8 @@ def _write_fluxbox_home(home: Path, toolbar_height: int) -> Path:
     silently ignores ``toolbar.height``, so the files must live here.
     """
     config = home / ".fluxbox"
-    config.mkdir(parents=True, exist_ok=True)
     try:
+        config.mkdir(parents=True, exist_ok=True)
         (config / "apps").write_text(_FLUXBOX_APPS)
         (config / "init").write_text(
             _FLUXBOX_INIT.format(home=home, toolbar=toolbar_height)
@@ -365,8 +365,10 @@ def _default_process_factory(
             if stack is not None:
                 await stack.stop()
             else:
+                password_file.unlink(missing_ok=True)
                 log_file.close()
             raise
+        assert stack is not None
         return stack
 
     return factory

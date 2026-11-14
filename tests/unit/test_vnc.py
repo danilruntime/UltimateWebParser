@@ -141,6 +141,18 @@ async def test_default_factory_builds_the_full_stack(tmp_path, monkeypatch):
         "websockify",
     ]
 
+    # The desktop is Windows 10 at 1080p: the screen is full size and the
+    # browser is pinned to the 1040-high work area left by the taskbar.
+    xvfb = next(p.command for p in spawned if p.command[0] == "Xvfb")
+    assert "1920x1080x24" in xvfb
+    browser = next(
+        p.command for p in spawned if p.command[0] == str(settings.browser_path)
+    )
+    assert "--window-size=1920,1040" in browser
+    assert "--window-position=0,0" in browser
+    # Measured: --start-maximized breaks the size when --fingerprint is set.
+    assert not any("--start-maximized" in p.command for p in spawned)
+
     x11vnc = spawned[-2].command
     assert "-afteraccept" in x11vnc, "x11vnc only knows -afteraccept/-gone hooks"
     assert "-after" not in x11vnc
@@ -188,6 +200,40 @@ async def test_default_factory_gives_fluxbox_its_own_home(tmp_path, monkeypatch)
 
     await handle.stop()
     assert not wm_home.exists()
+
+
+async def test_password_file_is_removed_when_the_wm_home_fails(tmp_path, monkeypatch):
+    """A failed fluxbox config write must not leave a stored password behind."""
+    from pathlib import Path
+
+    from uwp import vnc
+
+    settings, profile = await _factory_env(tmp_path)
+
+    async def fake_spawn(command, **kw):
+        if command[0] == "x11vnc" and "-storepasswd" in command:
+            # The real helper writes the password file; mimic that on disk.
+            Path(command[-1]).write_text("stored-password")
+        return FakeSpawned(command)
+
+    def broken_fluxbox_home(home, toolbar_height):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(vnc, "_spawn", fake_spawn)
+    monkeypatch.setattr(vnc, "_write_fluxbox_home", broken_fluxbox_home)
+    await _pretend_ready(monkeypatch, vnc)
+
+    with pytest.raises(OSError, match="no space"):
+        await vnc._default_process_factory(settings)(
+            display=100,
+            port=6100,
+            password="pw",
+            profile=profile,
+            url="https://example.com",
+            proxy_url=None,
+        )
+
+    assert not (settings.data_dir / "vnc" / "7-6100.passwd").exists()
 
 
 async def test_fluxbox_home_is_removed_when_the_stack_fails(tmp_path, monkeypatch):
