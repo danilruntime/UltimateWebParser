@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +25,11 @@ log = logging.getLogger(__name__)
 
 POLL_SECONDS = 5
 PURGE_EVERY_SECONDS = 3600
+# A failed send waits longer each time: 10 s, 20 s, 40 s … up to a minute.
+# Without this a transient outage retries one event every 5 s for the whole TTL,
+# which is ~50 000 requests for a single report.
+RETRY_BASE_SECONDS = 10
+RETRY_MAX_SECONDS = 60
 
 _KNOWN = {RUN_FINISHED, RUN_FAILED, SITE_PROBLEM, VNC_READY, VNC_STOPPED, VNC_FAILED}
 
@@ -51,6 +56,9 @@ class EventDelivery:
             recipients if recipients is not None else settings.admin_ids
         )
         self._last_purge: datetime | None = None
+        # (admin_id, event_id) -> (failures so far, earliest next attempt). In
+        # memory on purpose: after a restart one immediate attempt is right.
+        self._retry: dict[tuple[int, int], tuple[int, datetime]] = {}
 
     async def run(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
@@ -74,24 +82,40 @@ class EventDelivery:
             self._last_purge = now
         for admin_id in self.recipients:
             for event in await self.bus.pending(admin_id, now):
+                key = (admin_id, event.id if event.id is not None else -1)
+                if not self._is_due(key, now):
+                    continue
                 try:
                     await self._deliver(admin_id, event)
                 except Exception as exc:
                     if _is_permanent(exc):
                         # Telegram itself refused this chat: "chat not found",
                         # the bot was blocked, the user is deactivated. Retrying
-                        # cannot help, and a 3-day TTL of 5-second retries turns
-                        # one stale admin id into a log flood.
+                        # cannot help, and a 3-day TTL of retries turns one stale
+                        # admin id into a log flood.
                         log.warning(
                             "dropping event %s for %s: %s", event.id, admin_id, exc
                         )
+                        self._retry.pop(key, None)
                         await self.bus.mark_delivered(event.id, admin_id)
                         continue
                     log.exception(
                         "delivering event %s to %s failed", event.id, admin_id
                     )
+                    self._schedule_retry(key, now)
                     continue
+                self._retry.pop(key, None)
                 await self.bus.mark_delivered(event.id, admin_id)
+
+    def _is_due(self, key: tuple[int, int], now: datetime) -> bool:
+        """Has the backoff of this (admin, event) pair run out?"""
+        retry = self._retry.get(key)
+        return retry is None or now >= retry[1]
+
+    def _schedule_retry(self, key: tuple[int, int], now: datetime) -> None:
+        failures = self._retry.get(key, (0, now))[0] + 1
+        delay = min(RETRY_BASE_SECONDS * 2 ** (failures - 1), RETRY_MAX_SECONDS)
+        self._retry[key] = (failures, now + timedelta(seconds=delay))
 
     async def _deliver(self, admin_id: int, event: Event) -> None:
         if event.kind not in _KNOWN:

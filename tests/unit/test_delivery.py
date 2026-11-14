@@ -19,8 +19,10 @@ class FakeBot:
         self.messages = []
         self.photos = []
         self.fail_documents = fail_documents
+        self.document_attempts = 0
 
     async def send_document(self, chat_id, document, caption=None, **kw):
+        self.document_attempts += 1
         if self.fail_documents:
             raise RuntimeError("telegram is down")
         self.documents.append((chat_id, str(document.path), caption))
@@ -72,13 +74,69 @@ async def test_a_failed_send_is_retried_next_tick(env):
     bot = FakeBot(fail_documents=True)
     delivery = EventDelivery(bot, bus, settings)
     await bus.emit("run_finished", payload={"report_path": str(report), "site": "S"})
+    t0 = utcnow()
 
-    await delivery.tick()
+    await delivery.tick(t0)
     assert len(await bus.pending(111, utcnow())) == 1
 
     bot.fail_documents = False
-    await delivery.tick()
+    await delivery.tick(t0 + timedelta(seconds=10))
     assert await bus.pending(111, utcnow()) == []
+
+
+async def test_a_failed_send_is_not_retried_on_the_next_5s_tick(env):
+    """A Telegram outage must not turn one event into 50 000 requests."""
+    settings, bus, tmp_path = env
+    report = tmp_path / "report.ods"
+    report.write_bytes(b"data")
+    bot = FakeBot(fail_documents=True)
+    delivery = EventDelivery(bot, bus, settings)
+    await bus.emit("run_finished", payload={"report_path": str(report), "site": "S"})
+    t0 = utcnow()
+
+    await delivery.tick(t0)
+    await delivery.tick(t0 + timedelta(seconds=5))
+
+    assert bot.document_attempts == 2  # two admins, one attempt each
+    assert len(await bus.pending(111, utcnow())) == 1
+
+
+async def test_the_retry_backoff_grows_with_each_failure(env):
+    settings, bus, tmp_path = env
+    report = tmp_path / "report.ods"
+    report.write_bytes(b"data")
+    bot = FakeBot(fail_documents=True)
+    delivery = EventDelivery(bot, bus, settings)
+    await bus.emit("run_finished", payload={"report_path": str(report), "site": "S"})
+    t0 = utcnow()
+
+    await delivery.tick(t0)  # first failure: wait 10 s
+    await delivery.tick(t0 + timedelta(seconds=10))  # second failure: wait 20 s
+    attempts = bot.document_attempts
+    await delivery.tick(t0 + timedelta(seconds=20))  # too early for the second wait
+
+    assert bot.document_attempts == attempts
+
+
+async def test_a_successful_send_clears_the_backoff(env):
+    settings, bus, tmp_path = env
+    report = tmp_path / "report.ods"
+    report.write_bytes(b"data")
+    bot = FakeBot(fail_documents=True)
+    delivery = EventDelivery(bot, bus, settings)
+    await bus.emit("run_finished", payload={"report_path": str(report), "site": "S"})
+    t0 = utcnow()
+
+    await delivery.tick(t0)
+    bot.fail_documents = False
+    await delivery.tick(t0 + timedelta(seconds=10))
+    assert await bus.pending(111, utcnow()) == []
+
+    await bus.emit("run_finished", payload={"report_path": str(report), "site": "S"})
+    before = bot.document_attempts
+    await delivery.tick(t0 + timedelta(seconds=11))
+
+    assert bot.document_attempts > before
 
 
 async def test_text_events_are_sent_as_messages(env):
