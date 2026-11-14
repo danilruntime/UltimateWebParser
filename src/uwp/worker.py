@@ -244,12 +244,12 @@ class Worker:
                 if last_beat is None or now - last_beat >= beat_every:
                     await self.jobs.heartbeat_all(self.worker_id, now)
                     last_beat = now
-                ran = await asyncio.gather(
-                    *(
-                        self.process_one(now)
+                async with asyncio.TaskGroup() as group:
+                    tasks = [
+                        group.create_task(self.process_one(now))
                         for _ in range(max(1, self.settings.max_parallel_runs))
-                    )
-                )
+                    ]
+                ran = [task.result() for task in tasks]
             except Exception:  # keep the loop alive whatever a single tick does
                 log.exception("worker iteration failed")
                 ran = []

@@ -310,6 +310,45 @@ async def test_run_forever_stops_on_event(env):
     assert str((await jobs.list_for_site(sid))[0].status) == "done"
 
 
+async def test_run_forever_cancels_the_sibling_when_one_job_crashes(env):
+    """With max_parallel_runs > 1 a crashed slot must not leave a detached task."""
+    db, sites, jobs, _sid = env
+    settings = Settings(max_parallel_runs=2)
+    worker = _worker(settings, db, jobs, sites, FakeRunner())
+
+    started = asyncio.Event()
+    sibling_cancelled = asyncio.Event()
+    siblings: list[asyncio.Task] = []
+    stop = asyncio.Event()
+
+    async def fake_process_one(now):
+        # First slot crashes; the second blocks and must be cancelled.
+        if not started.is_set():
+            started.set()
+            stop.set()  # one iteration is enough; do not spin forever
+            raise RuntimeError("boom")
+        siblings.append(asyncio.current_task())
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            sibling_cancelled.set()
+            raise
+
+    worker.process_one = fake_process_one
+
+    try:
+        # ``run_forever`` swallows the exception group and returns. With
+        # ``gather`` the sibling is left running detached.
+        async with asyncio.timeout(5):
+            await worker.run_forever(stop)
+        assert sibling_cancelled.is_set()
+    finally:
+        # Only reachable on RED: do not leak the detached slot into other tests.
+        for task in siblings:
+            task.cancel()
+        await asyncio.gather(*siblings, return_exceptions=True)
+
+
 async def test_ok_run_emits_a_finished_event(env):
     db, sites, jobs, sid = env
     await jobs.create(sid, "scheduled")

@@ -468,6 +468,23 @@ async def test_hostile_connect_target_is_reported_not_crashed(target, caplog):
     assert "failed" in caplog.text.lower()
 
 
+async def test_an_oversized_request_head_gets_its_own_message(caplog):
+    """``readuntil`` trips its 64 KiB default before the explicit check could."""
+    bridge = ProxyBridge(_proxy())
+    reader = asyncio.StreamReader()
+    reader.feed_data(
+        b"CONNECT example.com:443 HTTP/1.1\r\nX: " + b"a" * (70 * 1024) + b"\r\n\r\n"
+    )
+    reader.feed_eof()
+    writer = _RecordingWriter()
+
+    with caplog.at_level(logging.WARNING):
+        await bridge._handle(reader, writer)
+
+    assert writer.closed
+    assert "too large" in caplog.text
+
+
 def _self_signed(tmp_path) -> tuple[Path, Path]:
     """A throwaway cert for TLS tests; ``cryptography`` is already a dependency."""
     from datetime import UTC, datetime, timedelta

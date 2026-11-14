@@ -27,7 +27,7 @@ _CURRENCY_SYMBOLS = (
 _CURRENCY_CODES = {"USD", "EUR", "GBP", "RUB", "UAH", "JPY", "KZT", "BRL", "CAD", "TRY", "PLN"}
 
 _REVIEW_RE = re.compile(r"(\d+)%\s+of\s+the\s+([\d,]+)\s+user\s+reviews", re.IGNORECASE)
-_NUMBER_RE = re.compile(r"\d[\d,.\s]*")
+_NUMBER_RE = re.compile(r"-?\d[\d,.\s]*")
 
 
 class SteamSettings(BaseModel):

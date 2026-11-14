@@ -11,11 +11,12 @@ import base64
 import ipaddress
 import logging
 import ssl
-from urllib.parse import unquote, urlsplit
 
 from uwp.domain import Proxy, ProxyScheme
+from uwp.services.proxies import parse_proxy_url
 
 log = logging.getLogger(__name__)
+__all__ = ["ProxyBridge", "ProxyError", "parse_proxy_url"]
 
 _HEAD_LIMIT = 64 * 1024
 _PIPE_CHUNK = 64 * 1024
@@ -24,33 +25,6 @@ PROXY_CONNECT_TIMEOUT_SECONDS = 15
 
 class ProxyError(RuntimeError):
     """The upstream proxy refused the connection or the handshake failed."""
-
-
-def parse_proxy_url(url: str) -> Proxy:
-    """Parse ``scheme://[user:pass@]host:port`` into a :class:`Proxy`."""
-    parts = urlsplit(url.strip())
-    try:
-        scheme = ProxyScheme(parts.scheme.lower())
-    except ValueError:
-        raise ValueError(f"unsupported proxy scheme: {parts.scheme!r}") from None
-    if not parts.hostname:
-        raise ValueError("proxy URL has no host")
-    try:
-        port = parts.port
-    except ValueError:
-        raise ValueError("proxy URL has an invalid port") from None
-    if port is None:
-        raise ValueError("proxy URL has no port")
-    username = unquote(parts.username) if parts.username is not None else None
-    password = unquote(parts.password) if parts.password is not None else None
-    return Proxy(
-        name=parts.hostname,
-        scheme=scheme,
-        host=parts.hostname,
-        port=port,
-        username=username,
-        password=password,
-    )
 
 
 def _basic_auth(proxy: Proxy) -> str | None:
@@ -182,6 +156,8 @@ class ProxyBridge:
             head = await reader.readuntil(b"\r\n\r\n")
         except asyncio.IncompleteReadError:
             return
+        except asyncio.LimitOverrunError as exc:
+            raise ProxyError("request head too large") from exc
         if len(head) > _HEAD_LIMIT:
             raise ProxyError("request head too large")
         request_line, _, headers = head.partition(b"\r\n")

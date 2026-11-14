@@ -144,6 +144,10 @@ def test_parse_price_handles_thousands_separators():
         assert _parse_price(text)[0] == expected, text
 
 
+def test_parse_price_keeps_a_negative_sign():
+    assert _parse_price("-4,99")[0] == -4.99
+
+
 def test_parse_price_reads_brazilian_and_canadian_dollars_as_their_own_currency():
     assert _parse_price("R$ 19,99") == (19.99, "BRL")
     assert _parse_price("CDN$ 19,99") == (19.99, "CAD")
