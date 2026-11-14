@@ -449,6 +449,31 @@ async def test_sweep_orphans_leaves_finished_sessions_alone(env):
     assert (await repo.get(session_id)).status == VncStatus.stopped
 
 
+async def test_sweep_orphans_leaves_a_booking_made_by_the_bot_alone(env):
+    """A ``requested`` row may belong to the bot process, not to a dead worker.
+
+    In the split deployment the bot books a session and the worker launches it
+    on its next tick. Failing that row at worker startup would destroy a live
+    booking, so ``requested`` is resumable, not orphaned.
+    """
+    _settings, db, _profiles, pid = env
+    repo = VncRepo(db)
+    session_id = await repo.create(
+        VncSession(
+            profile_id=pid,
+            port=6100,
+            display=100,
+            password="p",
+            token="t",
+            status=VncStatus.requested,
+            expires_at=utcnow() + timedelta(minutes=30),
+        )
+    )
+
+    assert await repo.sweep_orphans() == []
+    assert (await repo.get(session_id)).status == VncStatus.requested
+
+
 async def test_sweep_orphans_reports_a_profile_once(env):
     """``RETURNING`` yields a row per session; the caller needs one per profile."""
     _settings, db, _profiles, pid = env

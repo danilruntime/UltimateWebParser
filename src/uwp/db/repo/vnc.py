@@ -145,8 +145,13 @@ class VncRepo:
         """Fail sessions no live process owns and return their profile ids.
 
         Called once at worker startup. Only one worker may own a database
-        (``WORKER_ID`` is a constant), so every unfinished row at this point
-        belongs to a previous process lifetime.
+        (``WORKER_ID`` is a constant), so every ``running``/``stopping`` row at
+        this point belongs to a previous process lifetime.
+
+        ``requested`` is deliberately *not* swept: in the split deployment the
+        bot process books a session and this worker launches it on the next
+        tick, so such a row may be alive and waiting. ``reconcile`` resumes it
+        and ``taken_ports`` already reserves its port.
 
         Failing the rows and reading their profile ids is one ``RETURNING``
         statement, not a SELECT followed by an UPDATE: the connection is in
@@ -157,13 +162,12 @@ class VncRepo:
         returned or not swept at all.
         """
         unfinished = (
-            VncStatus.requested.value,
             VncStatus.running.value,
             VncStatus.stopping.value,
         )
         rows = await self.db.fetchall(
             """UPDATE vnc_sessions SET status = ?
-               WHERE status IN (?, ?, ?) RETURNING profile_id""",
+               WHERE status IN (?, ?) RETURNING profile_id""",
             (VncStatus.failed.value, *unfinished),
         )
         # ``RETURNING`` yields one row per updated session, so a profile with two

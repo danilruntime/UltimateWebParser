@@ -84,11 +84,17 @@ class Runtime:
 
     async def run_worker(self, stop: asyncio.Event) -> None:
         """Worker loop plus the VNC TTL sweep the worker process owns."""
-        # Rows left ``requested``/``running``/``stopping`` by a dead process would
-        # keep their port and profile stuck forever; no live process owns them.
-        for profile_id in await self.vnc.sessions.sweep_orphans():
-            # Conditional on purpose: never free a profile a scheduled run has leased.
-            await self.vnc.profiles.release_login(profile_id)
+        # Rows left ``running``/``stopping`` by a dead process would keep their
+        # port and profile stuck forever. ``requested`` is excluded on purpose:
+        # in split mode the bot books it and this worker launches it on the
+        # next tick, so it may be alive. A failing sweep must not take the
+        # worker down with it: in combined mode nothing would notice.
+        try:
+            for profile_id in await self.vnc.sessions.sweep_orphans():
+                # Conditional on purpose: never free a profile a run has leased.
+                await self.vnc.profiles.release_login(profile_id)
+        except Exception:
+            log.exception("VNC orphan sweep failed; starting the worker anyway")
         maintenance = asyncio.create_task(self._maintain(stop))
         try:
             await self.worker.run_forever(stop)
