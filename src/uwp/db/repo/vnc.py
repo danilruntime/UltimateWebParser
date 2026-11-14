@@ -85,6 +85,26 @@ class VncRepo:
         )
         return [_row_to_session(r) for r in rows]
 
+    async def active_or_stopping(self, profile_id: int) -> VncSession | None:
+        """The login session of ``profile_id`` that has not finished yet.
+
+        ``stopping`` counts: the admin pressed «Готово», but the worker has not
+        killed the stack yet. Treating it as gone would free the profile while a
+        Chromium is still running on its user-data-dir.
+        """
+        rows = await self.db.fetchall(
+            """SELECT * FROM vnc_sessions
+               WHERE profile_id = ? AND status IN (?, ?, ?)
+               ORDER BY id DESC LIMIT 1""",
+            (
+                profile_id,
+                VncStatus.requested.value,
+                VncStatus.running.value,
+                VncStatus.stopping.value,
+            ),
+        )
+        return _row_to_session(rows[0]) if rows else None
+
     async def pending_start(self) -> list[VncSession]:
         """Sessions the bot asked for but no process has launched yet."""
         rows = await self.db.fetchall(

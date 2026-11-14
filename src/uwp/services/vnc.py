@@ -74,11 +74,13 @@ class VncService:
         return await self.manager.list()
 
     async def active_session(self, profile_id: int) -> VncSession | None:
-        """The login session of ``profile_id`` that is still running, if any."""
-        for session in await self.manager.list():
-            if session.profile_id == profile_id:
-                return session
-        return None
+        """The login session of ``profile_id`` that has not finished, if any.
+
+        A ``stopping`` session still owns the profile: the stack is alive until
+        the owning process kills it, so «Готово» pressed twice must find it and
+        not free the profile underneath a running browser.
+        """
+        return await self.sessions.active_or_stopping(profile_id)
 
     async def extend(
         self, session_id: int, minutes: int = EXTEND_MINUTES

@@ -170,6 +170,53 @@ async def test_deferred_request_only_books_a_session(env):
     assert manager.launched == []
 
 
+async def test_a_stopping_session_still_counts_as_active(env):
+    """«Готово» twice: the second press must not free a profile whose stack is alive."""
+    _db, profiles, sites, sessions, tmp_path = env
+    pid = await _profile(profiles, tmp_path)
+    await profiles.update(pid, status=ProfileStatus.login)
+    now = utcnow()
+    await sessions.create(
+        VncSession(
+            profile_id=pid,
+            port=6100,
+            display=100,
+            password="pw",
+            token="tok",
+            status=VncStatus.stopping,
+            started_at=now,
+            expires_at=now + timedelta(minutes=30),
+        )
+    )
+    settings = load_settings({"UWP_DATA_DIR": str(tmp_path)})
+    manager = FakeManager()
+    svc = VncService(manager, profiles, sites, settings, sessions)
+
+    assert await svc.active_session(pid) is not None
+
+
+async def test_active_session_ignores_finished_sessions(env):
+    _db, profiles, sites, sessions, tmp_path = env
+    pid = await _profile(profiles, tmp_path)
+    now = utcnow()
+    await sessions.create(
+        VncSession(
+            profile_id=pid,
+            port=6100,
+            display=100,
+            password="pw",
+            token="tok",
+            status=VncStatus.stopped,
+            started_at=now,
+            expires_at=now + timedelta(minutes=30),
+        )
+    )
+    settings = load_settings({"UWP_DATA_DIR": str(tmp_path)})
+    svc = VncService(FakeManager(), profiles, sites, settings, sessions)
+
+    assert await svc.active_session(pid) is None
+
+
 async def test_mark_done_leaves_the_kill_to_the_owner(env):
     """Split mode: the bot must not «finish» a session the worker still runs."""
     _db, profiles, sites, sessions, tmp_path = env
