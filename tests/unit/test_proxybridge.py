@@ -211,6 +211,39 @@ async def test_unreachable_upstream_closes_client():
         await bridge.stop()
 
 
+async def test_a_silent_upstream_times_out_with_a_proxy_error(monkeypatch, caplog):
+    """A proxy that accepts and then says nothing must not burn the run timeout."""
+    monkeypatch.setattr("uwp.proxybridge.PROXY_CONNECT_TIMEOUT_SECONDS", 0.2)
+
+    silent = asyncio.Event()
+
+    async def upstream(reader, writer):
+        try:
+            await silent.wait()  # accepts the TCP connection, then says nothing
+        finally:
+            writer.close()
+
+    server = await asyncio.start_server(upstream, "127.0.0.1", 0)
+    up_port = server.sockets[0].getsockname()[1]
+    bridge = ProxyBridge(_proxy(port=up_port))
+    await bridge.start()
+    try:
+        r, w = await asyncio.open_connection("127.0.0.1", bridge.port)
+        w.write(b"CONNECT example.com:443 HTTP/1.1\r\n\r\n")
+        await w.drain()
+        # The bridge must give up and close the client side well before this read
+        # would naturally end; a hang shows up here as a TimeoutError.
+        assert await asyncio.wait_for(r.read(), 3) == b""
+        assert "timed out" in caplog.text
+        w.close()
+        await w.wait_closed()
+    finally:
+        silent.set()
+        await bridge.stop()
+        server.close()
+        await server.wait_closed()
+
+
 async def test_plain_http_is_forwarded_as_absolute_uri():
     seen = {}
 

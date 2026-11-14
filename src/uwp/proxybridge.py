@@ -19,6 +19,7 @@ log = logging.getLogger(__name__)
 
 _HEAD_LIMIT = 64 * 1024
 _PIPE_CHUNK = 64 * 1024
+PROXY_CONNECT_TIMEOUT_SECONDS = 15
 
 
 class ProxyError(RuntimeError):
@@ -200,14 +201,19 @@ class ProxyBridge:
         if self._proxy.scheme is ProxyScheme.https and context is None:
             context = ssl.create_default_context()
         try:
-            return await asyncio.open_connection(
-                self._proxy.host,
-                self._proxy.port,
-                ssl=context if self._proxy.scheme is ProxyScheme.https else None,
-                server_hostname=(
-                    self._proxy.host if self._proxy.scheme is ProxyScheme.https else None
-                ),
-            )
+            async with asyncio.timeout(PROXY_CONNECT_TIMEOUT_SECONDS):
+                return await asyncio.open_connection(
+                    self._proxy.host,
+                    self._proxy.port,
+                    ssl=context if self._proxy.scheme is ProxyScheme.https else None,
+                    server_hostname=(
+                        self._proxy.host
+                        if self._proxy.scheme is ProxyScheme.https
+                        else None
+                    ),
+                )
+        except TimeoutError as exc:
+            raise ProxyError("upstream timed out while connecting") from exc
         except OSError as exc:
             raise ProxyError(f"cannot reach upstream: {exc}") from exc
 
@@ -241,9 +247,12 @@ class ProxyBridge:
         if auth is not None:
             lines.append(f"Proxy-Authorization: {auth}")
         up_writer.write(("\r\n".join(lines) + "\r\n\r\n").encode("latin-1"))
-        await up_writer.drain()
         try:
-            response = await up_reader.readuntil(b"\r\n\r\n")
+            async with asyncio.timeout(PROXY_CONNECT_TIMEOUT_SECONDS):
+                await up_writer.drain()
+                response = await up_reader.readuntil(b"\r\n\r\n")
+        except TimeoutError as exc:
+            raise ProxyError("upstream timed out during CONNECT") from exc
         except asyncio.IncompleteReadError as exc:
             raise ProxyError("upstream closed during CONNECT") from exc
         status_line = response.split(b"\r\n", 1)[0].decode("latin-1")
@@ -259,44 +268,58 @@ class ProxyBridge:
         port: int,
     ) -> None:
         auth = _basic_auth(self._proxy)
-        methods = b"\x00\x02" if auth is not None else b"\x00"
-        up_writer.write(b"\x05" + bytes([len(methods)]) + methods)
-        await up_writer.drain()
-        version, method = await up_reader.readexactly(2)
-        if version != 5 or method == 0xFF:
-            raise ProxyError("upstream SOCKS5 rejected authentication methods")
-        if method == 0x02:
-            if auth is None:
-                raise ProxyError(
-                    "upstream SOCKS5 demanded credentials but none are configured"
-                )
-            user = (self._proxy.username or "").encode()
-            password = (self._proxy.password or "").encode()
-            up_writer.write(
-                b"\x01" + bytes([len(user)]) + user + bytes([len(password)]) + password
-            )
-            await up_writer.drain()
-            _, status = await up_reader.readexactly(2)
-            if status != 0:
-                raise ProxyError("upstream SOCKS5 authentication failed")
-        elif method != 0x00:
-            raise ProxyError(f"upstream SOCKS5 chose unsupported method {method}")
-        name = _socks5_address(host, port)
-        up_writer.write(b"\x05\x01\x00" + name)
-        await up_writer.drain()
-        version, reply, _, atyp = await up_reader.readexactly(4)
-        if version != 5 or reply != 0:
-            raise ProxyError(f"upstream SOCKS5 connect failed with code {reply}")
-        if atyp == 0x01:
-            await up_reader.readexactly(4)
-        elif atyp == 0x03:
-            length = await up_reader.readexactly(1)
-            await up_reader.readexactly(length[0])
-        elif atyp == 0x04:
-            await up_reader.readexactly(16)
-        else:
-            raise ProxyError(f"upstream SOCKS5 sent unknown address type {atyp}")
-        await up_reader.readexactly(2)
+        try:
+            async with asyncio.timeout(PROXY_CONNECT_TIMEOUT_SECONDS):
+                methods = b"\x00\x02" if auth is not None else b"\x00"
+                up_writer.write(b"\x05" + bytes([len(methods)]) + methods)
+                await up_writer.drain()
+                version, method = await up_reader.readexactly(2)
+                if version != 5 or method == 0xFF:
+                    raise ProxyError("upstream SOCKS5 rejected authentication methods")
+                if method == 0x02:
+                    if auth is None:
+                        raise ProxyError(
+                            "upstream SOCKS5 demanded credentials but none are configured"
+                        )
+                    user = (self._proxy.username or "").encode()
+                    password = (self._proxy.password or "").encode()
+                    up_writer.write(
+                        b"\x01"
+                        + bytes([len(user)])
+                        + user
+                        + bytes([len(password)])
+                        + password
+                    )
+                    await up_writer.drain()
+                    _, status = await up_reader.readexactly(2)
+                    if status != 0:
+                        raise ProxyError("upstream SOCKS5 authentication failed")
+                elif method != 0x00:
+                    raise ProxyError(
+                        f"upstream SOCKS5 chose unsupported method {method}"
+                    )
+                name = _socks5_address(host, port)
+                up_writer.write(b"\x05\x01\x00" + name)
+                await up_writer.drain()
+                version, reply, _, atyp = await up_reader.readexactly(4)
+                if version != 5 or reply != 0:
+                    raise ProxyError(
+                        f"upstream SOCKS5 connect failed with code {reply}"
+                    )
+                if atyp == 0x01:
+                    await up_reader.readexactly(4)
+                elif atyp == 0x03:
+                    length = await up_reader.readexactly(1)
+                    await up_reader.readexactly(length[0])
+                elif atyp == 0x04:
+                    await up_reader.readexactly(16)
+                else:
+                    raise ProxyError(
+                        f"upstream SOCKS5 sent unknown address type {atyp}"
+                    )
+                await up_reader.readexactly(2)
+        except TimeoutError as exc:
+            raise ProxyError("upstream timed out during SOCKS5 handshake") from exc
 
     async def _forward_plain(
         self,
