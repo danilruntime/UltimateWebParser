@@ -14,6 +14,7 @@ from uwp.domain import (
     ProfileStatus,
     Proxy,
     ProxyScheme,
+    VncSession,
     VncStatus,
 )
 from uwp.timeutil import utcnow
@@ -400,6 +401,48 @@ async def env(tmp_path):
     )
     yield settings, db, profiles, pid
     await db.close()
+
+
+async def test_sweep_orphans_fails_rows_left_by_a_dead_worker(env):
+    """After a restart no process owns these rows; the port and profile are stuck."""
+    _settings, db, profiles, pid = env
+    repo = VncRepo(db)
+    session_id = await repo.create(
+        VncSession(
+            profile_id=pid,
+            port=6100,
+            display=100,
+            password="p",
+            token="t",
+            status=VncStatus.running,
+            expires_at=utcnow() + timedelta(minutes=30),
+        )
+    )
+    await profiles.update(pid, status=str(ProfileStatus.login))
+
+    freed = await repo.sweep_orphans()
+
+    assert freed == [pid]
+    assert (await repo.get(session_id)).status == VncStatus.failed
+
+
+async def test_sweep_orphans_leaves_finished_sessions_alone(env):
+    _settings, db, _profiles, pid = env
+    repo = VncRepo(db)
+    session_id = await repo.create(
+        VncSession(
+            profile_id=pid,
+            port=6100,
+            display=100,
+            password="p",
+            token="t",
+            status=VncStatus.stopped,
+            expires_at=utcnow() + timedelta(minutes=30),
+        )
+    )
+
+    assert await repo.sweep_orphans() == []
+    assert (await repo.get(session_id)).status == VncStatus.stopped
 
 
 class FakeBridge:

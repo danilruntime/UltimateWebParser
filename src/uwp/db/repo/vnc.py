@@ -140,3 +140,25 @@ class VncRepo:
             ),
         )
         return {r["port"] for r in rows}
+
+    async def sweep_orphans(self) -> list[int]:
+        """Fail sessions no live process owns and return their profile ids.
+
+        Called once at worker startup. Only one worker may own a database
+        (``WORKER_ID`` is a constant), so every unfinished row at this point
+        belongs to a previous process lifetime.
+        """
+        unfinished = (
+            VncStatus.requested.value,
+            VncStatus.running.value,
+            VncStatus.stopping.value,
+        )
+        rows = await self.db.fetchall(
+            "SELECT DISTINCT profile_id FROM vnc_sessions WHERE status IN (?, ?, ?)",
+            unfinished,
+        )
+        await self.db.execute(
+            "UPDATE vnc_sessions SET status = ? WHERE status IN (?, ?, ?)",
+            (VncStatus.failed.value, *unfinished),
+        )
+        return [row["profile_id"] for row in rows]
