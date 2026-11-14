@@ -2,20 +2,24 @@
 
 from aiogram import F, Router
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from uwp.bot import keyboards, texts
+from uwp.bot.handlers import profiles
 from uwp.timeutil import format_local
 
 
 def build_router(settings, deps) -> Router:
     router = Router(name="common")
     sites_service = deps.sites
+    profiles_service = deps.profiles
+    proxies_service = deps.proxies
     runs = deps.runs
 
     @router.message(Command("start"))
     async def start_message(message: Message) -> None:
-        await message.answer(texts.MENU, reply_markup=keyboards.menu_kb())
+        await message.answer(texts.MENU, reply_markup=keyboards.reply_menu_kb())
 
     @router.message(Command("help"))
     async def help_message(message: Message) -> None:
@@ -50,6 +54,33 @@ def build_router(settings, deps) -> Router:
     async def back_to_menu(callback: CallbackQuery) -> None:
         await callback.message.edit_text(texts.MENU, reply_markup=keyboards.menu_kb())
         await callback.answer()
+
+    # These match regardless of FSM state on purpose. A tap during a wizard must
+    # abandon the wizard: with a StateFilter(None) it would fall through to the
+    # wizard's text handler and create a profile named «🌐 Сайты».
+    @router.message(F.text == keyboards.BTN_SITES)
+    async def menu_sites(message: Message, state: FSMContext) -> None:
+        await state.clear()
+        await send_sites(message, sites_service, settings)
+
+    @router.message(F.text == keyboards.BTN_PROFILES)
+    async def menu_profiles(message: Message, state: FSMContext) -> None:
+        await state.clear()
+        items = await profiles_service.list()
+        text = texts.PROFILES_HEADER if items else texts.NO_PROFILES
+        await message.answer(text, reply_markup=profiles.profiles_kb(items))
+
+    @router.message(F.text == keyboards.BTN_PROXIES)
+    async def menu_proxies(message: Message, state: FSMContext) -> None:
+        await state.clear()
+        items = await proxies_service.list()
+        text = texts.PROXIES_HEADER if items else texts.NO_PROXIES
+        await message.answer(text, reply_markup=profiles.proxies_kb(items))
+
+    @router.message(F.text == keyboards.BTN_HELP)
+    async def menu_help(message: Message, state: FSMContext) -> None:
+        await state.clear()
+        await message.answer(texts.HELP)
 
     return router
 
