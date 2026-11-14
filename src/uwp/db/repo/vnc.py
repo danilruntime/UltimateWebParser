@@ -147,6 +147,14 @@ class VncRepo:
         Called once at worker startup. Only one worker may own a database
         (``WORKER_ID`` is a constant), so every unfinished row at this point
         belongs to a previous process lifetime.
+
+        Failing the rows and reading their profile ids is one ``RETURNING``
+        statement, not a SELECT followed by an UPDATE: the connection is in
+        autocommit mode and split mode shares the database with the bot, so a
+        session the bot books in between would otherwise be failed without its
+        profile coming back, leaving that profile stuck in ``login`` forever.
+        A row inserted concurrently is now either swept with its profile
+        returned or not swept at all.
         """
         unfinished = (
             VncStatus.requested.value,
@@ -154,11 +162,11 @@ class VncRepo:
             VncStatus.stopping.value,
         )
         rows = await self.db.fetchall(
-            "SELECT DISTINCT profile_id FROM vnc_sessions WHERE status IN (?, ?, ?)",
-            unfinished,
-        )
-        await self.db.execute(
-            "UPDATE vnc_sessions SET status = ? WHERE status IN (?, ?, ?)",
+            """UPDATE vnc_sessions SET status = ?
+               WHERE status IN (?, ?, ?) RETURNING profile_id""",
             (VncStatus.failed.value, *unfinished),
         )
-        return [row["profile_id"] for row in rows]
+        # ``RETURNING`` yields one row per updated session, so a profile with two
+        # unfinished sessions would repeat; ``DISTINCT`` did not. Keep the
+        # distinct contract with order preserved.
+        return list(dict.fromkeys(row["profile_id"] for row in rows))

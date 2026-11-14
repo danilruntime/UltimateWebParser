@@ -445,6 +445,26 @@ async def test_sweep_orphans_leaves_finished_sessions_alone(env):
     assert (await repo.get(session_id)).status == VncStatus.stopped
 
 
+async def test_sweep_orphans_reports_a_profile_once(env):
+    """``RETURNING`` yields a row per session; the caller needs one per profile."""
+    _settings, db, _profiles, pid = env
+    repo = VncRepo(db)
+    for port in (6100, 6101):
+        await repo.create(
+            VncSession(
+                profile_id=pid,
+                port=port,
+                display=port - 6000,
+                password="p",
+                token=f"t{port}",
+                status=VncStatus.running,
+                expires_at=utcnow() + timedelta(minutes=30),
+            )
+        )
+
+    assert await repo.sweep_orphans() == [pid]
+
+
 class FakeBridge:
     """Stands in for the loopback proxy bridge of a login session."""
 
