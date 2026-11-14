@@ -565,6 +565,55 @@ async def test_https_upstream_speaks_tls(tmp_path):
         server.close()
 
 
+async def test_the_production_construction_verifies_an_https_proxy(tmp_path, monkeypatch):
+    """``runner.py``/``vnc.py`` build the bridge with no ``ssl_context``.
+
+    The test above injects one, so it cannot catch a removed default context.
+    Here the certificate is trusted through ``SSL_CERT_FILE``, exactly the way
+    an operator would trust a private proxy CA, and the bridge is built the way
+    production builds it.
+    """
+    import ssl
+
+    cert_path, key_path = _self_signed(tmp_path)
+    monkeypatch.setenv("SSL_CERT_FILE", str(cert_path))
+    server_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server_ctx.load_cert_chain(cert_path, key_path)
+    seen = {}
+
+    async def upstream(reader, writer):
+        seen["tls"] = writer.get_extra_info("ssl_object") is not None
+        seen["head"] = (await reader.readuntil(b"\r\n\r\n")).decode()
+        writer.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(upstream, "127.0.0.1", 0, ssl=server_ctx)
+    up_port = server.sockets[0].getsockname()[1]
+    # No ``ssl_context=``: this is the production path.
+    bridge = ProxyBridge(
+        _proxy(
+            scheme=ProxyScheme.https,
+            host="localhost",
+            port=up_port,
+            username="user",
+            password="secret",
+        )
+    )
+    await bridge.start()
+    try:
+        r, w = await asyncio.open_connection("127.0.0.1", bridge.port)
+        w.write(b"CONNECT example.com:443 HTTP/1.1\r\n\r\n")
+        await w.drain()
+        assert b"200" in await r.readuntil(b"\r\n\r\n")
+        w.close()
+        assert seen["tls"] is True
+        assert "Proxy-Authorization: Basic dXNlcjpzZWNyZXQ=" in seen["head"]
+    finally:
+        await bridge.stop()
+        server.close()
+
+
 @pytest.mark.parametrize(
     "host,expected_prefix",
     [("1.2.3.4", b"\x01\x01\x02\x03\x04"), ("::1", b"\x04" + b"\x00" * 15 + b"\x01")],
