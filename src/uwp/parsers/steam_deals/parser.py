@@ -60,7 +60,13 @@ def _text(node: Tag | None) -> str:
 
 
 def _parse_price(text: str) -> tuple[float | None, str]:
-    """Parse ``$19.99`` / ``4,99€`` / ``19.99€`` into a float and an ISO currency code."""
+    """Parse ``$19.99`` / ``4,99€`` / ``1.234,56€`` into a float and an ISO currency code.
+
+    Steam formats the same amount as ``1,234.56`` or ``1.234,56`` depending on
+    the store region, and sometimes uses a space as the thousands separator.
+    When both separators are present the rightmost one is the decimal point;
+    with a single separator it is decimal only if 1-2 digits follow it.
+    """
     text = text.strip()
     if not text:
         return None, ""
@@ -77,15 +83,31 @@ def _parse_price(text: str) -> tuple[float | None, str]:
     match = _NUMBER_RE.search(text)
     if match is None:
         return None, currency
-    number = match.group(0).strip().replace(" ", "")
-    if "," in number and "." in number:
-        number = number.replace(",", "")
+    number = match.group(0).strip().replace(" ", "").replace("\u00a0", "")
+    decimal = _decimal_separator(number)
+    if decimal is not None:
+        whole, _, fraction = number.rpartition(decimal)
+        number = f"{whole.replace('.', '').replace(',', '')}.{fraction}"
     else:
-        number = number.replace(",", ".")
+        number = number.replace(".", "").replace(",", "")
     try:
         return float(number), currency
     except ValueError:
         return None, currency
+
+
+def _decimal_separator(number: str) -> str | None:
+    """Which of `.` and `,` splits the integer part from the fraction, if any."""
+    has_dot = "." in number
+    has_comma = "," in number
+    if has_dot and has_comma:
+        return "." if number.rindex(".") > number.rindex(",") else ","
+    separator = "." if has_dot else ("," if has_comma else None)
+    if separator is None:
+        return None
+    # ``4,99`` is a decimal comma; ``1,234`` is a thousands comma.
+    tail = number.rpartition(separator)[2]
+    return separator if len(tail) in (1, 2) else None
 
 
 def _parse_discount(node: Tag | None) -> int:
