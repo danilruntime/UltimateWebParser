@@ -229,12 +229,35 @@ class ProxyBridge:
                 await self._http_connect(up_reader, up_writer, target)
             writer.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
             await writer.drain()
-            await asyncio.gather(
-                self._pipe(reader, up_writer),
-                self._pipe(up_reader, writer),
-            )
+            await self._tunnel(reader, writer, up_reader, up_writer)
         finally:
             up_writer.close()
+
+    async def _tunnel(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        up_reader: asyncio.StreamReader,
+        up_writer: asyncio.StreamWriter,
+    ) -> None:
+        """Pump bytes both ways until the first direction finishes.
+
+        ``asyncio.gather`` waits for *both* pipes, so a half-closed tunnel — one
+        side gone, the other still idle — keeps a task alive for the whole run.
+        ``TaskGroup`` behaves the same way when no task raises. Stop at the
+        first completion and cancel the survivor.
+        """
+        pipes = [
+            asyncio.create_task(self._pipe(reader, up_writer)),
+            asyncio.create_task(self._pipe(up_reader, writer)),
+        ]
+        try:
+            await asyncio.wait(pipes, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for pipe in pipes:
+                if not pipe.done():
+                    pipe.cancel()
+            await asyncio.gather(*pipes, return_exceptions=True)
 
     async def _http_connect(
         self,
@@ -345,10 +368,7 @@ class ProxyBridge:
             head = f"{method} {target} {version}\r\n".encode("latin-1")
             up_writer.write(head + b"\r\n".join(kept) + b"\r\n\r\n")
             await up_writer.drain()
-            await asyncio.gather(
-                self._pipe(reader, up_writer),
-                self._pipe(up_reader, writer),
-            )
+            await self._tunnel(reader, writer, up_reader, up_writer)
         finally:
             up_writer.close()
 

@@ -143,6 +143,48 @@ async def test_connect_pipes_bytes_both_ways():
         server.close()
 
 
+async def test_closing_one_side_of_the_tunnel_ends_the_other():
+    """A half-closed tunnel must not keep a task alive for the whole run."""
+    release = asyncio.Event()
+
+    async def upstream(reader, writer):
+        try:
+            await reader.readuntil(b"\r\n\r\n")
+            writer.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
+            await writer.drain()
+            await reader.read()  # the client goes away first
+            # The remote server has nothing more to send, but it keeps its
+            # write side open: a half-closed tunnel, not a closed one.
+            await release.wait()
+        finally:
+            writer.close()
+
+    server = await asyncio.start_server(upstream, "127.0.0.1", 0)
+    up_port = server.sockets[0].getsockname()[1]
+    bridge = ProxyBridge(_proxy(port=up_port))
+    await bridge.start()
+    try:
+        r, w = await asyncio.open_connection("127.0.0.1", bridge.port)
+        w.write(b"CONNECT example.com:443 HTTP/1.1\r\n\r\n")
+        await w.drain()
+        assert b"200" in await r.readuntil(b"\r\n\r\n")
+        w.close()
+        await w.wait_closed()
+
+        # The bridge's client->upstream pipe ends; the upstream->client pipe
+        # must be cancelled rather than left waiting for an idle upstream.
+        for _ in range(30):  # ~3 s ceiling, no fixed sleep when it finishes early
+            if not bridge._tasks:
+                break
+            await asyncio.sleep(0.1)
+        assert len(bridge._tasks) == 0
+    finally:
+        release.set()
+        await bridge.stop()
+        server.close()
+        await server.wait_closed()
+
+
 async def test_connect_without_credentials_sends_no_authorization():
     seen = {}
 
