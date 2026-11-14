@@ -15,7 +15,7 @@ from uwp.db.repo.runs import RunsRepo
 from uwp.domain import ErrorKind, Job, Profile, ProfileKind, Proxy, Run, RunStatus, Site
 from uwp.parsers.base import BaseParser, ParseContext, ParseError
 from uwp.parsers.registry import ParserRegistry
-from uwp.profiles import Identity, ProfileManager, identity_from_seed
+from uwp.profiles import Identity, ProfileManager, identity_from_profile
 from uwp.reports import export_report
 from uwp.timeutil import utcnow
 
@@ -366,8 +366,8 @@ def _stored_error(outcome: RunOutcome) -> str | None:
 def _identity(profile: Profile) -> Identity:
     """Rebuild the launch identity stored on the profile.
 
-    The profile keeps only the seed and the machine fields; the remaining
-    fields are derived from the seed so a persistent profile keeps the same
-    identity across runs.
+    ``identity_from_profile`` reads the machine fields from the row instead of
+    re-deriving them from the seed, so a profile created for one country does not
+    launch as another.
     """
-    return identity_from_seed(profile.seed)
+    return identity_from_profile(profile)

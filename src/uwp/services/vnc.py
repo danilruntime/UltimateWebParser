@@ -60,12 +60,13 @@ class VncService:
                 url = self.parser_urls.get(site.parser_key, FALLBACK_URL)
                 # Site proxy wins over the profile's own, as the spec requires.
                 proxy_id = site.proxy_id or proxy_id
-        proxy_url = self._proxy_url(proxy_id)
         if self.eager_launch:
             return await self.manager.reserve_and_launch(
-                profile, url, proxy_url=proxy_url, started_by=started_by
+                profile, url, proxy_id=proxy_id, started_by=started_by
             )
-        return await self.manager.reserve(profile, url, started_by=started_by)
+        return await self.manager.reserve(
+            profile, url, started_by=started_by, proxy_id=proxy_id
+        )
 
     async def stop(self, session_id: int) -> None:
         await self.manager.request_stop(session_id)
@@ -74,11 +75,13 @@ class VncService:
         return await self.manager.list()
 
     async def active_session(self, profile_id: int) -> VncSession | None:
-        """The login session of ``profile_id`` that is still running, if any."""
-        for session in await self.manager.list():
-            if session.profile_id == profile_id:
-                return session
-        return None
+        """The login session of ``profile_id`` that has not finished, if any.
+
+        A ``stopping`` session still owns the profile: the stack is alive until
+        the owning process kills it, so «Готово» pressed twice must find it and
+        not free the profile underneath a running browser.
+        """
+        return await self.sessions.active_or_stopping(profile_id)
 
     async def extend(
         self, session_id: int, minutes: int = EXTEND_MINUTES
@@ -106,20 +109,6 @@ class VncService:
         if session is None:
             return
         await self.manager.request_stop(session_id)
-
-    def _proxy_url(self, proxy_id: int | None) -> str | None:
-        """A loopback bridge URL for the profile's proxy.
-
-        The bridge (Task 8) is not built yet, so a session with a proxy runs
-        without it and says so in the log rather than silently going direct.
-        """
-        if proxy_id is None:
-            return None
-        log.warning(
-            "profile proxy %s is not applied to the VNC session: proxy bridge is unavailable",
-            proxy_id,
-        )
-        return None
 
 
 def session_text(info: VncInfo, remaining: int) -> str:

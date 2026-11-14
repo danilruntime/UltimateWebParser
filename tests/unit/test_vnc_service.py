@@ -8,7 +8,16 @@ from uwp.db.database import Database
 from uwp.db.repo.profiles import ProfilesRepo
 from uwp.db.repo.sites import SitesRepo
 from uwp.db.repo.vnc import VncRepo
-from uwp.domain import Profile, ProfileKind, ProfileStatus, Site, VncSession, VncStatus
+from uwp.domain import (
+    Profile,
+    ProfileKind,
+    ProfileStatus,
+    Proxy,
+    ProxyScheme,
+    Site,
+    VncSession,
+    VncStatus,
+)
 from uwp.services.vnc import VncService
 from uwp.timeutil import utcnow
 
@@ -19,12 +28,16 @@ class FakeManager:
         self.stopped = []
         self.launched = []
 
-    async def reserve_and_launch(self, profile, url, proxy_url=None, started_by=None):
+    async def reserve_and_launch(
+        self, profile, url, proxy_url=None, started_by=None, proxy_id=None
+    ):
         self.calls.append((profile.id, url))
+        self.proxy_ids = getattr(self, "proxy_ids", []) + [proxy_id]
         return "info"
 
-    async def reserve(self, profile, url, started_by=None):
+    async def reserve(self, profile, url, started_by=None, proxy_id=None):
         self.calls.append((profile.id, url))
+        self.proxy_ids = getattr(self, "proxy_ids", []) + [proxy_id]
         return "info"
 
     async def launch(self, session, proxy_url=None):
@@ -110,6 +123,26 @@ async def test_request_without_site_uses_example(env):
     assert manager.calls == [(pid, "https://example.com")]
 
 
+async def test_request_passes_the_site_proxy_to_the_session(env):
+    """The site's proxy wins over the profile's, and the session remembers it."""
+    _db, profiles, sites, sessions, tmp_path = env
+    pid = await _profile(profiles, tmp_path)
+    site = await _site(sites)
+    proxy = Proxy(name="P", scheme=ProxyScheme.http, host="127.0.0.1", port=3128)
+    from uwp.db.repo.proxies import ProxiesRepo
+
+    proxy_id = await ProxiesRepo(_db).create(proxy)
+    await sites.update(site, proxy_id=proxy_id)
+    await profiles.update(pid, proxy_id=None)
+    settings = load_settings({"UWP_DATA_DIR": str(tmp_path)})
+    manager = FakeManager()
+    svc = VncService(manager, profiles, sites, settings, sessions)
+
+    await svc.request(pid, site_id=site)
+
+    assert manager.proxy_ids == [proxy_id]
+
+
 async def test_request_rejects_a_missing_profile(env):
     _db, profiles, sites, sessions, tmp_path = env
     settings = load_settings({"UWP_DATA_DIR": str(tmp_path)})
@@ -168,6 +201,53 @@ async def test_deferred_request_only_books_a_session(env):
 
     assert manager.calls == [(pid, "https://example.com")]
     assert manager.launched == []
+
+
+async def test_a_stopping_session_still_counts_as_active(env):
+    """«Готово» twice: the second press must not free a profile whose stack is alive."""
+    _db, profiles, sites, sessions, tmp_path = env
+    pid = await _profile(profiles, tmp_path)
+    await profiles.update(pid, status=ProfileStatus.login)
+    now = utcnow()
+    await sessions.create(
+        VncSession(
+            profile_id=pid,
+            port=6100,
+            display=100,
+            password="pw",
+            token="tok",
+            status=VncStatus.stopping,
+            started_at=now,
+            expires_at=now + timedelta(minutes=30),
+        )
+    )
+    settings = load_settings({"UWP_DATA_DIR": str(tmp_path)})
+    manager = FakeManager()
+    svc = VncService(manager, profiles, sites, settings, sessions)
+
+    assert await svc.active_session(pid) is not None
+
+
+async def test_active_session_ignores_finished_sessions(env):
+    _db, profiles, sites, sessions, tmp_path = env
+    pid = await _profile(profiles, tmp_path)
+    now = utcnow()
+    await sessions.create(
+        VncSession(
+            profile_id=pid,
+            port=6100,
+            display=100,
+            password="pw",
+            token="tok",
+            status=VncStatus.stopped,
+            started_at=now,
+            expires_at=now + timedelta(minutes=30),
+        )
+    )
+    settings = load_settings({"UWP_DATA_DIR": str(tmp_path)})
+    svc = VncService(FakeManager(), profiles, sites, settings, sessions)
+
+    assert await svc.active_session(pid) is None
 
 
 async def test_mark_done_leaves_the_kill_to_the_owner(env):

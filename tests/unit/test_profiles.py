@@ -8,11 +8,12 @@ import pytest
 from uwp.config import load_settings
 from uwp.db.database import Database
 from uwp.db.repo.profiles import ProfilesRepo
-from uwp.domain import ProfileKind, ProfileStatus
+from uwp.domain import Profile, ProfileKind, ProfileStatus
 from uwp.profiles import (
     MACHINE_PROFILES,
     ProfileManager,
     browser_flags,
+    identity_from_profile,
     identity_from_seed,
     random_identity,
 )
@@ -89,6 +90,93 @@ def test_identity_from_seed_keeps_seed_and_is_stable():
         assert rebuilt.locale.split("-")[0] in rebuilt.accept_lang
 
 
+def test_identity_from_profile_matches_what_was_stored(tmp_path):
+    """A profile made for a country must run as that country, not as a rebuild from seed."""
+    for country in (None, "DE", "RU"):
+        for i in range(50):
+            identity = random_identity(random.Random(i), country=country)
+            profile = Profile(
+                name=f"p-{country}-{i}",
+                kind=ProfileKind.persistent,
+                seed=identity.seed,
+                platform=identity.platform,
+                brand=identity.brand,
+                brand_version=identity.brand_version,
+                timezone=identity.timezone,
+                locale=identity.locale,
+                user_data_dir=str(tmp_path / f"{country}-{i}"),
+            )
+
+            assert identity_from_profile(profile) == identity
+
+
+def test_identity_from_profile_recovers_accept_lang_and_viewport():
+    """The row keeps five machine fields; the other two come from the machine table."""
+    profile = Profile(
+        name="windows-ru",
+        kind=ProfileKind.persistent,
+        seed=123,
+        platform="windows",
+        brand="Chrome",
+        brand_version="150",
+        timezone="Europe/Moscow",
+        locale="ru-RU",
+        user_data_dir="/tmp/x",
+    )
+
+    identity = identity_from_profile(profile)
+
+    assert identity.accept_lang == "ru-RU,ru"
+    assert identity.viewport == (1920, 1080)
+    assert identity.seed == 123
+
+
+def test_identity_from_profile_keeps_the_row_fields_when_the_table_moves_on():
+    """A brand-version bump in MACHINE_PROFILES must not rewrite existing profiles."""
+    profile = Profile(
+        name="windows-150",
+        kind=ProfileKind.persistent,
+        seed=random_identity(random.Random(4)).seed,
+        platform="windows",
+        brand="Chrome",
+        brand_version="149",
+        timezone="Europe/Moscow",
+        locale="ru-RU",
+        user_data_dir="/tmp/x",
+    )
+
+    identity = identity_from_profile(profile)
+
+    assert identity.timezone == "Europe/Moscow"
+    assert identity.locale == "ru-RU"
+    assert identity.platform == "windows"
+    assert identity.brand_version == "149"
+    # Only the two fields the row does not store are derived.
+    assert identity.accept_lang.startswith("ru")
+    assert identity.viewport == (1920, 1080)
+
+
+def test_identity_from_profile_derives_a_plausible_viewport_for_an_unknown_machine():
+    profile = Profile(
+        name="odd",
+        kind=ProfileKind.persistent,
+        seed=1,
+        platform="macos",
+        brand="Vivaldi",
+        brand_version="99",
+        timezone="Mars/Olympus",
+        locale="xx-XX",
+        user_data_dir="/tmp/y",
+    )
+
+    identity = identity_from_profile(profile)
+
+    assert identity.timezone == "Mars/Olympus"
+    assert identity.locale == "xx-XX"
+    assert identity.accept_lang.startswith("xx")
+    assert identity.viewport == (1512, 982)  # a macOS screen, from the platform
+
+
 def test_browser_flags_contain_fingerprint_and_proxy(tmp_path):
     ident = random_identity(random.Random(7))
     flags = browser_flags(ident, tmp_path, "http://127.0.0.1:5555", headless=True)
@@ -127,6 +215,29 @@ def test_browser_flags_omit_optional_flags(tmp_path):
     assert not any(f.startswith("--proxy-server=") for f in flags)
     assert "--headless=new" not in flags
     assert "--no-sandbox" not in flags
+
+
+def test_browser_flags_size_a_headful_window(tmp_path):
+    ident = identity_from_seed(7)
+
+    flags = browser_flags(
+        ident, tmp_path, None, headless=False, window_size=(1920, 1040)
+    )
+
+    assert "--window-size=1920,1040" in flags
+    assert "--window-position=0,0" in flags
+    # Measured: --start-maximized breaks the size when --fingerprint is set.
+    assert "--start-maximized" not in flags
+
+
+def test_browser_flags_ignore_window_size_when_headless(tmp_path):
+    ident = identity_from_seed(7)
+
+    flags = browser_flags(
+        ident, tmp_path, None, headless=True, window_size=(1920, 1040)
+    )
+
+    assert not any(f.startswith("--window-size") for f in flags)
 
 
 async def test_create_persistent(mgr, settings):

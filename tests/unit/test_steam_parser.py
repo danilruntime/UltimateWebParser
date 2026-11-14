@@ -10,6 +10,7 @@ from uwp.parsers.registry import ParserRegistry
 from uwp.parsers.steam_deals.parser import (
     SteamDealsParser,
     SteamSettings,
+    _parse_price,
     build_search_url,
     parse_search_page,
 )
@@ -116,6 +117,40 @@ def test_parse_euro_price_and_comma_decimal():
     assert row["price_original"] == 9.99 and row["price_final"] == 4.99
     assert row["currency"] == "EUR"
     assert row["discount_percent"] == 50
+
+
+def test_parse_price_handles_thousands_separators():
+    """``1.234,56 €`` is 1234.56, not 1.23456: the rightmost separator is decimal."""
+    cases = {
+        "1.234,56 €": 1234.56,
+        "1,234.56 €": 1234.56,
+        "1 234,56 ₽": 1234.56,
+        # Steam's French/Russian pages use a narrow or thin no-break space.
+        "1\u202f234,56 €": 1234.56,
+        "1\u2009234,56 €": 1234.56,
+        "12,345,678.90": 12345678.90,
+        "1.234": 1234.0,
+        "1,234": 1234.0,
+        "4,99€": 4.99,
+        "$19.99": 19.99,
+        "19,99 руб.": 19.99,
+        "2 499.00": 2499.0,
+        # A trailing separator is not a decimal point: these are 19.99 and 4.99.
+        "19,99.-": 19.99,
+        "4,99.": 4.99,
+    }
+
+    for text, expected in cases.items():
+        assert _parse_price(text)[0] == expected, text
+
+
+def test_parse_price_keeps_a_negative_sign():
+    assert _parse_price("-4,99")[0] == -4.99
+
+
+def test_parse_price_reads_brazilian_and_canadian_dollars_as_their_own_currency():
+    assert _parse_price("R$ 19,99") == (19.99, "BRL")
+    assert _parse_price("CDN$ 19,99") == (19.99, "CAD")
 
 
 def test_parser_metadata_and_columns():

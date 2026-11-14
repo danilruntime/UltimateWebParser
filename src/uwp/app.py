@@ -84,6 +84,17 @@ class Runtime:
 
     async def run_worker(self, stop: asyncio.Event) -> None:
         """Worker loop plus the VNC TTL sweep the worker process owns."""
+        # Rows left ``running``/``stopping`` by a dead process would keep their
+        # port and profile stuck forever. ``requested`` is excluded on purpose:
+        # in split mode the bot books it and this worker launches it on the
+        # next tick, so it may be alive. A failing sweep must not take the
+        # worker down with it: in combined mode nothing would notice.
+        try:
+            for profile_id in await self.vnc.sessions.sweep_orphans():
+                # Conditional on purpose: never free a profile a run has leased.
+                await self.vnc.profiles.release_login(profile_id)
+        except Exception:
+            log.exception("VNC orphan sweep failed; starting the worker anyway")
         maintenance = asyncio.create_task(self._maintain(stop))
         try:
             await self.worker.run_forever(stop)
@@ -143,12 +154,17 @@ async def build_runtime(
     scheduler = Scheduler(sites, jobs)
     runner = Runner(settings, profiles_manager, registry, runs, items)
     bus = EventBus(events, admins, settings)
-    worker = Worker(
-        settings, jobs, sites, profiles, proxies, runner, scheduler, WORKER_ID, bus
-    )
-
     site_service = SiteService(sites, jobs, scheduler, registry)
-    vnc_manager = VncManager(settings, profiles, sessions, bus=bus)
+    proxy_service = ProxyService(proxies, settings)
+    # The worker must hand the runner a *decrypted* password: the row holds a
+    # Fernet token when UWP_SECRET_KEY is set, and Chromium cannot authenticate
+    # with ciphertext.
+    worker = Worker(
+        settings, jobs, sites, profiles, proxy_service, runner, scheduler, WORKER_ID, bus
+    )
+    vnc_manager = VncManager(
+        settings, profiles, sessions, bus=bus, proxies=proxy_service
+    )
     vnc_service = VncService(
         vnc_manager,
         profiles,
@@ -164,7 +180,7 @@ async def build_runtime(
         registry=registry,
         events=bus,
         profiles=ProfilesService(profiles_manager, profiles, settings),
-        proxies=ProxyService(proxies, settings),
+        proxies=proxy_service,
         vnc=vnc_service,
         runs=RunsService(runs, sites, jobs),
     )

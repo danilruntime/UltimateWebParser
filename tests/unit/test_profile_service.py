@@ -68,9 +68,54 @@ async def test_profile_card_offers_login_and_delete(env):
     assert "profiles:list" in flat
 
 
+async def test_release_after_login_does_not_steal_a_leased_profile(env):
+    """A stale «Готово» card must not free a profile a run has just leased."""
+    _repo, svc, _tmp = env
+    profile = await svc.create("A")
+    assert await svc.manager.lease(profile.id, ttl_seconds=600)
+
+    await svc.release(profile.id)
+
+    assert (await svc.get(profile.id)).status == "locked"
+
+
+async def test_release_after_login_frees_a_profile_waiting_for_login(env):
+    _repo, svc, _tmp = env
+    profile = await svc.create("A")
+    await _repo.update(profile.id, status="login")
+
+    await svc.release(profile.id)
+
+    assert (await svc.get(profile.id)).status == "free"
+
+
 async def test_proxies_kb_and_vnc_kb():
     flat = [b.callback_data for row in proxies_kb([]).inline_keyboard for b in row]
     assert flat == ["proxy:new", "menu:main"]
 
     flat = [b.callback_data for row in vnc_session_kb(9).inline_keyboard for b in row]
     assert flat == ["vnc:done:9", "vnc:extend:9"]
+
+
+def test_reply_menu_kb_is_a_two_by_two_keyboard():
+    from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
+
+    from uwp.bot import keyboards
+
+    # The copy is binding, so pin the constants to literals: a mistyped
+    # constant (Latin C, wrong emoji) has to fail here rather than sail through.
+    assert [
+        keyboards.BTN_SITES,
+        keyboards.BTN_PROFILES,
+        keyboards.BTN_PROXIES,
+        keyboards.BTN_HELP,
+    ] == ["🌐 Сайты", "👤 Профили", "🌍 Прокси", "❓ Помощь"]
+
+    kb = keyboards.reply_menu_kb()
+
+    assert isinstance(kb, ReplyKeyboardMarkup)
+    assert [len(row) for row in kb.keyboard] == [2, 2]
+    labels = [b.text for row in kb.keyboard for b in row]
+    assert labels == ["🌐 Сайты", "👤 Профили", "🌍 Прокси", "❓ Помощь"]
+    assert all(isinstance(b, KeyboardButton) for row in kb.keyboard for b in row)
+    assert kb.resize_keyboard is True

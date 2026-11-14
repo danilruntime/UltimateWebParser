@@ -203,3 +203,5 @@ class VncSession(_Model):
     last_client_at: datetime | None = None
     # The page the login browser opens; the bot fills it, the worker launches.
     url: str | None = None
+    # The proxy the login browser must use, resolved when the session is booked.
+    proxy_id: int | None = None

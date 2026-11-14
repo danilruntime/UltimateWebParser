@@ -13,11 +13,21 @@ SEARCH_URL = "https://store.steampowered.com/search/"
 PAGE_SIZE = 50
 
 _PLATFORMS = {"win": "Windows", "mac": "macOS", "linux": "Linux"}
-_CURRENCY_SYMBOLS = {"$": "USD", "€": "EUR", "£": "GBP", "₽": "RUB", "¥": "JPY", "₴": "UAH"}
-_CURRENCY_CODES = {"USD", "EUR", "GBP", "RUB", "UAH", "JPY", "KZT", "BRL", "TRY", "PLN"}
+# Longest symbol first: ``R$``/``CDN$`` would otherwise match the bare ``$``.
+_CURRENCY_SYMBOLS = (
+    ("CDN$", "CAD"),
+    ("R$", "BRL"),
+    ("$", "USD"),
+    ("€", "EUR"),
+    ("£", "GBP"),
+    ("₽", "RUB"),
+    ("¥", "JPY"),
+    ("₴", "UAH"),
+)
+_CURRENCY_CODES = {"USD", "EUR", "GBP", "RUB", "UAH", "JPY", "KZT", "BRL", "CAD", "TRY", "PLN"}
 
 _REVIEW_RE = re.compile(r"(\d+)%\s+of\s+the\s+([\d,]+)\s+user\s+reviews", re.IGNORECASE)
-_NUMBER_RE = re.compile(r"\d[\d,.\s]*")
+_NUMBER_RE = re.compile(r"-?\d[\d,.\s]*")
 
 
 class SteamSettings(BaseModel):
@@ -60,12 +70,18 @@ def _text(node: Tag | None) -> str:
 
 
 def _parse_price(text: str) -> tuple[float | None, str]:
-    """Parse ``$19.99`` / ``4,99€`` / ``19.99€`` into a float and an ISO currency code."""
+    """Parse ``$19.99`` / ``4,99€`` / ``1.234,56€`` into a float and an ISO currency code.
+
+    Steam formats the same amount as ``1,234.56`` or ``1.234,56`` depending on
+    the store region, and sometimes uses a space as the thousands separator.
+    When both separators are present the rightmost one is the decimal point;
+    with a single separator it is decimal only if 1-2 digits follow it.
+    """
     text = text.strip()
     if not text:
         return None, ""
     currency = ""
-    for symbol, code in _CURRENCY_SYMBOLS.items():
+    for symbol, code in _CURRENCY_SYMBOLS:
         if symbol in text:
             currency = code
             break
@@ -77,15 +93,34 @@ def _parse_price(text: str) -> tuple[float | None, str]:
     match = _NUMBER_RE.search(text)
     if match is None:
         return None, currency
-    number = match.group(0).strip().replace(" ", "")
-    if "," in number and "." in number:
-        number = number.replace(",", "")
+    number = re.sub(r"\s", "", match.group(0))
+    # Steam writes ``19,99.-`` and ``4,99.``; the trailing dot is decoration and
+    # must not be read as a decimal point (that would make 1999 and 499).
+    number = number.rstrip(".,")
+    decimal = _decimal_separator(number)
+    if decimal is not None:
+        whole, _, fraction = number.rpartition(decimal)
+        number = f"{whole.replace('.', '').replace(',', '')}.{fraction}"
     else:
-        number = number.replace(",", ".")
+        number = number.replace(".", "").replace(",", "")
     try:
         return float(number), currency
     except ValueError:
         return None, currency
+
+
+def _decimal_separator(number: str) -> str | None:
+    """Which of `.` and `,` splits the integer part from the fraction, if any."""
+    has_dot = "." in number
+    has_comma = "," in number
+    if has_dot and has_comma:
+        return "." if number.rindex(".") > number.rindex(",") else ","
+    separator = "." if has_dot else ("," if has_comma else None)
+    if separator is None:
+        return None
+    # ``4,99`` is a decimal comma; ``1,234`` is a thousands comma.
+    tail = number.rpartition(separator)[2]
+    return separator if len(tail) in (1, 2) else None
 
 
 def _parse_discount(node: Tag | None) -> int:

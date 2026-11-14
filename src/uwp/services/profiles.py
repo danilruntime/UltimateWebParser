@@ -38,5 +38,9 @@ class ProfilesService:
         await self.manager.delete(profile_id)
 
     async def release(self, profile_id: int) -> None:
-        """Free a profile after a finished login."""
-        await self.manager.release(profile_id)
+        """Free a profile after a finished login.
+
+        Only a profile still in ``login`` is freed; see
+        :meth:`ProfilesRepo.release_login` for why.
+        """
+        await self.repo.release_login(profile_id)

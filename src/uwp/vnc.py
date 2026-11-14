@@ -49,6 +49,57 @@ UNSAFE_PORTS = frozenset(
     }
 )
 
+# The VNC desktop mimics Windows 10 at 1080p: a 40 px taskbar leaves a
+# 1920x1040 work area. fluxbox adds 2 px of border, hence 38.
+DESKTOP_SIZE = (1920, 1080)
+TASKBAR_HEIGHT = 38
+WORKAREA = (DESKTOP_SIZE[0], DESKTOP_SIZE[1] - TASKBAR_HEIGHT - 2)
+
+_FLUXBOX_INIT = """\
+session.styleFile: /usr/share/fluxbox/styles/Squared_for_Debian
+session.appsFile: {home}/.fluxbox/apps
+session.screen0.defaultDeco: NONE
+session.screen0.toolbar.height: {toolbar}
+session.screen0.toolbar.widthPercent: 100
+session.screen0.toolbar.placement: BottomCenter
+session.screen0.toolbar.visible: true
+session.screen0.toolbar.tools: workspacename, clock, iconbar, systemtray
+session.screen0.strftimeFormat: %H:%M
+"""
+
+# Chromium draws its own tab strip, so a fluxbox frame is dead pixels. Without
+# this, a 1040-high window loses another ~20 px to a title bar.
+#
+# ``defaultDeco`` above is the load-bearing setting: the rule below only lands
+# on windows fluxbox sees *after* it reads this file, and the browser is
+# spawned right after the WM, so the rule usually loses that race (measured in
+# the image: ``_NET_FRAME_EXTENTS`` stayed ``1,1,20,4`` three times out of
+# three). The per-class rule stays as a second line of defence.
+_FLUXBOX_APPS = """\
+[app] (class=Chromium)
+  [Deco] {NONE}
+[end]
+"""
+
+
+def _write_fluxbox_home(home: Path, toolbar_height: int) -> Path:
+    """Write the WM config fluxbox reads from ``$HOME/.fluxbox``.
+
+    fluxbox honours ``$HOME/.fluxbox/init``; ``-rc`` picks up ``appsFile`` but
+    silently ignores ``toolbar.height``, so the files must live here.
+    """
+    config = home / ".fluxbox"
+    try:
+        config.mkdir(parents=True, exist_ok=True)
+        (config / "apps").write_text(_FLUXBOX_APPS)
+        (config / "init").write_text(
+            _FLUXBOX_INIT.format(home=home, toolbar=toolbar_height)
+        )
+    except BaseException:
+        shutil.rmtree(home, ignore_errors=True)
+        raise
+    return home
+
 
 class ProcessHandle(Protocol):
     """A started VNC stack; ``stop`` must be idempotent."""
@@ -105,11 +156,14 @@ class _Stack:
         password_file: Path,
         client_marker: Path | None = None,
         log_file: Any = None,
+        *,
+        wm_home: Path | None = None,
     ) -> None:
         self.processes = processes
         self.password_file = password_file
         self.client_marker = client_marker
         self.log_file = log_file
+        self.wm_home = wm_home
 
     def client_count(self) -> int:
         """Live client count recorded by the x11vnc accept/gone hooks."""
@@ -144,6 +198,8 @@ class _Stack:
             self.client_marker.unlink(missing_ok=True)
         if self.log_file is not None:
             self.log_file.close()
+        if self.wm_home is not None:
+            shutil.rmtree(self.wm_home, ignore_errors=True)
 
 
 async def _spawn(
@@ -233,6 +289,7 @@ def _default_process_factory(
                 proxy_url,
                 headless=False,
                 no_sandbox=settings.no_sandbox,
+                window_size=WORKAREA,
             )
             if not flag.startswith("--headless")
         ]
@@ -245,7 +302,7 @@ def _default_process_factory(
         # Each process announces its own failure on stderr; a shared log turns
         # the old silent "noVNC shows an empty page" into a readable reason.
         commands = [
-            ["Xvfb", screen, "-screen", "0", "1920x1080x24"],
+            ["Xvfb", screen, "-screen", "0", f"{DESKTOP_SIZE[0]}x{DESKTOP_SIZE[1]}x24"],
             ["fluxbox", "-display", screen],
             [executable, *args, url],
             [
@@ -273,8 +330,19 @@ def _default_process_factory(
             ],
         ]
         processes: list[asyncio.subprocess.Process] = []
-        stack = _Stack(processes, password_file, client_marker, log_file)
+        stack: _Stack | None = None
         try:
+            # fluxbox reads its toolbar settings from ``$HOME/.fluxbox``, so it
+            # gets a throwaway HOME; the browser keeps the real one for its
+            # profile paths.
+            wm_home = _write_fluxbox_home(
+                password_file.parent / f"wm-{profile.id or 'x'}-{port}",
+                TASKBAR_HEIGHT,
+            )
+            wm_env = {**os.environ, "HOME": str(wm_home)}
+            stack = _Stack(
+                processes, password_file, client_marker, log_file, wm_home=wm_home
+            )
             # Xvfb first and wait for its socket: fluxbox, x11vnc and Chromium
             # all abort with "cannot open display" if they lose that race.
             processes.append(
@@ -287,7 +355,12 @@ def _default_process_factory(
                     f"Xvfb не поднял дисплей :{display}: {_log_tail(log_name)}"
                 )
             for command in commands[1:]:
-                env = browser_env if command[0] == executable else None
+                if command[0] == executable:
+                    env = browser_env
+                elif command[0] == "fluxbox":
+                    env = wm_env
+                else:
+                    env = None
                 processes.append(await _spawn(command, stderr=log_file, env=env))
             # x11vnc binds its RFB port late; noVNC would show a blank page.
             if not await _wait_for_port(vnc_port, READY_TIMEOUT):
@@ -296,17 +369,30 @@ def _default_process_factory(
                 )
         except BaseException:
             # Do not leak a half-started stack: kill whatever did start.
-            await stack.stop()
+            if stack is not None:
+                await stack.stop()
+            else:
+                password_file.unlink(missing_ok=True)
+                log_file.close()
             raise
+        assert stack is not None
         return stack
 
     return factory
 
 
-def _identity(profile: Profile):
-    from uwp.profiles import identity_from_seed
+async def _stop_quietly(closeable: Any) -> None:
+    """Stop a bridge/handle without letting one failure mask the real error."""
+    try:
+        await closeable.stop()
+    except Exception:
+        log.exception("stopping %s failed", type(closeable).__name__)
 
-    return identity_from_seed(profile.seed)
+
+def _identity(profile: Profile):
+    from uwp.profiles import identity_from_profile
+
+    return identity_from_profile(profile)
 
 
 class VncManager:
@@ -319,13 +405,19 @@ class VncManager:
         sessions: VncRepo,
         process_factory: Any = None,
         bus: Any = None,
+        proxies: Any = None,
+        bridge_factory: Any = None,
     ) -> None:
         self.settings = settings
         self.profiles = profiles
         self.sessions = sessions
         self.process_factory = process_factory or _default_process_factory(settings)
         self.bus = bus
+        self.proxies = proxies
+        self.bridge_factory = bridge_factory
         self._handles: dict[int, ProcessHandle] = {}
+        # The loopback bridge a session's browser talks to; stopped with it.
+        self._bridges: dict[int, Any] = {}
 
     @staticmethod
     def _check_profile(profile: Profile) -> None:
@@ -351,6 +443,7 @@ class VncManager:
         profile: Profile,
         url: str,
         started_by: int | None = None,
+        proxy_id: int | None = None,
     ) -> VncInfo:
         """Book a session in the database without launching anything.
 
@@ -380,6 +473,7 @@ class VncManager:
                 expires_at=expires_at,
                 started_by=started_by,
                 url=url,
+                proxy_id=proxy_id,
             )
         )
         await self.profiles.update(profile.id, status=str(ProfileStatus.login))
@@ -398,9 +492,12 @@ class VncManager:
         url: str,
         proxy_url: str | None = None,
         started_by: int | None = None,
+        proxy_id: int | None = None,
     ) -> VncInfo:
         """Reserve a session and start it now (combined mode, CLI login)."""
-        info = await self.reserve(profile, url, started_by=started_by)
+        info = await self.reserve(
+            profile, url, started_by=started_by, proxy_id=proxy_id
+        )
         session = await self.sessions.get(info.session_id)
         if session is None:  # pragma: no cover - created a moment ago
             raise RuntimeError(f"VNC session {info.session_id} disappeared")
@@ -416,7 +513,10 @@ class VncManager:
         if profile is None:
             await self.sessions.update(session.id, status=str(VncStatus.failed))
             raise ValueError(f"profile {session.profile_id} not found")
+        bridge = None
         try:
+            if proxy_url is None and session.proxy_id is not None:
+                proxy_url, bridge = await self._start_bridge(session.proxy_id)
             started = self.process_factory(
                 display=session.display,
                 port=session.port,
@@ -427,6 +527,8 @@ class VncManager:
             )
             handle = await started if inspect.isawaitable(started) else started
         except Exception as exc:
+            if bridge is not None:
+                await _stop_quietly(bridge)
             log.exception("starting VNC session %s failed", session.id)
             await self.sessions.update(session.id, status=str(VncStatus.failed))
             await self.profiles.update(profile.id, status=str(ProfileStatus.free))
@@ -438,9 +540,33 @@ class VncManager:
                 error=f"{type(exc).__name__}: {exc}",
             )
             raise
+        if bridge is not None:
+            self._bridges[session.id] = bridge
         await self.sessions.update(session.id, status=str(VncStatus.running))
         self._handles[session.id] = handle
         log.info("VNC session %s on port %s started", session.id, session.port)
+
+    async def _start_bridge(self, proxy_id: int) -> tuple[str | None, Any]:
+        """A loopback bridge for ``proxy_id``, or ``None`` with a loud warning.
+
+        The login browser must leave through the same proxy as the parse runs:
+        logging in from one IP and scraping from another is the exact signal the
+        design avoids. A proxy that cannot be resolved must not silently fall
+        back to a direct connection, so the session is failed instead.
+        """
+        if self.proxies is None:
+            log.warning("no proxy service in the VNC manager; proxy %s not applied", proxy_id)
+            return None, None
+        proxy = await self.proxies.resolved(proxy_id)
+        if proxy is None:
+            raise ValueError(f"proxy {proxy_id} not found")
+        factory = self.bridge_factory
+        if factory is None:
+            from uwp.proxybridge import ProxyBridge
+
+            factory = ProxyBridge
+        bridge = factory(proxy)
+        return await bridge.start(), bridge
 
     async def request_stop(self, session_id: int) -> None:
         """Ask for a stop; the process that owns the stack performs it.
@@ -464,6 +590,9 @@ class VncManager:
         if session is None or session.status in (VncStatus.stopped, VncStatus.failed):
             return
         await self.sessions.update(session_id, status=str(VncStatus.stopping))
+        bridge = self._bridges.pop(session_id, None)
+        if bridge is not None:
+            await _stop_quietly(bridge)
         handle = self._handles.pop(session_id, None)
         if handle is not None:
             try:
@@ -500,7 +629,10 @@ class VncManager:
         alive = {session.id for session in await self.sessions.active()}
         for session_id in [sid for sid in self._handles if sid not in alive]:
             handle = self._handles.pop(session_id, None)
+            bridge = self._bridges.pop(session_id, None)
             log.info("VNC session %s stopped elsewhere; killing it here", session_id)
+            if bridge is not None:
+                await _stop_quietly(bridge)
             if handle is None:
                 continue
             try:

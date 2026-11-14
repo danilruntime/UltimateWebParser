@@ -52,8 +52,14 @@ def make_profile(name: str = "p1", **kw) -> Profile:
 
 async def test_migrate_is_idempotent(db):
     await db.migrate()
+    first = await db.fetchone("SELECT MAX(version) AS version FROM schema_version")
+    await db.migrate()
     row = await db.fetchone("SELECT MAX(version) AS version FROM schema_version")
-    assert row["version"] == 2
+    assert row["version"] == first["version"]
+    # And it is the newest migration on disk, not a hardcoded number.
+    from uwp.db.database import _load_migrations
+
+    assert row["version"] == max(version for version, _name, _sql in _load_migrations())
 
 
 async def test_failing_migration_rolls_back_and_keeps_connection_usable(db, monkeypatch):

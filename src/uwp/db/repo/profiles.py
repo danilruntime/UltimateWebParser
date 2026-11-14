@@ -101,6 +101,19 @@ class ProfilesRepo:
             (ProfileStatus.locked.value, to_db(until), profile_id, ProfileStatus.free.value),
         )
         return changed == 1
+    async def release_login(self, profile_id: int) -> bool:
+        """Free a profile that is still waiting for its login.
+
+        Conditional on purpose: a stale «Готово» card can arrive after the
+        session ended and a scheduled run leased the profile, and freeing it
+        then would put two Chromium instances on one user-data-dir.
+        """
+        changed = await self.db.execute_rowcount(
+            "UPDATE profiles SET status = ?, lease_until = NULL WHERE id = ? AND status = ?",
+            (ProfileStatus.free.value, profile_id, ProfileStatus.login.value),
+        )
+        return changed == 1
+
     async def release(self, profile_id: int) -> None:
         await self.db.execute(
             "UPDATE profiles SET status = ?, lease_until = NULL WHERE id = ?",

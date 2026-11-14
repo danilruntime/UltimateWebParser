@@ -7,12 +7,12 @@ from datetime import datetime, timedelta
 from uwp.config import Settings
 from uwp.db.repo.jobs import JobsRepo
 from uwp.db.repo.profiles import ProfilesRepo
-from uwp.db.repo.proxies import ProxiesRepo
 from uwp.db.repo.sites import SitesRepo
 from uwp.domain import ErrorKind, Job, JobStatus, ProfileKind, RunStatus, Site
 from uwp.events import RUN_FAILED, RUN_FINISHED, SITE_PROBLEM, EventBus
 from uwp.runner import RunOutcome
 from uwp.scheduler import Scheduler
+from uwp.services.proxies import ProxyService
 from uwp.timeutil import utcnow
 
 log = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ class Worker:
         jobs: JobsRepo,
         sites: SitesRepo,
         profiles: ProfilesRepo,
-        proxies: ProxiesRepo,
+        proxies: ProxyService,
         runner: object,
         scheduler: Scheduler,
         worker_id: str,
@@ -84,7 +84,18 @@ class Worker:
 
         proxy = None
         if site.proxy_id is not None:
-            proxy = await self.proxies.get(site.proxy_id)
+            # The row holds a Fernet token when UWP_SECRET_KEY is set; a run
+            # must get the plain password or the upstream rejects it.
+            try:
+                proxy = await self.proxies.resolved(site.proxy_id)
+            except ValueError as exc:
+                outcome = RunOutcome(
+                    status=RunStatus.failed,
+                    error_kind=ErrorKind.config_error,
+                    error=str(exc),
+                )
+                await self._finish(job, site, outcome, now)
+                return True
 
         beat = asyncio.create_task(self._beat(job.id))
         try:
@@ -233,12 +244,27 @@ class Worker:
                 if last_beat is None or now - last_beat >= beat_every:
                     await self.jobs.heartbeat_all(self.worker_id, now)
                     last_beat = now
-                ran = await asyncio.gather(
+                # Deliberately not a ``TaskGroup``: a crashing slot is a local
+                # failure and must not cancel a sibling that is mid-run with a
+                # job already claimed (its row would stay ``running`` forever).
+                # Plain ``gather`` would propagate the first exception and
+                # leave the other slots detached, still holding claimed jobs;
+                # ``return_exceptions`` waits for every slot, then the failure
+                # is surfaced to the handler below.
+                results = await asyncio.gather(
                     *(
                         self.process_one(now)
                         for _ in range(max(1, self.settings.max_parallel_runs))
-                    )
+                    ),
+                    return_exceptions=True,
                 )
+                ran = [result for result in results if isinstance(result, bool) and result]
+                failure = next(
+                    (result for result in results if isinstance(result, BaseException)),
+                    None,
+                )
+                if failure is not None:
+                    raise failure
             except Exception:  # keep the loop alive whatever a single tick does
                 log.exception("worker iteration failed")
                 ran = []

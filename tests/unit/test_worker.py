@@ -14,6 +14,7 @@ from uwp.db.repo.proxies import ProxiesRepo
 from uwp.db.repo.sites import SitesRepo
 from uwp.domain import (
     ErrorKind,
+    JobStatus,
     Profile,
     ProfileKind,
     ProfileStatus,
@@ -22,6 +23,7 @@ from uwp.domain import (
 )
 from uwp.events import EventBus
 from uwp.runner import RunOutcome
+from uwp.services.proxies import ProxyService
 from uwp.worker import Worker
 
 NOW = datetime(2026, 11, 13, 12, 0, tzinfo=UTC)
@@ -78,11 +80,29 @@ def _worker(settings, db, jobs, sites, runner, scheduler=None):
         jobs,
         sites,
         ProfilesRepo(db),
-        ProxiesRepo(db),
+        ProxyService(ProxiesRepo(db), settings),
         runner,
         scheduler or FakeScheduler(),
         "w1",
     )
+
+
+async def test_the_runner_gets_the_decrypted_proxy_password(env):
+    """An encrypted proxy password must reach the upstream proxy, not the ciphertext."""
+    db, sites, jobs, sid = env
+    settings = Settings(secret_key="k" * 32)
+    service = ProxyService(ProxiesRepo(db), settings)
+    proxy = await service.add("p", "http://user:s3cr3t@127.0.0.1:8080")
+    assert proxy.password.startswith("gAAAAA")  # stored encrypted
+    await sites.update(sid, proxy_id=proxy.id)
+    await jobs.create(sid, "manual")
+    runner = FakeRunner()
+    worker = _worker(settings, db, jobs, sites, runner)
+
+    await worker.process_one(NOW)
+
+    seen_proxy = runner.seen[0][2]
+    assert seen_proxy.password == "s3cr3t"
 
 
 async def test_orphaned_running_job_is_requeued(env):
@@ -289,6 +309,62 @@ async def test_run_forever_stops_on_event(env):
 
     assert scheduler.ticks >= 1
     assert str((await jobs.list_for_site(sid))[0].status) == "done"
+
+
+class SlowRunner:
+    """A runner that suspends long enough for a sibling cancellation to land."""
+
+    def __init__(self, delay: float = 0.2):
+        self.delay = delay
+        self.started = asyncio.Event()
+        self.finished = asyncio.Event()
+
+    async def run(self, site, job, proxy, cancel=None):
+        # Set before the sleep so the crashing slot can land its failure while
+        # this run is in flight, not before it has claimed its job.
+        self.started.set()
+        await asyncio.sleep(self.delay)
+        self.finished.set()
+        return RunOutcome(status=RunStatus.ok)
+
+
+async def test_a_crashed_slot_does_not_abort_a_sibling_run(env):
+    """A crashing slot must not cancel — or detach — a sibling that owns a job."""
+    db, sites, jobs, sid = env
+    runner = SlowRunner()
+    worker = _worker(Settings(max_parallel_runs=2), db, jobs, sites, runner)
+    job_id = await jobs.create(sid, "manual")
+    stop = asyncio.Event()
+    real_process_one = worker.process_one
+    calls = 0
+
+    async def flaky(now):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            # Crash only once the sibling is inside ``runner.run`` with a
+            # claimed job, which is the state a cancellation would strand.
+            await asyncio.wait_for(runner.started.wait(), 5)
+            stop.set()  # one iteration is enough; the loop must not spin
+            raise RuntimeError("boom")
+        return await real_process_one(now)
+
+    worker.process_one = flaky
+
+    async with asyncio.timeout(10):
+        await worker.run_forever(stop)
+
+    # The other slot owned a real claimed job. It must complete normally:
+    # under TaskGroup it was cancelled mid-run and the row stayed `running`.
+    assert runner.started.is_set()
+    assert runner.finished.is_set()
+    job = await jobs.get(job_id)
+    assert job is not None
+    assert job.status == JobStatus.done
+    assert job.claimed_by is None
+    # The site must be able to queue again: `ux_jobs_active` is the real victim
+    # of a stranded row.
+    assert await jobs.create(sid, "manual") is not None
 
 
 async def test_ok_run_emits_a_finished_event(env):
