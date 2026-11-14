@@ -8,11 +8,12 @@ import pytest
 from uwp.config import load_settings
 from uwp.db.database import Database
 from uwp.db.repo.profiles import ProfilesRepo
-from uwp.domain import ProfileKind, ProfileStatus
+from uwp.domain import Profile, ProfileKind, ProfileStatus
 from uwp.profiles import (
     MACHINE_PROFILES,
     ProfileManager,
     browser_flags,
+    identity_from_profile,
     identity_from_seed,
     random_identity,
 )
@@ -87,6 +88,66 @@ def test_identity_from_seed_keeps_seed_and_is_stable():
         assert rebuilt == identity_from_seed(original.seed)
         assert rebuilt.timezone in TIMEZONES
         assert rebuilt.locale.split("-")[0] in rebuilt.accept_lang
+
+
+def test_identity_from_profile_matches_what_was_stored(tmp_path):
+    """A profile made for a country must run as that country, not as a rebuild from seed."""
+    for country in (None, "DE", "RU"):
+        for i in range(50):
+            identity = random_identity(random.Random(i), country=country)
+            profile = Profile(
+                name=f"p-{country}-{i}",
+                kind=ProfileKind.persistent,
+                seed=identity.seed,
+                platform=identity.platform,
+                brand=identity.brand,
+                brand_version=identity.brand_version,
+                timezone=identity.timezone,
+                locale=identity.locale,
+                user_data_dir=str(tmp_path / f"{country}-{i}"),
+            )
+
+            assert identity_from_profile(profile) == identity
+
+
+def test_identity_from_profile_recovers_accept_lang_and_viewport():
+    """The row keeps five machine fields; the other two come from the machine table."""
+    profile = Profile(
+        name="windows-ru",
+        kind=ProfileKind.persistent,
+        seed=123,
+        platform="windows",
+        brand="Chrome",
+        brand_version="150",
+        timezone="Europe/Moscow",
+        locale="ru-RU",
+        user_data_dir="/tmp/x",
+    )
+
+    identity = identity_from_profile(profile)
+
+    assert identity.accept_lang == "ru-RU,ru"
+    assert identity.viewport == (1920, 1080)
+    assert identity.seed == 123
+
+
+def test_identity_from_profile_falls_back_to_seed_for_unknown_machine(tmp_path):
+    """A row that matches no machine profile still launches coherently."""
+    profile = Profile(
+        name="odd",
+        kind=ProfileKind.persistent,
+        seed=random_identity(random.Random(4)).seed,
+        platform="windows",
+        brand="Opera",
+        brand_version="99",
+        timezone="Mars/Olympus",
+        locale="xx-XX",
+        user_data_dir=str(tmp_path),
+    )
+
+    identity = identity_from_profile(profile)
+
+    assert identity == identity_from_seed(profile.seed)
 
 
 def test_browser_flags_contain_fingerprint_and_proxy(tmp_path):

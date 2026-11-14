@@ -304,9 +304,9 @@ def _default_process_factory(
 
 
 def _identity(profile: Profile):
-    from uwp.profiles import identity_from_seed
+    from uwp.profiles import identity_from_profile
 
-    return identity_from_seed(profile.seed)
+    return identity_from_profile(profile)
 
 
 class VncManager:

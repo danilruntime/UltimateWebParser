@@ -148,6 +148,39 @@ def identity_from_seed(seed: int) -> Identity:
     )
 
 
+def identity_from_profile(profile: Profile) -> Identity:
+    """Rebuild the launch identity of a stored profile from the row itself.
+
+    The row keeps seed, platform, brand, brand version, timezone and locale, but
+    not ``accept_lang``/``viewport``. Those two come from the machine profile the
+    row was drawn from, matched on the fields it does keep. Rebuilding from the
+    seed alone is wrong: ``random_identity(country=...)`` narrows the candidate
+    list *before* drawing, so a seed that produced a German machine may map back
+    to a Japanese one.
+    """
+    for machine in MACHINE_PROFILES:
+        if (
+            machine["platform"] == profile.platform
+            and machine["brand"] == profile.brand
+            and machine["brand_version"] == profile.brand_version
+            and machine["timezone"] == profile.timezone
+            and machine["locale"] == profile.locale
+        ):
+            return Identity(
+                seed=profile.seed,
+                platform=profile.platform,
+                brand=profile.brand,
+                brand_version=profile.brand_version,
+                timezone=profile.timezone,
+                locale=profile.locale,
+                accept_lang=machine["accept_lang"],
+                viewport=tuple(machine["viewport"]),
+            )
+    # A hand-edited or older row: keep it coherent rather than launching with a
+    # half-filled identity.
+    return identity_from_seed(profile.seed)
+
+
 def browser_flags(
     identity: Identity,
     user_data_dir: Path,
