@@ -14,6 +14,7 @@ from uwp.db.repo.proxies import ProxiesRepo
 from uwp.db.repo.sites import SitesRepo
 from uwp.domain import (
     ErrorKind,
+    JobStatus,
     Profile,
     ProfileKind,
     ProfileStatus,
@@ -310,43 +311,52 @@ async def test_run_forever_stops_on_event(env):
     assert str((await jobs.list_for_site(sid))[0].status) == "done"
 
 
-async def test_run_forever_cancels_the_sibling_when_one_job_crashes(env):
-    """With max_parallel_runs > 1 a crashed slot must not leave a detached task."""
-    db, sites, jobs, _sid = env
-    settings = Settings(max_parallel_runs=2)
-    worker = _worker(settings, db, jobs, sites, FakeRunner())
+class SlowRunner:
+    """A runner that suspends long enough for a sibling cancellation to land."""
 
-    started = asyncio.Event()
-    sibling_cancelled = asyncio.Event()
-    siblings: list[asyncio.Task] = []
+    def __init__(self, delay: float = 0.2):
+        self.delay = delay
+        self.finished = asyncio.Event()
+
+    async def run(self, site, job, proxy, cancel=None):
+        await asyncio.sleep(self.delay)
+        self.finished.set()
+        return RunOutcome(status=RunStatus.ok)
+
+
+async def test_a_crashed_slot_does_not_abort_a_sibling_run(env):
+    """A crashing slot must not cancel — or detach — a sibling that owns a job."""
+    db, sites, jobs, sid = env
+    runner = SlowRunner()
+    worker = _worker(Settings(max_parallel_runs=2), db, jobs, sites, runner)
+    job_id = await jobs.create(sid, "manual")
     stop = asyncio.Event()
+    real_process_one = worker.process_one
+    calls = 0
 
-    async def fake_process_one(now):
-        # First slot crashes; the second blocks and must be cancelled.
-        if not started.is_set():
-            started.set()
-            stop.set()  # one iteration is enough; do not spin forever
+    async def flaky(now):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            stop.set()  # one iteration is enough; the loop must not spin
             raise RuntimeError("boom")
-        siblings.append(asyncio.current_task())
-        try:
-            await asyncio.sleep(30)
-        except asyncio.CancelledError:
-            sibling_cancelled.set()
-            raise
+        return await real_process_one(now)
 
-    worker.process_one = fake_process_one
+    worker.process_one = flaky
 
-    try:
-        # ``run_forever`` swallows the exception group and returns. With
-        # ``gather`` the sibling is left running detached.
-        async with asyncio.timeout(5):
-            await worker.run_forever(stop)
-        assert sibling_cancelled.is_set()
-    finally:
-        # Only reachable on RED: do not leak the detached slot into other tests.
-        for task in siblings:
-            task.cancel()
-        await asyncio.gather(*siblings, return_exceptions=True)
+    async with asyncio.timeout(10):
+        await worker.run_forever(stop)
+
+    # The other slot owned a real claimed job. It must complete normally:
+    # under TaskGroup it was cancelled mid-run and the row stayed `running`.
+    assert runner.finished.is_set()
+    job = await jobs.get(job_id)
+    assert job is not None
+    assert job.status == JobStatus.done
+    assert job.claimed_by is None
+    # The site must be able to queue again: `ux_jobs_active` is the real victim
+    # of a stranded row.
+    assert await jobs.create(sid, "manual") is not None
 
 
 async def test_ok_run_emits_a_finished_event(env):

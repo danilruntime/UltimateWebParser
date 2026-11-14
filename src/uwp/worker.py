@@ -244,12 +244,27 @@ class Worker:
                 if last_beat is None or now - last_beat >= beat_every:
                     await self.jobs.heartbeat_all(self.worker_id, now)
                     last_beat = now
-                async with asyncio.TaskGroup() as group:
-                    tasks = [
-                        group.create_task(self.process_one(now))
+                # Deliberately not a ``TaskGroup``: a crashing slot is a local
+                # failure and must not cancel a sibling that is mid-run with a
+                # job already claimed (its row would stay ``running`` forever).
+                # Plain ``gather`` would propagate the first exception and
+                # leave the other slots detached, still holding claimed jobs;
+                # ``return_exceptions`` waits for every slot, then the failure
+                # is surfaced to the handler below.
+                results = await asyncio.gather(
+                    *(
+                        self.process_one(now)
                         for _ in range(max(1, self.settings.max_parallel_runs))
-                    ]
-                ran = [task.result() for task in tasks]
+                    ),
+                    return_exceptions=True,
+                )
+                ran = [result for result in results if isinstance(result, bool) and result]
+                failure = next(
+                    (result for result in results if isinstance(result, BaseException)),
+                    None,
+                )
+                if failure is not None:
+                    raise failure
             except Exception:  # keep the loop alive whatever a single tick does
                 log.exception("worker iteration failed")
                 ran = []
