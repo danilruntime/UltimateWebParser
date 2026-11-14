@@ -22,6 +22,7 @@ from uwp.domain import (
 )
 from uwp.events import EventBus
 from uwp.runner import RunOutcome
+from uwp.services.proxies import ProxyService
 from uwp.worker import Worker
 
 NOW = datetime(2026, 11, 13, 12, 0, tzinfo=UTC)
@@ -78,11 +79,29 @@ def _worker(settings, db, jobs, sites, runner, scheduler=None):
         jobs,
         sites,
         ProfilesRepo(db),
-        ProxiesRepo(db),
+        ProxyService(ProxiesRepo(db), settings),
         runner,
         scheduler or FakeScheduler(),
         "w1",
     )
+
+
+async def test_the_runner_gets_the_decrypted_proxy_password(env):
+    """An encrypted proxy password must reach the upstream proxy, not the ciphertext."""
+    db, sites, jobs, sid = env
+    settings = Settings(secret_key="k" * 32)
+    service = ProxyService(ProxiesRepo(db), settings)
+    proxy = await service.add("p", "http://user:s3cr3t@127.0.0.1:8080")
+    assert proxy.password.startswith("gAAAAA")  # stored encrypted
+    await sites.update(sid, proxy_id=proxy.id)
+    await jobs.create(sid, "manual")
+    runner = FakeRunner()
+    worker = _worker(settings, db, jobs, sites, runner)
+
+    await worker.process_one(NOW)
+
+    seen_proxy = runner.seen[0][2]
+    assert seen_proxy.password == "s3cr3t"
 
 
 async def test_orphaned_running_job_is_requeued(env):

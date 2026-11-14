@@ -5,16 +5,33 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+from pathlib import Path
 
 import pytest
 
 from uwp.domain import Proxy, ProxyScheme
-from uwp.proxybridge import ProxyBridge, ProxyError, parse_proxy_url
+from uwp.proxybridge import ProxyBridge, ProxyError, _socks5_address, parse_proxy_url
 
 
 def _proxy(**kwargs) -> Proxy:
     base = {"name": "p", "scheme": ProxyScheme.http, "host": "127.0.0.1", "port": 1}
     return Proxy(**{**base, **kwargs})
+
+
+class _RecordingWriter:
+    """Just enough of a StreamWriter for the error paths."""
+
+    def __init__(self):
+        self.closed = False
+
+    def write(self, data):
+        pass
+
+    async def drain(self):
+        pass
+
+    def close(self):
+        self.closed = True
 
 
 def test_parse_proxy_url_with_auth():
@@ -356,6 +373,121 @@ async def test_socks5_rejection_raises_proxy_error():
     finally:
         await bridge.stop()
         server.close()
+
+
+@pytest.mark.parametrize(
+    "target",
+    ["example.com:99999", "example.com:0", f"{'a' * 70}.com:443", ":443"],
+)
+async def test_hostile_connect_target_is_reported_not_crashed(target, caplog):
+    """Untrusted page data must not raise outside ``_handle``'s catch list."""
+    bridge = ProxyBridge(_proxy(scheme=ProxyScheme.socks5, port=1))
+    reader = asyncio.StreamReader()
+    reader.feed_data(f"CONNECT {target} HTTP/1.1\r\n\r\n".encode())
+    reader.feed_eof()
+    writer = _RecordingWriter()
+
+    await bridge._handle(reader, writer)  # must not raise
+
+    assert writer.closed
+    assert "failed" in caplog.text.lower()
+
+
+def _self_signed(tmp_path) -> tuple[Path, Path]:
+    """A throwaway cert for TLS tests; ``cryptography`` is already a dependency."""
+    from datetime import UTC, datetime, timedelta
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.now(UTC) - timedelta(minutes=5))
+        .not_valid_after(datetime.now(UTC) + timedelta(hours=1))
+        .add_extension(
+            x509.SubjectAlternativeName([x509.DNSName("localhost")]), critical=False
+        )
+        .sign(key, hashes.SHA256())
+    )
+    key_path = tmp_path / "key.pem"
+    cert_path = tmp_path / "cert.pem"
+    key_path.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.NoEncryption(),
+        )
+    )
+    cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    return cert_path, key_path
+
+
+async def test_https_upstream_speaks_tls(tmp_path):
+    """An ``https://`` proxy must not receive credentials in clear text."""
+    import ssl
+
+    cert_path, key_path = _self_signed(tmp_path)
+    server_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server_ctx.load_cert_chain(cert_path, key_path)
+    client_ctx = ssl.create_default_context(cafile=str(cert_path))
+    seen = {}
+
+    async def upstream(reader, writer):
+        seen["tls"] = writer.get_extra_info("ssl_object") is not None
+        seen["head"] = (await reader.readuntil(b"\r\n\r\n")).decode()
+        writer.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(upstream, "127.0.0.1", 0, ssl=server_ctx)
+    up_port = server.sockets[0].getsockname()[1]
+    bridge = ProxyBridge(
+        _proxy(
+            scheme=ProxyScheme.https,
+            host="localhost",
+            port=up_port,
+            username="user",
+            password="secret",
+        ),
+        ssl_context=client_ctx,
+    )
+    await bridge.start()
+    try:
+        r, w = await asyncio.open_connection("127.0.0.1", bridge.port)
+        w.write(b"CONNECT example.com:443 HTTP/1.1\r\n\r\n")
+        await w.drain()
+        assert b"200" in await r.readuntil(b"\r\n\r\n")
+        w.close()
+        assert seen["tls"] is True
+        assert "Proxy-Authorization: Basic dXNlcjpzZWNyZXQ=" in seen["head"]
+    finally:
+        await bridge.stop()
+        server.close()
+
+
+@pytest.mark.parametrize(
+    "host,expected_prefix",
+    [("1.2.3.4", b"\x01\x01\x02\x03\x04"), ("::1", b"\x04" + b"\x00" * 15 + b"\x01")],
+)
+def test_socks5_address_packs_ip_literals(host, expected_prefix):
+    assert _socks5_address(host, 443).startswith(expected_prefix)
+
+
+def test_socks5_address_uses_a_domain_name_for_hosts():
+    assert _socks5_address("example.com", 443) == b"\x03\x0bexample.com\x01\xbb"
+
+
+def test_socks5_address_rejects_an_impossible_host():
+    with pytest.raises(ProxyError):
+        _socks5_address("a" * 70 + ".com", 443)
 
 
 async def test_stop_closes_live_connections_and_is_idempotent():

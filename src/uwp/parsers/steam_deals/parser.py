@@ -13,8 +13,18 @@ SEARCH_URL = "https://store.steampowered.com/search/"
 PAGE_SIZE = 50
 
 _PLATFORMS = {"win": "Windows", "mac": "macOS", "linux": "Linux"}
-_CURRENCY_SYMBOLS = {"$": "USD", "€": "EUR", "£": "GBP", "₽": "RUB", "¥": "JPY", "₴": "UAH"}
-_CURRENCY_CODES = {"USD", "EUR", "GBP", "RUB", "UAH", "JPY", "KZT", "BRL", "TRY", "PLN"}
+# Longest symbol first: ``R$``/``CDN$`` would otherwise match the bare ``$``.
+_CURRENCY_SYMBOLS = (
+    ("CDN$", "CAD"),
+    ("R$", "BRL"),
+    ("$", "USD"),
+    ("€", "EUR"),
+    ("£", "GBP"),
+    ("₽", "RUB"),
+    ("¥", "JPY"),
+    ("₴", "UAH"),
+)
+_CURRENCY_CODES = {"USD", "EUR", "GBP", "RUB", "UAH", "JPY", "KZT", "BRL", "CAD", "TRY", "PLN"}
 
 _REVIEW_RE = re.compile(r"(\d+)%\s+of\s+the\s+([\d,]+)\s+user\s+reviews", re.IGNORECASE)
 _NUMBER_RE = re.compile(r"\d[\d,.\s]*")
@@ -71,7 +81,7 @@ def _parse_price(text: str) -> tuple[float | None, str]:
     if not text:
         return None, ""
     currency = ""
-    for symbol, code in _CURRENCY_SYMBOLS.items():
+    for symbol, code in _CURRENCY_SYMBOLS:
         if symbol in text:
             currency = code
             break
@@ -83,7 +93,10 @@ def _parse_price(text: str) -> tuple[float | None, str]:
     match = _NUMBER_RE.search(text)
     if match is None:
         return None, currency
-    number = match.group(0).strip().replace(" ", "").replace("\u00a0", "")
+    number = re.sub(r"\s", "", match.group(0))
+    # Steam writes ``19,99.-`` and ``4,99.``; the trailing dot is decoration and
+    # must not be read as a decimal point (that would make 1999 and 499).
+    number = number.rstrip(".,")
     decimal = _decimal_separator(number)
     if decimal is not None:
         whole, _, fraction = number.rpartition(decimal)

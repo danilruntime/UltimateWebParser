@@ -2,15 +2,12 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import hashlib
 import logging
 import sqlite3
 import time
 from urllib.parse import unquote, urlsplit
 
-from cryptography.fernet import Fernet, InvalidToken
-
+from uwp import secretbox
 from uwp.config import Settings
 from uwp.db.repo.proxies import ProxiesRepo
 from uwp.domain import Proxy, ProxyScheme
@@ -18,7 +15,6 @@ from uwp.domain import Proxy, ProxyScheme
 log = logging.getLogger(__name__)
 
 TEST_TIMEOUT_SECONDS = 10
-_FERNET_PREFIX = "gAAAAA"
 
 
 def parse_proxy_url(url: str) -> Proxy:
@@ -46,11 +42,6 @@ def parse_proxy_url(url: str) -> Proxy:
     )
 
 
-def _fernet(secret: str) -> Fernet:
-    key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest())
-    return Fernet(key)
-
-
 class ProxyService:
     """CRUD and diagnostics for proxies, with optional password encryption."""
 
@@ -58,14 +49,21 @@ class ProxyService:
         self.repo = repo
         self.settings = settings
 
+    async def resolved(self, proxy_id: int) -> Proxy | None:
+        """The proxy ready for use: password decrypted, or ``None`` if gone."""
+        proxy = await self.repo.get(proxy_id)
+        if proxy is None or proxy.password is None:
+            return proxy
+        return proxy.model_copy(
+            update={"password": secretbox.decrypt(proxy.password, self.settings.secret_key)}
+        )
+
     async def add(self, name: str, url: str) -> Proxy:
         """Store a proxy from a URL, encrypting the password when a key is set."""
         proxy = parse_proxy_url(url)
         proxy.name = name.strip() or proxy.host
         if proxy.password and self.settings.secret_key:
-            proxy.password = _fernet(self.settings.secret_key).encrypt(
-                proxy.password.encode()
-            ).decode()
+            proxy.password = secretbox.encrypt(proxy.password, self.settings.secret_key)
         try:
             proxy.id = await self.repo.create(proxy)
         except sqlite3.IntegrityError:
@@ -115,12 +113,4 @@ class ProxyService:
             return True, f"доступен, {int((time.monotonic() - started) * 1000)} мс"
 
     def _decrypt(self, value: str) -> str:
-        if not value.startswith(_FERNET_PREFIX):
-            return value
-        if not self.settings.secret_key:
-            raise ValueError("пароль зашифрован, но UWP_SECRET_KEY не задан")
-        try:
-            return _fernet(self.settings.secret_key).decrypt(value.encode()).decode()
-        except InvalidToken:
-            log.warning("cannot decrypt a proxy password: wrong UWP_SECRET_KEY")
-            raise ValueError("не удалось расшифровать пароль: проверьте UWP_SECRET_KEY") from None
+        return secretbox.decrypt(value, self.settings.secret_key)

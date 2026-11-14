@@ -125,6 +125,9 @@ def test_parse_price_handles_thousands_separators():
         "1.234,56 €": 1234.56,
         "1,234.56 €": 1234.56,
         "1 234,56 ₽": 1234.56,
+        # Steam's French/Russian pages use a narrow or thin no-break space.
+        "1\u202f234,56 €": 1234.56,
+        "1\u2009234,56 €": 1234.56,
         "12,345,678.90": 12345678.90,
         "1.234": 1234.0,
         "1,234": 1234.0,
@@ -132,10 +135,18 @@ def test_parse_price_handles_thousands_separators():
         "$19.99": 19.99,
         "19,99 руб.": 19.99,
         "2 499.00": 2499.0,
+        # A trailing separator is not a decimal point: these are 19.99 and 4.99.
+        "19,99.-": 19.99,
+        "4,99.": 4.99,
     }
 
     for text, expected in cases.items():
         assert _parse_price(text)[0] == expected, text
+
+
+def test_parse_price_reads_brazilian_and_canadian_dollars_as_their_own_currency():
+    assert _parse_price("R$ 19,99") == (19.99, "BRL")
+    assert _parse_price("CDN$ 19,99") == (19.99, "CAD")
 
 
 def test_parser_metadata_and_columns():

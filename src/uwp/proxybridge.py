@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import ipaddress
 import logging
+import ssl
 from urllib.parse import unquote, urlsplit
 
 from uwp.domain import Proxy, ProxyScheme
@@ -62,11 +64,54 @@ def _describe(proxy: Proxy) -> str:
     return f"{proxy.scheme}://{proxy.host}:{proxy.port}"
 
 
+def _parse_target(target: str) -> tuple[str, int]:
+    """Split ``host:port`` and reject values that cannot be encoded downstream.
+
+    The target comes from the page Chromium is loading, so it is untrusted: a
+    port above 65535 or a 70-character label must become a :class:`ProxyError`,
+    not an ``OverflowError`` escaping into the event loop.
+    """
+    host, _, port_text = target.rpartition(":")
+    if not host or not port_text.isdigit():
+        raise ProxyError("CONNECT target must be host:port")
+    port = int(port_text)
+    if not 1 <= port <= 65535:
+        raise ProxyError(f"CONNECT target port out of range: {port}")
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1]  # IPv6 literal, as sent by Chromium
+    return host, port
+
+
+def _socks5_address(host: str, port: int) -> bytes:
+    """Encode a SOCKS5 ``DST.ADDR``/``DST.PORT`` pair.
+
+    IP literals use the packed forms; everything else must survive ``idna``
+    (a label longer than 63 bytes does not) and fit the one-byte length field.
+    """
+    try:
+        return b"\x01" + ipaddress.IPv4Address(host).packed + port.to_bytes(2, "big")
+    except ipaddress.AddressValueError:
+        pass
+    try:
+        return b"\x04" + ipaddress.IPv6Address(host).packed + port.to_bytes(2, "big")
+    except ipaddress.AddressValueError:
+        pass
+    try:
+        name = host.encode("idna")
+    except UnicodeError as exc:
+        raise ProxyError(f"CONNECT target host is not encodable: {exc}") from exc
+    if not 0 < len(name) <= 255:
+        raise ProxyError("CONNECT target host is too long")
+    return b"\x03" + bytes([len(name)]) + name + port.to_bytes(2, "big")
+
+
 class ProxyBridge:
     """Loopback HTTP proxy forwarding to ``proxy`` with credentials applied."""
 
-    def __init__(self, proxy: Proxy) -> None:
+    def __init__(self, proxy: Proxy, ssl_context: ssl.SSLContext | None = None) -> None:
         self._proxy = proxy
+        # Only an ``https://`` upstream gets TLS; for http/socks5 it is unused.
+        self._ssl_context = ssl_context
         self._server: asyncio.AbstractServer | None = None
         self._connections: set[asyncio.StreamWriter] = set()
         self._tasks: set[asyncio.Task] = set()
@@ -149,18 +194,27 @@ class ProxyBridge:
             await self._forward_plain(method, target, version, headers, reader, writer)
 
     async def _open_upstream(self) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        # An ``https://`` proxy is spoken to over TLS. Plain TCP here would send
+        # ``Proxy-Authorization`` — i.e. the admin's proxy password — in clear.
+        context = self._ssl_context
+        if self._proxy.scheme is ProxyScheme.https and context is None:
+            context = ssl.create_default_context()
         try:
-            return await asyncio.open_connection(self._proxy.host, self._proxy.port)
+            return await asyncio.open_connection(
+                self._proxy.host,
+                self._proxy.port,
+                ssl=context if self._proxy.scheme is ProxyScheme.https else None,
+                server_hostname=(
+                    self._proxy.host if self._proxy.scheme is ProxyScheme.https else None
+                ),
+            )
         except OSError as exc:
             raise ProxyError(f"cannot reach upstream: {exc}") from exc
 
     async def _connect(
         self, target: str, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
-        host, _, port_text = target.rpartition(":")
-        if not host or not port_text.isdigit():
-            raise ProxyError("CONNECT target must be host:port")
-        port = int(port_text)
+        host, port = _parse_target(target)
         up_reader, up_writer = await self._open_upstream()
         try:
             if self._proxy.scheme is ProxyScheme.socks5:
@@ -227,10 +281,8 @@ class ProxyBridge:
                 raise ProxyError("upstream SOCKS5 authentication failed")
         elif method != 0x00:
             raise ProxyError(f"upstream SOCKS5 chose unsupported method {method}")
-        name = host.encode("idna")
-        up_writer.write(
-            b"\x05\x01\x00\x03" + bytes([len(name)]) + name + port.to_bytes(2, "big")
-        )
+        name = _socks5_address(host, port)
+        up_writer.write(b"\x05\x01\x00" + name)
         await up_writer.drain()
         version, reply, _, atyp = await up_reader.readexactly(4)
         if version != 5 or reply != 0:
