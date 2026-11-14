@@ -102,15 +102,20 @@ def test_reply_menu_kb_is_a_two_by_two_keyboard():
 
     from uwp.bot import keyboards
 
-    kb = keyboards.reply_menu_kb()
-
-    assert isinstance(kb, ReplyKeyboardMarkup)
-    texts = [b.text for row in kb.keyboard for b in row]
-    assert texts == [
+    # The copy is binding, so pin the constants to literals: a mistyped
+    # constant (Latin C, wrong emoji) has to fail here rather than sail through.
+    assert [
         keyboards.BTN_SITES,
         keyboards.BTN_PROFILES,
         keyboards.BTN_PROXIES,
         keyboards.BTN_HELP,
-    ]
+    ] == ["🌐 Сайты", "👤 Профили", "🌍 Прокси", "❓ Помощь"]
+
+    kb = keyboards.reply_menu_kb()
+
+    assert isinstance(kb, ReplyKeyboardMarkup)
+    assert [len(row) for row in kb.keyboard] == [2, 2]
+    labels = [b.text for row in kb.keyboard for b in row]
+    assert labels == ["🌐 Сайты", "👤 Профили", "🌍 Прокси", "❓ Помощь"]
     assert all(isinstance(b, KeyboardButton) for row in kb.keyboard for b in row)
     assert kb.resize_keyboard is True
