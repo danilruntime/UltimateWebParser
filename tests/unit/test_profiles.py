@@ -217,6 +217,29 @@ def test_browser_flags_omit_optional_flags(tmp_path):
     assert "--no-sandbox" not in flags
 
 
+def test_browser_flags_size_a_headful_window(tmp_path):
+    ident = identity_from_seed(7)
+
+    flags = browser_flags(
+        ident, tmp_path, None, headless=False, window_size=(1920, 1040)
+    )
+
+    assert "--window-size=1920,1040" in flags
+    assert "--window-position=0,0" in flags
+    # Measured: --start-maximized breaks the size when --fingerprint is set.
+    assert "--start-maximized" not in flags
+
+
+def test_browser_flags_ignore_window_size_when_headless(tmp_path):
+    ident = identity_from_seed(7)
+
+    flags = browser_flags(
+        ident, tmp_path, None, headless=True, window_size=(1920, 1040)
+    )
+
+    assert not any(f.startswith("--window-size") for f in flags)
+
+
 async def test_create_persistent(mgr, settings):
     p = await mgr.create_persistent("Main account")
     assert p.id is not None

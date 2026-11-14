@@ -154,6 +154,70 @@ async def test_default_factory_builds_the_full_stack(tmp_path, monkeypatch):
     assert all(p.terminated for p in spawned[1:])
 
 
+async def test_default_factory_gives_fluxbox_its_own_home(tmp_path, monkeypatch):
+    """The toolbar settings only load if fluxbox sees the generated $HOME."""
+    import os
+
+    from uwp import vnc
+
+    settings, profile = await _factory_env(tmp_path)
+    envs: dict[str, dict[str, str] | None] = {}
+
+    async def fake_spawn(command, **kw):
+        envs.setdefault(command[0], kw.get("env"))
+        return FakeSpawned(command)
+
+    monkeypatch.setattr(vnc, "_spawn", fake_spawn)
+    await _pretend_ready(monkeypatch, vnc)
+    handle = await vnc._default_process_factory(settings)(
+        display=100,
+        port=6100,
+        password="pw",
+        profile=profile,
+        url="https://example.com",
+        proxy_url=None,
+    )
+
+    wm_home = handle.wm_home
+    assert wm_home is not None
+    assert envs["fluxbox"] is not None
+    assert envs["fluxbox"]["HOME"] == str(wm_home)
+    assert (wm_home / ".fluxbox" / "init").exists()
+    # Chromium keeps the real HOME: its profile paths depend on it.
+    assert envs[str(settings.browser_path)]["HOME"] == os.environ["HOME"]
+
+    await handle.stop()
+    assert not wm_home.exists()
+
+
+async def test_fluxbox_home_is_removed_when_the_stack_fails(tmp_path, monkeypatch):
+    """A per-session config must not pile up under data/vnc on a failed start."""
+    from uwp import vnc
+
+    settings, profile = await _factory_env(tmp_path)
+
+    async def fake_spawn(command, **kw):
+        if command[0] == "fluxbox":
+            raise FileNotFoundError("fluxbox")
+        return FakeSpawned(command)
+
+    monkeypatch.setattr(vnc, "_spawn", fake_spawn)
+    await _pretend_ready(monkeypatch, vnc)
+
+    with pytest.raises(FileNotFoundError):
+        await vnc._default_process_factory(settings)(
+            display=100,
+            port=6100,
+            password="pw",
+            profile=profile,
+            url="https://example.com",
+            proxy_url=None,
+        )
+
+    vnc_dir = settings.data_dir / "vnc"
+    assert not (vnc_dir / "wm-7-6100").exists()
+
+
 async def test_default_factory_reports_storepasswd_failure(tmp_path, monkeypatch):
     from uwp import vnc
 
@@ -222,6 +286,29 @@ async def test_client_count_reads_the_hook_marker(tmp_path):
 
     marker.write_text("not a number\n")
     assert stack.client_count() == 0
+
+
+def test_desktop_geometry_matches_windows_10():
+    from uwp.vnc import DESKTOP_SIZE, TASKBAR_HEIGHT, WORKAREA
+
+    assert DESKTOP_SIZE == (1920, 1080)
+    # fluxbox adds 2 px of border, so 38 px renders a 40 px taskbar.
+    assert TASKBAR_HEIGHT == 38
+    assert WORKAREA == (1920, 1080 - 40)
+
+
+def test_fluxbox_home_sets_the_toolbar_and_strips_decorations(tmp_path):
+    from uwp.vnc import _write_fluxbox_home
+
+    home = _write_fluxbox_home(tmp_path / "wm", toolbar_height=38)
+
+    init = (home / ".fluxbox" / "init").read_text()
+    assert "session.screen0.toolbar.height: 38" in init
+    assert "session.screen0.toolbar.visible: true" in init
+    assert "session.screen0.toolbar.placement: BottomCenter" in init
+    apps = (home / ".fluxbox" / "apps").read_text()
+    assert "[Deco] {NONE}" in apps
+    assert "class=Chromium" in apps
 
 
 def test_hook_command_survives_awkward_paths(tmp_path):

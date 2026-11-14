@@ -201,6 +201,7 @@ def browser_flags(
     proxy_url: str | None,
     headless: bool,
     no_sandbox: bool = False,
+    window_size: tuple[int, int] | None = None,
 ) -> list[str]:
     """Fingerprint-chromium launch flags in the order fixed by the spec."""
     flags = [
@@ -221,6 +222,13 @@ def browser_flags(
         "--no-default-browser-check",
         "--disable-features=Translate",
     ]
+    # Measured: --start-maximized is ignored when --fingerprint is set, so the
+    # geometry has to be pinned explicitly. Headless has no window to size.
+    if not headless and window_size is not None:
+        flags += [
+            f"--window-size={window_size[0]},{window_size[1]}",
+            "--window-position=0,0",
+        ]
     if headless:
         flags.append("--headless=new")
     if no_sandbox:

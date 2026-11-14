@@ -49,6 +49,50 @@ UNSAFE_PORTS = frozenset(
     }
 )
 
+# The VNC desktop mimics Windows 10 at 1080p: a 40 px taskbar leaves a
+# 1920x1040 work area. fluxbox adds 2 px of border, hence 38.
+DESKTOP_SIZE = (1920, 1080)
+TASKBAR_HEIGHT = 38
+WORKAREA = (DESKTOP_SIZE[0], DESKTOP_SIZE[1] - TASKBAR_HEIGHT - 2)
+
+_FLUXBOX_INIT = """\
+session.styleFile: /usr/share/fluxbox/styles/Squared_for_Debian
+session.appsFile: {home}/.fluxbox/apps
+session.screen0.toolbar.height: {toolbar}
+session.screen0.toolbar.widthPercent: 100
+session.screen0.toolbar.placement: BottomCenter
+session.screen0.toolbar.visible: true
+session.screen0.toolbar.tools: workspacename, clock, iconbar, systemtray
+session.screen0.strftimeFormat: %H:%M
+"""
+
+# Chromium draws its own tab strip, so a fluxbox frame is dead pixels. Without
+# this, a 1040-high window loses another ~20 px to a title bar.
+_FLUXBOX_APPS = """\
+[app] (class=Chromium)
+  [Deco] {NONE}
+[end]
+"""
+
+
+def _write_fluxbox_home(home: Path, toolbar_height: int) -> Path:
+    """Write the WM config fluxbox reads from ``$HOME/.fluxbox``.
+
+    fluxbox honours ``$HOME/.fluxbox/init``; ``-rc`` picks up ``appsFile`` but
+    silently ignores ``toolbar.height``, so the files must live here.
+    """
+    config = home / ".fluxbox"
+    config.mkdir(parents=True, exist_ok=True)
+    try:
+        (config / "apps").write_text(_FLUXBOX_APPS)
+        (config / "init").write_text(
+            _FLUXBOX_INIT.format(home=home, toolbar=toolbar_height)
+        )
+    except BaseException:
+        shutil.rmtree(home, ignore_errors=True)
+        raise
+    return home
+
 
 class ProcessHandle(Protocol):
     """A started VNC stack; ``stop`` must be idempotent."""
@@ -105,11 +149,14 @@ class _Stack:
         password_file: Path,
         client_marker: Path | None = None,
         log_file: Any = None,
+        *,
+        wm_home: Path | None = None,
     ) -> None:
         self.processes = processes
         self.password_file = password_file
         self.client_marker = client_marker
         self.log_file = log_file
+        self.wm_home = wm_home
 
     def client_count(self) -> int:
         """Live client count recorded by the x11vnc accept/gone hooks."""
@@ -144,6 +191,8 @@ class _Stack:
             self.client_marker.unlink(missing_ok=True)
         if self.log_file is not None:
             self.log_file.close()
+        if self.wm_home is not None:
+            shutil.rmtree(self.wm_home, ignore_errors=True)
 
 
 async def _spawn(
@@ -233,6 +282,7 @@ def _default_process_factory(
                 proxy_url,
                 headless=False,
                 no_sandbox=settings.no_sandbox,
+                window_size=WORKAREA,
             )
             if not flag.startswith("--headless")
         ]
@@ -245,7 +295,7 @@ def _default_process_factory(
         # Each process announces its own failure on stderr; a shared log turns
         # the old silent "noVNC shows an empty page" into a readable reason.
         commands = [
-            ["Xvfb", screen, "-screen", "0", "1920x1080x24"],
+            ["Xvfb", screen, "-screen", "0", f"{DESKTOP_SIZE[0]}x{DESKTOP_SIZE[1]}x24"],
             ["fluxbox", "-display", screen],
             [executable, *args, url],
             [
@@ -273,8 +323,19 @@ def _default_process_factory(
             ],
         ]
         processes: list[asyncio.subprocess.Process] = []
-        stack = _Stack(processes, password_file, client_marker, log_file)
+        stack: _Stack | None = None
         try:
+            # fluxbox reads its toolbar settings from ``$HOME/.fluxbox``, so it
+            # gets a throwaway HOME; the browser keeps the real one for its
+            # profile paths.
+            wm_home = _write_fluxbox_home(
+                password_file.parent / f"wm-{profile.id or 'x'}-{port}",
+                TASKBAR_HEIGHT,
+            )
+            wm_env = {**os.environ, "HOME": str(wm_home)}
+            stack = _Stack(
+                processes, password_file, client_marker, log_file, wm_home=wm_home
+            )
             # Xvfb first and wait for its socket: fluxbox, x11vnc and Chromium
             # all abort with "cannot open display" if they lose that race.
             processes.append(
@@ -287,7 +348,12 @@ def _default_process_factory(
                     f"Xvfb не поднял дисплей :{display}: {_log_tail(log_name)}"
                 )
             for command in commands[1:]:
-                env = browser_env if command[0] == executable else None
+                if command[0] == executable:
+                    env = browser_env
+                elif command[0] == "fluxbox":
+                    env = wm_env
+                else:
+                    env = None
                 processes.append(await _spawn(command, stderr=log_file, env=env))
             # x11vnc binds its RFB port late; noVNC would show a blank page.
             if not await _wait_for_port(vnc_port, READY_TIMEOUT):
@@ -296,7 +362,10 @@ def _default_process_factory(
                 )
         except BaseException:
             # Do not leak a half-started stack: kill whatever did start.
-            await stack.stop()
+            if stack is not None:
+                await stack.stop()
+            else:
+                log_file.close()
             raise
         return stack
 
