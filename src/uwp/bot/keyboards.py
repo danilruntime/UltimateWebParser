@@ -1,6 +1,11 @@
 """Inline keyboards used by the bot."""
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+)
 
 from uwp.bot import texts
 
@@ -107,4 +112,25 @@ def menu_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="👤 Профили", callback_data="profiles:list")],
             [InlineKeyboardButton(text="🌍 Прокси", callback_data="proxies:list")],
         ]
+    )
+
+
+BTN_SITES = "🌐 Сайты"
+BTN_PROFILES = "👤 Профили"
+BTN_PROXIES = "🌍 Прокси"
+BTN_HELP = "❓ Помощь"
+
+
+def reply_menu_kb() -> ReplyKeyboardMarkup:
+    """The permanent keyboard under the chat input.
+
+    ``resize_keyboard`` keeps it two rows tall on a phone instead of letting
+    Telegram stretch each button to full width.
+    """
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_SITES), KeyboardButton(text=BTN_PROFILES)],
+            [KeyboardButton(text=BTN_PROXIES), KeyboardButton(text=BTN_HELP)],
+        ],
+        resize_keyboard=True,
     )

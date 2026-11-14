@@ -95,3 +95,22 @@ async def test_proxies_kb_and_vnc_kb():
 
     flat = [b.callback_data for row in vnc_session_kb(9).inline_keyboard for b in row]
     assert flat == ["vnc:done:9", "vnc:extend:9"]
+
+
+def test_reply_menu_kb_is_a_two_by_two_keyboard():
+    from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
+
+    from uwp.bot import keyboards
+
+    kb = keyboards.reply_menu_kb()
+
+    assert isinstance(kb, ReplyKeyboardMarkup)
+    texts = [b.text for row in kb.keyboard for b in row]
+    assert texts == [
+        keyboards.BTN_SITES,
+        keyboards.BTN_PROFILES,
+        keyboards.BTN_PROXIES,
+        keyboards.BTN_HELP,
+    ]
+    assert all(isinstance(b, KeyboardButton) for row in kb.keyboard for b in row)
+    assert kb.resize_keyboard is True
