@@ -58,6 +58,7 @@ WORKAREA = (DESKTOP_SIZE[0], DESKTOP_SIZE[1] - TASKBAR_HEIGHT - 2)
 _FLUXBOX_INIT = """\
 session.styleFile: /usr/share/fluxbox/styles/Squared_for_Debian
 session.appsFile: {home}/.fluxbox/apps
+session.screen0.defaultDeco: NONE
 session.screen0.toolbar.height: {toolbar}
 session.screen0.toolbar.widthPercent: 100
 session.screen0.toolbar.placement: BottomCenter
@@ -68,6 +69,12 @@ session.screen0.strftimeFormat: %H:%M
 
 # Chromium draws its own tab strip, so a fluxbox frame is dead pixels. Without
 # this, a 1040-high window loses another ~20 px to a title bar.
+#
+# ``defaultDeco`` above is the load-bearing setting: the rule below only lands
+# on windows fluxbox sees *after* it reads this file, and the browser is
+# spawned right after the WM, so the rule usually loses that race (measured in
+# the image: ``_NET_FRAME_EXTENTS`` stayed ``1,1,20,4`` three times out of
+# three). The per-class rule stays as a second line of defence.
 _FLUXBOX_APPS = """\
 [app] (class=Chromium)
   [Deco] {NONE}

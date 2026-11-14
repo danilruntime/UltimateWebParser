@@ -353,6 +353,10 @@ def test_fluxbox_home_sets_the_toolbar_and_strips_decorations(tmp_path):
     assert "session.screen0.toolbar.height: 38" in init
     assert "session.screen0.toolbar.visible: true" in init
     assert "session.screen0.toolbar.placement: BottomCenter" in init
+    # Measured in the image: the ``apps`` rule loses a race when fluxbox and
+    # Chromium start back to back, leaving a 1/1/20/4 frame. ``defaultDeco``
+    # is read from the config before any window is mapped, so it always wins.
+    assert "session.screen0.defaultDeco: NONE" in init
     apps = (home / ".fluxbox" / "apps").read_text()
     assert "[Deco] {NONE}" in apps
     assert "class=Chromium" in apps
