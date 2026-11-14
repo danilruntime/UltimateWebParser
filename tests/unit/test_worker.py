@@ -316,9 +316,13 @@ class SlowRunner:
 
     def __init__(self, delay: float = 0.2):
         self.delay = delay
+        self.started = asyncio.Event()
         self.finished = asyncio.Event()
 
     async def run(self, site, job, proxy, cancel=None):
+        # Set before the sleep so the crashing slot can land its failure while
+        # this run is in flight, not before it has claimed its job.
+        self.started.set()
         await asyncio.sleep(self.delay)
         self.finished.set()
         return RunOutcome(status=RunStatus.ok)
@@ -338,6 +342,9 @@ async def test_a_crashed_slot_does_not_abort_a_sibling_run(env):
         nonlocal calls
         calls += 1
         if calls == 1:
+            # Crash only once the sibling is inside ``runner.run`` with a
+            # claimed job, which is the state a cancellation would strand.
+            await asyncio.wait_for(runner.started.wait(), 5)
             stop.set()  # one iteration is enough; the loop must not spin
             raise RuntimeError("boom")
         return await real_process_one(now)
@@ -349,6 +356,7 @@ async def test_a_crashed_slot_does_not_abort_a_sibling_run(env):
 
     # The other slot owned a real claimed job. It must complete normally:
     # under TaskGroup it was cancelled mid-run and the row stayed `running`.
+    assert runner.started.is_set()
     assert runner.finished.is_set()
     job = await jobs.get(job_id)
     assert job is not None
