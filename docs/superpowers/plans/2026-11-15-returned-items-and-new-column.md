@@ -98,10 +98,10 @@ Files: `src/uwp/reports.py`, `tests/unit/test_reports.py`, `README.md`.
 
 ## Verification
 
-Full suite `474 passed, 3 skipped`; `ruff check src tests` clean. Mutation-tested:
+Full suite `475 passed, 3 skipped`; `ruff check src tests` clean. Mutation-tested:
 sourcing new keys from `result.created` only, dropping `settle`, reinstating the
-mode gate, counting legacy `NULL` rows as vanished, and never settling them —
-each makes the new tests fail.
+mode gate, counting legacy `NULL` rows as vanished, never settling them, and
+settling on a partial run — each makes the new tests fail.
 
 Live, in the running container:
 
@@ -109,6 +109,12 @@ Live, in the running container:
 |---|---|---|---|
 | 40 (post-upgrade) | 20 | 0 | 209 legacy rows settled to `absent = 1`, none counted |
 | 41 (two rows flagged by hand) | 20 | 2 | `Новое` = «да» for exactly those two |
+| 42 (real schedule, ~11 h later) | 24 | 5 | 5 games back on sale; all five had `first_seen_at` two days earlier, so they were genuine comebacks, not new titles |
 
 Header of the delivered report ends with `…, Платформы, Обложка, Новое`; no run
 of the upgrade reported a phantom mass disappearance.
+
+A partial run must not settle presence: its row list is truncated by the very
+error that made it partial. Run 39 in the table above was written before that
+guard existed; the codebase now leaves presence untouched when
+`complete=False`, pinned by `test_a_partial_run_does_not_mark_unseen_rows_absent`.
