@@ -480,6 +480,88 @@ async def test_wait_for_browser_accepts_a_live_browser_with_a_lock(tmp_path):
     assert await vnc._wait_for_browser(Running(), profile, 5.0) is True
 
 
+async def test_default_factory_fails_when_websockify_cannot_bind(tmp_path, monkeypatch):
+    """Measured: a second stack on the same port left a dead 6001 link.
+
+    websockify exits with ``OSError: [Errno 98] Address already in use`` while
+    Xvfb, Chromium and x11vnc keep running, so the session was reported as
+    started and the admin got a link that resets the connection.
+    """
+    from uwp import vnc
+
+    settings, profile = await _factory_env(tmp_path)
+    spawned: list[FakeSpawned] = []
+
+    async def fake_spawn(command, **kw):
+        # The noVNC listener cannot take the port; everything else is healthy.
+        process = FakeSpawned(
+            command, returncode=1 if command[0] == "websockify" else None
+        )
+        spawned.append(process)
+        return process
+
+    monkeypatch.setattr(vnc, "_spawn", fake_spawn)
+
+    async def ready(*_args, **_kwargs):
+        return True
+
+    monkeypatch.setattr(vnc, "_wait_for_path", ready)
+    # x11vnc's RFB port is fine; only the published noVNC port is dead.
+    monkeypatch.setattr(vnc, "_wait_for_browser", ready)
+
+    with pytest.raises(RuntimeError, match="websockify"):
+        await vnc._default_process_factory(settings)(
+            display=100,
+            port=6100,
+            password="pw",
+            profile=profile,
+            url="https://example.com",
+            proxy_url=None,
+        )
+
+    assert all(p.terminated for p in spawned[1:] if p.returncode is None)
+
+
+async def test_wait_for_websockify_reports_an_exit(tmp_path):
+    """A dead listener must not pass for a live one, even if the port answers."""
+    from uwp import vnc
+
+    class Exited:
+        returncode = 1
+
+    assert await vnc._wait_for_websockify(Exited(), 6100, 5.0) is False
+
+
+async def test_wait_for_websockify_needs_an_open_port(tmp_path):
+    from uwp import vnc
+
+    class Running:
+        returncode = None
+
+    port = 6100
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    # Nothing listens there now.
+    assert await vnc._wait_for_websockify(Running(), port, 0.3) is False
+
+
+async def test_wait_for_websockify_accepts_a_listening_process(tmp_path):
+    from uwp import vnc
+
+    class Running:
+        returncode = None
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    try:
+        assert await vnc._wait_for_websockify(Running(), port, 5.0) is True
+    finally:
+        listener.close()
+
+
 async def test_client_count_reads_the_hook_marker(tmp_path):
     from uwp.vnc import _Stack
 

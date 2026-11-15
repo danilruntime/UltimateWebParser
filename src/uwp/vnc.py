@@ -287,6 +287,37 @@ async def _wait_for_browser(
     return process.returncode is None
 
 
+async def _wait_for_websockify(
+    process: asyncio.subprocess.Process, port: int, timeout: float
+) -> bool:
+    """Wait for the noVNC listener, or report that it could not take the port.
+
+    ``websockify`` dies at once with ``OSError: [Errno 98] Address already in
+    use`` when something else owns the port — typically the other deployment's
+    docker-proxy. Xvfb, Chromium and x11vnc stay healthy, so without this check
+    the session was recorded as started and the admin got a link that resets
+    the connection.
+    """
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        if process.returncode is not None:
+            return False
+        try:
+            _reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        except OSError:
+            await asyncio.sleep(0.05)
+            continue
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except OSError:
+            pass
+        return True
+    # The published port is the whole point of this process: no listener means
+    # the link would not work, whatever the process is still doing.
+    return False
+
+
 def _log_tail(path: Path, limit: int = 600) -> str:
     try:
         text = path.read_text(encoding="utf-8", errors="replace").strip()
@@ -385,6 +416,7 @@ def _default_process_factory(
         ]
         processes: list[asyncio.subprocess.Process] = []
         browser_process: asyncio.subprocess.Process | None = None
+        websockify_process: asyncio.subprocess.Process | None = None
         stack: _Stack | None = None
         try:
             # fluxbox reads its toolbar settings from ``$HOME/.fluxbox``, so it
@@ -420,6 +452,8 @@ def _default_process_factory(
                 processes.append(process)
                 if command[0] == executable:
                     browser_process = process
+                elif command[0] == "websockify":
+                    websockify_process = process
             # A browser that died on the profile lock leaves Xvfb and x11vnc
             # healthy, so the stack would report success over an empty desktop.
             assert browser_process is not None, "the command list always starts a browser"
@@ -428,6 +462,15 @@ def _default_process_factory(
             ):
                 raise RuntimeError(
                     f"браузер не запустился: {_log_tail(log_name, 2000)}"
+                )
+            # A taken noVNC port kills websockify but leaves the X stack up, so
+            # the published link would reset the connection with no explanation.
+            assert websockify_process is not None, "the command list always starts websockify"
+            if not await _wait_for_websockify(
+                websockify_process, port, READY_TIMEOUT
+            ):
+                raise RuntimeError(
+                    f"websockify не занял порт {port}: {_log_tail(log_name, 2000)}"
                 )
             if not await _wait_for_port(vnc_port, READY_TIMEOUT):
                 raise RuntimeError(
