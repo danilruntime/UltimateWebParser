@@ -395,3 +395,38 @@ async def test_run_raises_blocked_and_saves_artifact_on_empty_first_page(tmp_pat
     assert excinfo.value.message == "Steam returned no results (captcha or region block?)"
     assert saved and saved[0][0] == "empty.html"
     assert b"captcha" in saved[0][1]
+
+
+RU_FIXTURE = Path(__file__).parent.parent / "fixtures" / "steam_search_ru.html"
+
+
+def test_a_russian_page_yields_currency_and_reviews():
+    """Captured from ``?cc=ru&l=russian``: rubles, and a Russian tooltip.
+
+    Before the fix every row came back with ``currency == ""`` and both review
+    fields ``None``, so switching the region in the bot's settings produced an
+    export where half the columns were blank.
+    """
+    rows = parse_search_page(
+        RU_FIXTURE.read_text(encoding="utf-8"),
+        SteamSettings(region="ru", language="russian"),
+    )
+
+    assert [r["title"] for r in rows] == ["Euro Truck Simulator 2", "Bodycam"]
+    first = rows[0]
+    assert first["currency"] == "RUB"
+    assert first["price_final"] == 317.0 and first["price_original"] == 1269.0
+    assert first["review_summary"] == "Крайне положительные"
+    assert first["review_percent"] == 96 and first["review_count"] == 139634
+
+
+async def test_run_uses_the_configured_region_and_language(tmp_path: Path):
+    """The settings reach ``build_search_url`` and the price/review parsing."""
+    page = _FakePage([RU_FIXTURE.read_text(encoding="utf-8")])
+    ctx, _ = _ctx(page, tmp_path, SteamSettings(region="ru", language="russian", max_pages=1))
+
+    result = await SteamDealsParser().run(ctx)
+
+    assert "cc=ru" in page.goto_calls[0][0] and "l=russian" in page.goto_calls[0][0]
+    assert {row["currency"] for row in result.rows} == {"RUB"}
+    assert all(row["review_percent"] is not None for row in result.rows)
