@@ -319,11 +319,17 @@ class Runner:
         ``external_key`` is the dedup key the parser owns (for Steam it is the
         app id). It stays on the in-memory rows so the report can flag new and
         changed lines, but is popped from the stored payload.
+
+        A row counts as new when it was never stored (``created``) or when the
+        previous run did not see it (``returned``): a discount that ends and
+        comes back must show up again. Rows the run did not see are flagged
+        afterwards, so they can return on the next run and so ``vanished``
+        counts this run's disappearances instead of the whole history.
         """
         now = utcnow()
         parser = self.registry.get(site.parser_key)
         tracked = [column.key for column in parser.columns] if parser else []
-        before = await self.items.keys(site.id)
+        present = await self.items.present_keys(site.id)
         new_keys: set[str] = set()
         changed_keys: set[str] = set()
         seen: set[str] = set()
@@ -339,14 +345,16 @@ class Runner:
             row["external_key"] = key
             payload = {name: value for name, value in row.items() if name != "external_key"}
             previous = await self.items.previous_payload(site.id, key)
-            if await self.items.upsert(site.id, key, payload, now):
+            result = await self.items.upsert(site.id, key, payload, now)
+            if result.is_new:
                 new_keys.add(key)
             elif previous is not None and _tracked_view(previous, tracked) != _tracked_view(
                 payload, tracked
             ):
                 changed_keys.add(key)
 
-        return new_keys, changed_keys, len(before - seen)
+        await self.items.mark_absent(site.id, present - seen)
+        return new_keys, changed_keys, len(present - seen)
 
 
 

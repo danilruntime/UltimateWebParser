@@ -126,13 +126,9 @@ def export_report(
         changed_keys=changed_keys,
         vanished=vanished,
     )
-    # The «Новое» column belongs to the change report only.
-    flagged = (
-        new_keys if ExportMode(str(site.export_mode)) is ExportMode.changes else None
-    )
-    path = write_report(
-        _unique_path(directory / filename), rows, parser.columns, meta, flagged
-    )
+    # «Новое» describes the data, not the mode: ``always`` still writes a full
+    # snapshot, but every snapshot says which rows arrived since the last run.
+    path = write_report(_unique_path(directory / filename), rows, parser.columns, meta, new_keys)
     prune_reports(directory, settings.exports_retention)
     log.info("wrote report %s for site %s", path, site.slug)
     return path

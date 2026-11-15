@@ -43,6 +43,10 @@ class FakeParser(BaseParser):
     columns: ClassVar[list[Column]] = [Column("title", "Title")]
     behavior = "ok"
     seen_ctx: ClassVar[ParseContext | None] = None
+    rows: ClassVar[list[dict]] = [
+        {"external_key": "1", "title": "A"},
+        {"external_key": "2", "title": "B"},
+    ]
 
     async def run(self, ctx: ParseContext) -> ParseResult:
         FakeParser.seen_ctx = ctx
@@ -59,7 +63,7 @@ class FakeParser(BaseParser):
         if self.behavior == "slow":
             await asyncio.sleep(10)
         return ParseResult(
-            rows=[{"external_key": "1", "title": "A"}, {"external_key": "2", "title": "B"}],
+            rows=[dict(row) for row in FakeParser.rows],
             meta={"pages": 1},
             notes="fine",
         )
@@ -106,6 +110,10 @@ class FakeBridge:
 @pytest.fixture
 async def env(tmp_path):
     FakeParser.behavior = "ok"
+    FakeParser.rows = [
+        {"external_key": "1", "title": "A"},
+        {"external_key": "2", "title": "B"},
+    ]
     FakeParser.seen_ctx = None
     settings = load_settings({"UWP_DATA_DIR": str(tmp_path), "UWP_RUN_TIMEOUT": "1"})
     db = await Database.in_memory()
@@ -171,6 +179,43 @@ async def test_second_run_counts_no_new_items(env):
     await runner.run(site, job, proxy=None)
     out = await runner.run(site, job, proxy=None)
     assert out.status == RunStatus.ok and out.new_count == 0
+
+
+async def test_a_row_that_comes_back_is_new_again(env):
+    runner, site, job, _, db, *_ = env
+    await runner.run(site, job, proxy=None)
+
+    # The sale ends: Steam's search page drops the game entirely.
+    FakeParser.rows = []
+    gone = await runner.run(site, job, proxy=None)
+    assert gone.status == RunStatus.ok and gone.new_count == 0
+
+    # The same sale returns with identical data.
+    FakeParser.rows = [
+        {"external_key": "1", "title": "A"},
+        {"external_key": "2", "title": "B"},
+    ]
+    back = await runner.run(site, job, proxy=None)
+
+    assert back.status == RunStatus.ok
+    assert back.new_count == 2
+    # «Новое» is "not in the previous run", not "never seen before".
+    assert await ItemsRepo(db).count(1) == 2
+
+
+async def test_vanished_counts_only_rows_missing_from_this_run(env):
+    runner, site, job, *_ = env
+    await runner.run(site, job, proxy=None)  # stores rows 1 and 2
+
+    FakeParser.rows = [{"external_key": "1", "title": "A"}]
+    _, _, vanished = await runner._save_rows(site, list(FakeParser.rows))
+    assert vanished == 1
+
+    # Row 2 has been gone since the previous run, so it is not a *new*
+    # disappearance: the old code compared against all history and kept
+    # reporting 1 on every run forever.
+    _, _, vanished = await runner._save_rows(site, list(FakeParser.rows))
+    assert vanished == 0
 
 
 async def test_login_required_is_not_retried_and_keeps_partial(env):

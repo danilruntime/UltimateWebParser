@@ -81,6 +81,44 @@ def test_report_lands_in_a_per_site_directory(settings):
     assert path.name == "fake_parser_steam_skidki_2026-11-13_15-30.ods"
 
 
+def test_always_mode_still_marks_new_rows(settings):
+    path = export_report(
+        settings,
+        site=_site(export_mode=ExportMode.always),
+        parser=FakeParser(),
+        rows=ROWS,
+        profile=None,
+        proxy=None,
+        when=WHEN,
+        duration_ms=1,
+        new_keys={"2"},
+        changed_keys=set(),
+    )
+
+    assert path is not None
+    from odf.opendocument import load
+    from odf.table import Table, TableCell, TableRow
+    from odf.text import P
+
+    doc = load(str(path))
+    data = next(
+        t for t in doc.spreadsheet.getElementsByType(Table) if t.getAttribute("name") == "Данные"
+    )
+    rows = data.getElementsByType(TableRow)
+    header = [
+        "".join(str(p) for p in c.getElementsByType(P))
+        for c in rows[0].getElementsByType(TableCell)
+    ]
+    # «Новое» describes the data, not the mode: an ``always`` site that has a
+    # new game today must say so in today's full snapshot.
+    assert header[-1] == "Новое"
+    flags = [
+        "".join(str(p) for p in row.getElementsByType(TableCell)[-1].getElementsByType(P))
+        for row in rows[1:]
+    ]
+    assert flags == ["нет", "да"]
+
+
 def test_never_mode_writes_nothing(settings):
     path = export_report(
         settings,

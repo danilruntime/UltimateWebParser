@@ -307,13 +307,72 @@ async def test_run_crud(db):
 async def test_items_upsert(db):
     sites, items = SitesRepo(db), ItemsRepo(db)
     sid = await sites.create(make_site("s"))
-    assert await items.upsert(sid, "k1", {"price": 10}, NOW) is True
-    assert await items.upsert(sid, "k1", {"price": 12}, NOW + timedelta(hours=1)) is False
+    assert (await items.upsert(sid, "k1", {"price": 10}, NOW)).created is True
+    assert (await items.upsert(sid, "k1", {"price": 12}, NOW + timedelta(hours=1))).created is False
     assert await items.count(sid) == 1
     assert await items.previous_payload(sid, "k1") == {"price": 12}
     assert await items.previous_payload(sid, "missing") is None
-    assert await items.upsert(sid, "k2", {"price": 1}, NOW) is True
+    assert (await items.upsert(sid, "k2", {"price": 1}, NOW)).created is True
     assert await items.count(sid) == 2
+
+
+async def test_items_upsert_reports_a_returned_row_as_new(db):
+    sites, items = SitesRepo(db), ItemsRepo(db)
+    sid = await sites.create(make_site("s"))
+
+    first = await items.upsert(sid, "k1", {"price": 10}, NOW)
+    assert (first.created, first.returned, first.is_new) == (True, False, True)
+
+    again = await items.upsert(sid, "k1", {"price": 10}, NOW + timedelta(minutes=5))
+    assert (again.created, again.returned, again.is_new) == (False, False, False)
+
+    await items.mark_absent(sid, ["k1"])
+    back = await items.upsert(sid, "k1", {"price": 10}, NOW + timedelta(minutes=10))
+    assert (back.created, back.returned, back.is_new) == (False, True, True)
+
+
+async def test_items_present_keys_hold_the_previous_run(db):
+    sites, items = SitesRepo(db), ItemsRepo(db)
+    sid = await sites.create(make_site("s"))
+
+    for key in ("a", "b", "c"):
+        await items.upsert(sid, key, {"v": key}, NOW)
+    assert await items.present_keys(sid) == {"a", "b", "c"}
+
+    # A run that sees only ``a``: ``b`` and ``c`` are gone as of this run.
+    await items.mark_absent(sid, ["b", "c"])
+    assert await items.present_keys(sid) == {"a"}
+
+    # ``b`` comes back: present again, and reported as new.
+    come_back = await items.upsert(sid, "b", {"v": "b"}, NOW + timedelta(minutes=10))
+    assert come_back.is_new is True
+    assert await items.present_keys(sid) == {"a", "b"}
+
+
+async def test_migration_backfills_absent_for_history(db, monkeypatch):
+    from uwp.db import database as database_module
+
+    real = database_module._load_migrations
+    # Stop at the schema this feature was designed against: no ``absent`` yet.
+    monkeypatch.setattr(
+        database_module, "_load_migrations", lambda: [m for m in real() if m[0] <= 3]
+    )
+    await db.migrate()
+    sid = await SitesRepo(db).create(make_site("s"))
+    await db.execute(
+        "INSERT INTO items (site_id, external_key, payload, first_seen_at, last_seen_at)"
+        " VALUES (?, 'old', '{}', ?, ?)",
+        (sid, "2026-11-01T00:00:00Z", "2026-11-01T00:00:00Z"),
+    )
+
+    monkeypatch.setattr(database_module, "_load_migrations", real)
+    await db.migrate()
+
+    row = await db.fetchone("SELECT absent FROM items WHERE external_key = 'old'")
+    # Presence was never recorded for history, so it must read as neither
+    # vanished nor returned on the first run after the upgrade.
+    assert row["absent"] is None
+    assert await ItemsRepo(db).present_keys(sid) == set()
 
 
 async def test_items_upsert_keeps_first_seen(db):
