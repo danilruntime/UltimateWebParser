@@ -110,8 +110,60 @@ async def test_migrate_creates_all_tables(db):
     } <= names
 
 
+async def test_vnc_sessions_have_no_dead_token(db):
+    """``token`` was generated per session but never checked by anything."""
+    rows = await db.fetchall("PRAGMA table_info(vnc_sessions)")
+    columns = {row["name"] for row in rows}
+
+    assert "token" not in columns
+    assert {"password", "status", "url", "proxy_id"} <= columns
+
+
 async def test_foreign_keys_enabled(db):
     assert (await db.fetchone("PRAGMA foreign_keys"))[0] == 1
+
+
+async def test_the_database_file_is_private(tmp_path):
+    """``data/uwp.db`` holds proxy/VNC passwords: no group/other read bit."""
+    from pathlib import Path
+
+    from uwp.db.database import Database
+
+    path = tmp_path / "data" / "uwp.db"
+    db = Database(path)
+    await db.connect()
+    await db.migrate()
+    await db.execute(
+        "INSERT INTO admins (telegram_id, added_at) VALUES (?, ?)", (1, "2026-11-13T00:00:00Z")
+    )
+    try:
+        assert Path(path).stat().st_mode & 0o077 == 0
+        # WAL/SHM sidecars are created by SQLite on first write and inherit the
+        # process umask, not the mode of the main file.
+        for sidecar in (Path(f"{path}-wal"), Path(f"{path}-shm")):
+            if sidecar.exists():
+                assert sidecar.stat().st_mode & 0o077 == 0, sidecar
+    finally:
+        await db.close()
+
+
+async def test_the_write_ahead_log_does_not_leak_the_database(tmp_path):
+    """WAL is a second copy of every page, secrets included."""
+    from pathlib import Path
+
+    from uwp.db.database import Database
+
+    path = tmp_path / "uwp.db"
+    db = Database(path)
+    await db.connect()
+    await db.migrate()
+    await db.execute(
+        "INSERT INTO admins (telegram_id, added_at) VALUES (?, ?)", (1, "2026-11-13T00:00:00Z")
+    )
+    try:
+        assert Path(f"{path}-wal").stat().st_mode & 0o077 == 0
+    finally:
+        await db.close()
 
 
 async def test_execute_returns_lastrowid(db):
@@ -476,3 +528,58 @@ async def test_admins(db):
     assert await repo.list() == [10, 20]
     await repo.remove(10)
     assert await repo.list() == [20]
+
+
+async def test_migration_005_drops_the_token_and_blanks_finished_passwords(
+    monkeypatch,
+):
+    """The dead ``token`` column must go without losing sessions or the FK.
+
+    SQLite cannot drop a UNIQUE column in place, so the table is rebuilt; a
+    rebuild that forgets the foreign key would silently unhook sessions from
+    their profiles, and one that keeps passwords of finished sessions would
+    leave the very secret the migration exists to remove.
+    """
+    from uwp.db import database as database_module
+
+    real = database_module._load_migrations
+    # Start from the schema this migration was written against.
+    monkeypatch.setattr(
+        database_module, "_load_migrations", lambda: [m for m in real() if m[0] <= 4]
+    )
+    db = await Database.in_memory()
+    await db.migrate()
+    pid = await db.execute(
+        """INSERT INTO profiles (name, kind, seed, platform, brand, brand_version,
+               timezone, locale, user_data_dir, status)
+           VALUES ('p', 'persistent', 1, 'windows', 'Chrome', '150',
+               'Europe/Moscow', 'ru-RU', '/tmp/p', 'free')"""
+    )
+    for port, status in ((6001, "stopped"), (6002, "running")):
+        await db.execute(
+            """INSERT INTO vnc_sessions (profile_id, port, display, password, token,
+                   status, started_at, expires_at)
+               VALUES (?, ?, ?, 'pw', ?, ?, '2026-11-01T00:00:00Z',
+                   '2026-11-01T01:00:00Z')""",
+            (pid, port, port - 5000, f"tok-{port}", status),
+        )
+
+    monkeypatch.setattr(database_module, "_load_migrations", real)
+    await db.migrate()
+    try:
+        columns = {
+            row["name"] for row in await db.fetchall("PRAGMA table_info(vnc_sessions)")
+        }
+        assert "token" not in columns
+        rows = await db.fetchall(
+            "SELECT port, password, status FROM vnc_sessions ORDER BY port"
+        )
+        assert [row["port"] for row in rows] == [6001, 6002]
+        assert rows[0]["password"] == "", "a finished session must not keep its secret"
+        assert rows[1]["password"] == "pw", "a live session still needs its password"
+
+        # The rebuild must keep ``ON DELETE CASCADE``: the profile frees its rows.
+        await db.execute("DELETE FROM profiles WHERE id = ?", (pid,))
+        assert (await db.fetchone("SELECT COUNT(*) AS n FROM vnc_sessions"))["n"] == 0
+    finally:
+        await db.close()

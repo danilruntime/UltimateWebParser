@@ -1,6 +1,10 @@
 """Tests for VNC login sessions: port selection, lifecycle and timeouts."""
 
+import asyncio
+import socket
+import subprocess
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 
@@ -49,9 +53,18 @@ def test_free_port_raises_when_exhausted():
 
 
 def test_vnc_url():
+    # The password lives in the fragment: browsers do not send it to websockify,
+    # so it stays out of its access log and out of any Referer.
     assert (
         vnc_url("example.org", 6042, "abc")
-        == "http://example.org:6042/vnc.html?autoconnect=1&resize=scale&password=abc"
+        == "http://example.org:6042/vnc.html#autoconnect=1&resize=scale&password=abc"
+    )
+
+
+def test_vnc_url_follows_the_public_scheme():
+    """A TLS reverse proxy in front of noVNC needs an ``https`` link."""
+    assert vnc_url("vnc.example.org", 443, "abc", scheme="https").startswith(
+        "https://vnc.example.org:443/vnc.html#"
     )
 
 
@@ -74,6 +87,13 @@ class FakeSpawned:
     def kill(self):
         self.terminated = True
         self.returncode = -9
+
+
+def _dead_lock_on(profile_dir: Path) -> None:
+    """Leave the ``SingletonLock`` of a browser that has already exited."""
+    proc = subprocess.Popen(["true"])
+    proc.wait()
+    (profile_dir / "SingletonLock").symlink_to(f"{socket.gethostname()}-{proc.pid}")
 
 
 async def _pretend_ready(monkeypatch, vnc):
@@ -108,6 +128,33 @@ async def _factory_env(tmp_path):
         user_data_dir=str(tmp_path / "p"),
     )
     return settings, profile
+
+
+async def test_default_factory_clears_a_stale_lock_in_the_profile(tmp_path, monkeypatch):
+    """A parse run killed mid-flight leaves the lock; the login browser removes it."""
+    from uwp import vnc
+
+    settings, profile = await _factory_env(tmp_path)
+    profile_dir = Path(profile.user_data_dir)
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    _dead_lock_on(profile_dir)
+
+    async def fake_spawn(command, **kw):
+        return FakeSpawned(command)
+
+    monkeypatch.setattr(vnc, "_spawn", fake_spawn)
+    await _pretend_ready(monkeypatch, vnc)
+    handle = await vnc._default_process_factory(settings)(
+        display=100,
+        port=6100,
+        password="pw",
+        profile=profile,
+        url="https://example.com",
+        proxy_url=None,
+    )
+
+    assert not (profile_dir / "SingletonLock").is_symlink()
+    await handle.stop()
 
 
 async def test_default_factory_builds_the_full_stack(tmp_path, monkeypatch):
@@ -162,6 +209,10 @@ async def test_default_factory_builds_the_full_stack(tmp_path, monkeypatch):
     # The RFB port must not collide with the published noVNC band.
     rfb_port = int(x11vnc[x11vnc.index("-rfbport") + 1])
     assert not (settings.vnc_port_min <= rfb_port <= settings.vnc_port_max)
+    # The noVNC listener honours the bind address: in host-network mode the
+    # overlay sets it to 127.0.0.1 instead of every host interface.
+    websockify = next(p.command for p in spawned if p.command[0] == "websockify")
+    assert websockify[3] == f"{settings.vnc_listen_host}:6100"
 
     await handle.stop()
     assert all(p.terminated for p in spawned[1:])
@@ -201,6 +252,51 @@ async def test_default_factory_gives_fluxbox_its_own_home(tmp_path, monkeypatch)
 
     await handle.stop()
     assert not wm_home.exists()
+
+
+async def test_default_factory_does_not_hand_app_secrets_to_the_browser(
+    tmp_path, monkeypatch
+):
+    """The login browser is exposed to arbitrary sites; its env is an allowlist.
+
+    ``UWP_BOT_TOKEN`` in ``/proc/<pid>/environ`` would let a compromised page
+    take over the bot, and the same file is readable by anything the noVNC
+    desktop can launch.
+    """
+    from uwp import vnc
+
+    monkeypatch.setenv("UWP_BOT_TOKEN", "123:secret")
+    monkeypatch.setenv("UWP_SECRET_KEY", "k" * 32)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    settings, profile = await _factory_env(tmp_path)
+    envs: dict[str, dict[str, str] | None] = {}
+
+    async def fake_spawn(command, **kw):
+        envs.setdefault(command[0], kw.get("env"))
+        return FakeSpawned(command)
+
+    monkeypatch.setattr(vnc, "_spawn", fake_spawn)
+    await _pretend_ready(monkeypatch, vnc)
+    handle = await vnc._default_process_factory(settings)(
+        display=100,
+        port=6100,
+        password="pw",
+        profile=profile,
+        url="https://example.com",
+        proxy_url=None,
+    )
+
+    for command in (str(settings.browser_path), "fluxbox"):
+        env = envs[command]
+        assert env is not None
+        assert "UWP_BOT_TOKEN" not in env
+        assert "UWP_SECRET_KEY" not in env
+        # Chromium still needs its display and the real HOME for profile paths.
+        assert env["DISPLAY"] == ":100"
+        assert "PATH" in env
+        assert env["HOME"]
+
+    await handle.stop()
 
 
 async def test_password_file_is_removed_when_the_wm_home_fails(tmp_path, monkeypatch):
@@ -417,7 +513,6 @@ async def test_sweep_orphans_fails_rows_left_by_a_dead_worker(env):
             port=6100,
             display=100,
             password="p",
-            token="t",
             status=VncStatus.running,
             expires_at=utcnow() + timedelta(minutes=30),
         )
@@ -427,7 +522,10 @@ async def test_sweep_orphans_fails_rows_left_by_a_dead_worker(env):
     freed = await repo.sweep_orphans()
 
     assert freed == [pid]
-    assert (await repo.get(session_id)).status == VncStatus.failed
+    session = await repo.get(session_id)
+    assert session.status == VncStatus.failed
+    # A dead worker's row is not a place to keep a readable password either.
+    assert session.password == ""
 
 
 async def test_sweep_orphans_leaves_finished_sessions_alone(env):
@@ -439,7 +537,6 @@ async def test_sweep_orphans_leaves_finished_sessions_alone(env):
             port=6100,
             display=100,
             password="p",
-            token="t",
             status=VncStatus.stopped,
             expires_at=utcnow() + timedelta(minutes=30),
         )
@@ -464,7 +561,6 @@ async def test_sweep_orphans_leaves_a_booking_made_by_the_bot_alone(env):
             port=6100,
             display=100,
             password="p",
-            token="t",
             status=VncStatus.requested,
             expires_at=utcnow() + timedelta(minutes=30),
         )
@@ -485,7 +581,6 @@ async def test_sweep_orphans_reports_a_profile_once(env):
                 port=port,
                 display=port - 6000,
                 password="p",
-                token=f"t{port}",
                 status=VncStatus.running,
                 expires_at=utcnow() + timedelta(minutes=30),
             )
@@ -551,8 +646,10 @@ async def test_start_and_stop_session(env):
     )
 
     assert info.port in (6100, 6101)
-    assert len(info.password) == 12
-    assert info.url.startswith(f"http://{settings.public_host}:{info.port}/vnc.html?")
+    # RFB checks only the first 8 characters, so a longer card would show
+    # characters that are not part of the real secret.
+    assert len(info.password) == 8
+    assert info.url.startswith(f"http://{settings.public_host}:{info.port}/vnc.html#")
     assert (await profiles.get(pid)).status == ProfileStatus.login
     assert len(procs) >= 1
 
@@ -746,6 +843,73 @@ async def test_a_reserved_session_remembers_its_proxy(env):
     assert procs[0].kw["proxy_url"] == bridges[0].url
 
 
+async def test_the_vnc_password_is_encrypted_at_rest(env):
+    """The DB is a file an operator copies into backups; the password is a secret."""
+    settings, db, profiles, pid = env
+    settings.secret_key = "k" * 32
+    procs: list[FakeProc] = []
+    mgr = _manager(settings, db, procs)
+
+    info = await mgr.start(await profiles.get(pid), "https://example.com")
+    stored = await db.fetchone(
+        "SELECT password FROM vnc_sessions WHERE id = ?", (info.session_id,)
+    )
+
+    assert stored["password"] != info.password
+    assert stored["password"].startswith("gAAAAA")
+    # The launch itself must still hand the real password to x11vnc.
+    assert procs[0].kw["password"] == info.password
+
+
+async def test_a_finished_session_does_not_keep_its_password(env):
+    """Rows pile up; a stopped session's password must not stay readable forever."""
+    settings, db, profiles, pid = env
+    settings.secret_key = "k" * 32
+    mgr = _manager(settings, db, [])
+    info = await mgr.start(await profiles.get(pid), "https://example.com")
+
+    await mgr.stop(info.session_id)
+
+    stored = await db.fetchone(
+        "SELECT password FROM vnc_sessions WHERE id = ?", (info.session_id,)
+    )
+    assert stored is not None and stored["password"] == ""
+
+
+async def test_old_finished_sessions_are_purged(env):
+    """Even scrubbed rows are useless after a while; drop the whole row."""
+    _settings, db, _profiles, pid = env
+    repo = VncRepo(db)
+    old_id = await repo.create(
+        VncSession(
+            profile_id=pid,
+            port=6100,
+            display=100,
+            password="",
+            status=VncStatus.stopped,
+            started_at=utcnow() - timedelta(days=30),
+            expires_at=utcnow() - timedelta(days=30),
+        )
+    )
+    fresh_id = await repo.create(
+        VncSession(
+            profile_id=pid,
+            port=6101,
+            display=101,
+            password="",
+            status=VncStatus.stopped,
+            started_at=utcnow(),
+            expires_at=utcnow(),
+        )
+    )
+
+    removed = await repo.purge_finished(utcnow() - timedelta(days=7))
+
+    assert removed == 1
+    assert await repo.get(old_id) is None
+    assert await repo.get(fresh_id) is not None
+
+
 async def test_start_requires_persistent_profile(env):
     settings, db, profiles, pid = env
     mgr = _manager(settings, db, [])
@@ -784,6 +948,65 @@ async def test_reserved_session_is_launched_by_tick(env):
     assert (await repo.get(info.session_id)).status == VncStatus.running
     assert len(procs) == 1
     assert procs[0].kw["url"] == "https://store.steampowered.com/"
+
+
+async def test_the_tick_does_not_start_a_second_stack_during_a_slow_launch(env):
+    """Combined mode: ``reserve_and_launch`` and the worker's tick race.
+
+    Measured on the live container: a launch that is still waiting for Xvfb
+    leaves the row ``requested``, so the 5 s tick launched the same session a
+    second time 20 ms later. The second stack died (``Server is already active
+    for display 101``, ``Address already in use``) but its handle replaced the
+    live one, so «Готово» killed nothing: Xvfb, Chromium and websockify kept
+    running and held ``SingletonLock`` on the profile forever, and every parser
+    run then failed with "profile is already in use by another instance".
+    """
+    settings, db, profiles, pid = env
+    procs: list[FakeProc] = []
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_factory(**kw):
+        proc = FakeProc(**kw)
+        procs.append(proc)
+        if len(procs) == 1:  # only the first launch waits for "Xvfb"
+            entered.set()
+            await release.wait()
+        return proc
+
+    mgr = VncManager(
+        settings,
+        ProfilesRepo(db),
+        VncRepo(db),
+        process_factory=slow_factory,
+    )
+    launching = asyncio.create_task(
+        mgr.start(await profiles.get(pid), "https://example.com")
+    )
+    await entered.wait()
+
+    # The real tick runs every 5 s, so it lands inside every slow launch.
+    await mgr.tick(utcnow())
+    release.set()
+    info = await launching
+
+    assert len(procs) == 1, "the tick must not start a second stack"
+    assert mgr._handles[info.session_id].kw is procs[0].kw
+    assert not procs[0].stopped, "the live stack must stay up"
+
+
+async def test_two_concurrent_launches_of_one_session_start_one_stack(env):
+    """The bot's launch and the worker's tick can both see ``requested``."""
+    settings, db, profiles, pid = env
+    procs: list[FakeProc] = []
+    mgr = _manager(settings, db, procs)
+    repo = VncRepo(db)
+    info = await mgr.reserve(await profiles.get(pid), "https://example.com")
+    session = await repo.get(info.session_id)
+
+    await asyncio.gather(mgr.launch(session), mgr.launch(session))
+
+    assert len(procs) == 1
 
 
 async def test_stop_requested_by_another_process_is_honoured(env):

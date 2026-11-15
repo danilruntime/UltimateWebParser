@@ -142,7 +142,7 @@ def test_event_defaults():
 
 
 def test_vnc_session_defaults():
-    v = VncSession(profile_id=1, port=6000, display=100, password="pw", token="tok",
+    v = VncSession(profile_id=1, port=6000, display=100, password="pw",
                    status=VncStatus.requested, started_at=NOW, expires_at=NOW)
     assert v.id is None
     assert v.started_by is None
@@ -150,7 +150,7 @@ def test_vnc_session_defaults():
 
 
 def test_vnc_session_accepts_last_client_at():
-    v = VncSession(profile_id=1, port=6000, display=100, password="pw", token="tok",
+    v = VncSession(profile_id=1, port=6000, display=100, password="pw",
                    status=VncStatus.running, expires_at=NOW, last_client_at=NOW)
     assert v.last_client_at == NOW
 
@@ -161,7 +161,7 @@ def test_pre_insert_timestamps_default_to_utc_now():
     r = Run(job_id=1, site_id=1, status=RunStatus.ok)
     i = Item(site_id=1, external_key="app/1", payload={})
     e = Event(kind="run_finished")
-    v = VncSession(profile_id=1, port=6000, display=100, password="pw", token="tok",
+    v = VncSession(profile_id=1, port=6000, display=100, password="pw",
                    status=VncStatus.running, expires_at=NOW)
     after = utcnow()
     for dt in (j.created_at, r.started_at, i.first_seen_at, i.last_seen_at,

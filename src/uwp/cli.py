@@ -275,12 +275,25 @@ def cmd_doctor(settings: Settings, quiet: bool = False, offline: bool = False) -
             True,
             "не задан (UWP_TELEGRAM_PROXY): нужен там, где api.telegram.org недоступен",
         )
-    check(
-        "UWP_SECRET_KEY",
-        bool(settings.secret_key),
-        "не задан: пароли прокси хранятся открыто",
-        warning=True,
-    )
+    if not settings.secret_key:
+        check(
+            "UWP_SECRET_KEY",
+            False,
+            "не задан: пароли прокси хранятся открыто",
+            warning=True,
+        )
+    elif len(settings.secret_key) < 16:
+        # PBKDF2 makes guessing expensive, but a 4-character secret is still
+        # guessable; a leaked DB would give the attacker an offline oracle.
+        check(
+            "UWP_SECRET_KEY",
+            False,
+            f"всего {len(settings.secret_key)} символов: нужен длинный "
+            "случайный ключ (32+ символа)",
+            warning=True,
+        )
+    else:
+        check("UWP_SECRET_KEY", True)
 
     try:
         async def action(db) -> int:
@@ -810,6 +823,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Entry point; returns a process exit code."""
+    # Profiles, the database and its WAL/SHM sidecars, reports and VNC logs are
+    # all written by this process. The default 022 umask would make them
+    # world-readable on the host (``./data`` is a bind mount).
+    os.umask(0o077)
     logging.basicConfig(
         level=os.environ.get("UWP_LOG_LEVEL", "WARNING"),
         format="%(levelname)s %(name)s: %(message)s",

@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-import os
 import secrets
 import shlex
 import shutil
@@ -18,17 +17,20 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
+from uwp import secretbox
+from uwp.browser import clear_stale_singleton_lock
 from uwp.config import Settings
 from uwp.db.repo.profiles import ProfilesRepo
 from uwp.db.repo.vnc import VncRepo
 from uwp.domain import Profile, ProfileKind, ProfileStatus, VncSession, VncStatus
+from uwp.env import browser_env
 from uwp.events import VNC_FAILED, VNC_STOPPED
 from uwp.profiles import browser_flags
 from uwp.timeutil import utcnow
 
 log = logging.getLogger(__name__)
 
-PASSWORD_LENGTH = 12
+PASSWORD_LENGTH = 8
 DISPLAY_BASE = 100
 # Raw RFB listeners live in their own internal band so they can never collide
 # with a published noVNC port (6000-6100).
@@ -130,11 +132,21 @@ def free_port(min_port: int, max_port: int, taken: set[int]) -> int:
     raise RuntimeError("no free VNC port")
 
 
-def vnc_url(public_host: str, port: int, password: str) -> str:
-    """noVNC URL with autoconnect, scaled display and the session password."""
+def vnc_url(
+    public_host: str, port: int, password: str, scheme: str = "http"
+) -> str:
+    """noVNC URL with autoconnect, scaled display and the session password.
+
+    The parameters live in the fragment, not the query string: noVNC reads both
+    (fragment wins), but a browser never sends the fragment to websockify, so
+    the password stays out of its access log and out of any ``Referer`` header.
+
+    ``scheme`` is ``https`` when the operator fronts the band with a TLS reverse
+    proxy; the default loopback deployment stays on plain HTTP.
+    """
     return (
-        f"http://{public_host}:{port}/vnc.html"
-        f"?autoconnect=1&resize=scale&password={password}"
+        f"{scheme}://{public_host}:{port}/vnc.html"
+        f"#autoconnect=1&resize=scale&password={password}"
     )
 
 
@@ -145,6 +157,15 @@ def _record_count_hook(marker: Path) -> str:
     needed; quoting the path protects spaces and quotes.
     """
     return f'echo "$RFB_CLIENT_COUNT" > {shlex.quote(str(marker))}'
+
+
+# The login browser and the window manager must not inherit the worker's
+# environment: ``UWP_BOT_TOKEN``/``UWP_SECRET_KEY`` there would let a page on
+# the noVNC desktop take over the bot, and the desktop can start its own
+# processes. ``browser_env`` is the same allowlist the parse browser gets.
+def child_env(**overrides: str) -> dict[str, str]:
+    """A minimal environment for the X11 stack, with ``DISPLAY`` and HOME set."""
+    return browser_env(**overrides)
 
 
 class _Stack:
@@ -268,7 +289,18 @@ def _default_process_factory(
     ) -> ProcessHandle:
         password_file = settings.data_dir / "vnc" / f"{profile.id or 'x'}-{port}.passwd"
         password_file.parent.mkdir(parents=True, exist_ok=True)
-        store = await _spawn(["x11vnc", "-storepasswd", password, str(password_file)])
+        # Even trusted helpers (Xvfb, x11vnc, websockify) get the same minimal
+        # environment; nothing in the stack has a reason to see the bot token.
+        # Xvfb and x11vnc do not need ``DISPLAY``: the former creates the screen,
+        # the latter gets ``-display`` on its command line.
+        base_env = child_env()
+        # A crashed parse run can leave Chromium's single-instance lock in the
+        # shared persistent profile; the login browser would then refuse to
+        # start with "Failed to create a ProcessSingleton".
+        clear_stale_singleton_lock(Path(profile.user_data_dir))
+        store = await _spawn(
+            ["x11vnc", "-storepasswd", password, str(password_file)], env=base_env
+        )
         if await store.wait() != 0:
             raise RuntimeError("x11vnc -storepasswd failed")
 
@@ -293,7 +325,7 @@ def _default_process_factory(
             )
             if not flag.startswith("--headless")
         ]
-        browser_env = {**os.environ, "DISPLAY": screen}
+        browser_env = child_env(DISPLAY=screen)
         client_marker = password_file.with_suffix(".clients")
         client_marker.unlink(missing_ok=True)
         record_count = _record_count_hook(client_marker)
@@ -325,7 +357,7 @@ def _default_process_factory(
                 "websockify",
                 "--web",
                 "/usr/share/novnc",
-                str(port),
+                f"{settings.vnc_listen_host}:{port}",
                 f"localhost:{vnc_port}",
             ],
         ]
@@ -339,14 +371,14 @@ def _default_process_factory(
                 password_file.parent / f"wm-{profile.id or 'x'}-{port}",
                 TASKBAR_HEIGHT,
             )
-            wm_env = {**os.environ, "HOME": str(wm_home)}
+            wm_env = child_env(HOME=str(wm_home), DISPLAY=screen)
             stack = _Stack(
                 processes, password_file, client_marker, log_file, wm_home=wm_home
             )
             # Xvfb first and wait for its socket: fluxbox, x11vnc and Chromium
             # all abort with "cannot open display" if they lose that race.
             processes.append(
-                await _spawn(commands[0], stderr=log_file, env=None)
+                await _spawn(commands[0], stderr=log_file, env=base_env)
             )
             if not await _wait_for_path(
                 Path(f"/tmp/.X11-unix/X{display}"), READY_TIMEOUT
@@ -360,7 +392,7 @@ def _default_process_factory(
                 elif command[0] == "fluxbox":
                     env = wm_env
                 else:
-                    env = None
+                    env = base_env
                 processes.append(await _spawn(command, stderr=log_file, env=env))
             # x11vnc binds its RFB port late; noVNC would show a blank page.
             if not await _wait_for_port(vnc_port, READY_TIMEOUT):
@@ -458,6 +490,8 @@ class VncManager:
             await self.sessions.taken_ports(),
         )
         display = DISPLAY_BASE + (port - self.settings.vnc_port_min)
+        # RFB authenticates with the first 8 bytes of the password; a longer
+        # string would show the admin characters the server ignores.
         password = secrets.token_urlsafe(9)[:PASSWORD_LENGTH]
         now = utcnow()
         expires_at = now + timedelta(minutes=self.settings.vnc_ttl_minutes)
@@ -466,8 +500,11 @@ class VncManager:
                 profile_id=profile.id,
                 port=port,
                 display=display,
-                password=password,
-                token=secrets.token_urlsafe(16),
+                password=(
+                    secretbox.encrypt(password, self.settings.secret_key)
+                    if self.settings.secret_key
+                    else password
+                ),
                 status=VncStatus.requested,
                 started_at=now,
                 expires_at=expires_at,
@@ -482,7 +519,12 @@ class VncManager:
             session_id=session_id,
             port=port,
             password=password,
-            url=vnc_url(self.settings.public_host, port, password),
+            url=vnc_url(
+                self.settings.public_host,
+                port,
+                password,
+                scheme=self.settings.public_scheme,
+            ),
             expires_at=expires_at,
         )
 
@@ -508,10 +550,31 @@ class VncManager:
     start = reserve_and_launch
 
     async def launch(self, session: VncSession, proxy_url: str | None = None) -> None:
-        """Start the process stack of a reserved session."""
+        """Start the process stack of a reserved session exactly once.
+
+        Two callers race for the same session: ``reserve_and_launch`` in the
+        process that owns the bot and the worker's 5 s tick, which still sees
+        the row as ``requested`` while the first launch waits for Xvfb. A
+        second stack on the same display and port dies with "Server is already
+        active" and "Address already in use", but its handle replaced the live
+        one, so the stop killed nothing and Chromium kept ``SingletonLock`` on
+        the profile.
+
+        The claim is a conditional UPDATE, not a check in memory: the CLI books
+        a login from its own process while the worker runs in the container, so
+        an in-process flag would not be enough.
+        """
+        if session.id in self._handles:
+            log.info("VNC session %s is already running; not launching again", session.id)
+            return
+        if not await self.sessions.claim(session.id):
+            log.info("VNC session %s was launched by another caller", session.id)
+            return
         profile = await self.profiles.get(session.profile_id)
         if profile is None:
-            await self.sessions.update(session.id, status=str(VncStatus.failed))
+            await self.sessions.update(
+                session.id, status=str(VncStatus.failed), password=""
+            )
             raise ValueError(f"profile {session.profile_id} not found")
         bridge = None
         try:
@@ -520,7 +583,11 @@ class VncManager:
             started = self.process_factory(
                 display=session.display,
                 port=session.port,
-                password=session.password,
+                # The row holds a Fernet token when UWP_SECRET_KEY is set;
+                # x11vnc needs the plain password.
+                password=secretbox.decrypt(
+                    session.password, self.settings.secret_key
+                ),
                 profile=profile,
                 url=session.url or "",
                 proxy_url=proxy_url,
@@ -530,7 +597,9 @@ class VncManager:
             if bridge is not None:
                 await _stop_quietly(bridge)
             log.exception("starting VNC session %s failed", session.id)
-            await self.sessions.update(session.id, status=str(VncStatus.failed))
+            await self.sessions.update(
+                session.id, status=str(VncStatus.failed), password=""
+            )
             await self.profiles.update(profile.id, status=str(ProfileStatus.free))
             await self._emit(
                 VNC_FAILED,
@@ -542,7 +611,6 @@ class VncManager:
             raise
         if bridge is not None:
             self._bridges[session.id] = bridge
-        await self.sessions.update(session.id, status=str(VncStatus.running))
         self._handles[session.id] = handle
         log.info("VNC session %s on port %s started", session.id, session.port)
 
@@ -599,7 +667,11 @@ class VncManager:
                 await handle.stop()
             except Exception:
                 log.exception("stopping VNC session %s failed", session_id)
-        await self.sessions.update(session_id, status=str(VncStatus.stopped))
+        await self.sessions.update(
+            session_id, status=str(VncStatus.stopped), password=""
+        )
+        # A stopped row is history; its secret has no use. Clearing it keeps a
+        # copy of ``data/uwp.db`` from leaking every password ever issued.
         profile = await self.profiles.get(session.profile_id)
         if profile is not None and profile.status == ProfileStatus.login:
             await self.profiles.update(profile.id, status=str(ProfileStatus.free))

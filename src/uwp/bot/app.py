@@ -41,10 +41,10 @@ def build_dispatcher(
     """
     dp = Dispatcher()
     gate = AdminOnlyMiddleware(set(admin_ids or ()) or set(settings.admin_ids))
-    # Outer middleware runs once per update, before handler resolution, so a
-    # non-admin gets exactly one refusal even when several handlers match.
-    dp.message.outer_middleware(gate)
-    dp.callback_query.outer_middleware(gate)
+    # Outer middleware on the update itself: runs once before handler
+    # resolution, so a non-admin gets exactly one refusal, and every update
+    # type is gated (message, callback, edited message, inline query, ...).
+    dp.update.outer_middleware(gate)
 
     dp.include_router(common.build_router(settings, deps))
     dp.include_router(sites.build_router(settings, deps))

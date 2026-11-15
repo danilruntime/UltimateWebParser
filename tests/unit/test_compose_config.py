@@ -14,7 +14,7 @@ def test_combined_compose_has_ports_and_volume():
     cfg = yaml.safe_load((ROOT / "compose.yaml").read_text(encoding="utf-8"))
     svc = cfg["services"]["uwp"]
 
-    assert "6000-6100:6000-6100" in svc["ports"]
+    assert "127.0.0.1:6000-6100:6000-6100" in svc["ports"]
     # ``:z`` keeps the volume usable when SELinux is enforcing.
     assert "./data:/data:z" in svc["volumes"]
     assert svc["shm_size"] == "1gb"
@@ -24,7 +24,7 @@ def test_combined_compose_has_ports_and_volume():
 def test_split_compose_worker_owns_vnc_ports():
     cfg = yaml.safe_load((ROOT / "compose.split.yaml").read_text(encoding="utf-8"))
 
-    assert "6000-6100:6000-6100" in cfg["services"]["worker"]["ports"]
+    assert "127.0.0.1:6000-6100:6000-6100" in cfg["services"]["worker"]["ports"]
     assert "ports" not in cfg["services"]["bot"]
     assert "./data:/data:z" in cfg["services"]["worker"]["volumes"]
     assert cfg["services"]["bot"]["command"] == ["bot"]
@@ -145,6 +145,26 @@ def test_env_example_documents_the_telegram_proxy():
     assert "socks5://" in text
 
 
+def test_the_hostnet_overlay_keeps_novnc_on_loopback():
+    """With ``network_mode: host`` no port publishing stands in front of it.
+
+    websockify binds ``0.0.0.0`` in a bridged container on purpose (Docker's
+    proxy dials the container address, not its loopback); that default would
+    expose noVNC on every host interface here, so the overlay overrides it.
+    """
+    text = (ROOT / "compose.hostnet.yaml").read_text(encoding="utf-8")
+
+    assert "UWP_VNC_LISTEN_HOST: 127.0.0.1" in text
+
+
+def test_env_example_documents_the_private_bind_and_public_scheme():
+    text = (ROOT / ".env.example").read_text(encoding="utf-8")
+
+    assert "UWP_PUBLIC_SCHEME=http" in text
+    assert "UWP_ARTIFACTS_RETENTION=20" in text
+    assert "UWP_VNC_HISTORY_DAYS=7" in text
+
+
 def test_hostnet_overlays_exist_for_a_loopback_proxy():
     """127.0.0.1 inside a bridged container is the container, not the host."""
     for name in ("compose.hostnet.yaml", "compose.split.hostnet.yaml"):
@@ -173,3 +193,23 @@ def test_compose_does_not_nest_tini_twice():
     for name in ("compose.yaml", "compose.split.yaml"):
         text = (ROOT / name).read_text(encoding="utf-8")
         assert "init: true" not in text
+
+
+def test_no_vnc_port_is_published_on_all_interfaces():
+    """noVNC speaks plain HTTP and authenticates with an 8-character password.
+
+    Publishing 6000-6100 on ``0.0.0.0`` put an unencrypted desktop with a weak
+    secret on the internet-facing address of the host, so the default bind is
+    loopback; a remote admin is expected to tunnel or front it with TLS.
+    """
+    for name in ("compose.yaml", "compose.split.yaml"):
+        cfg = yaml.safe_load((ROOT / name).read_text(encoding="utf-8"))
+        published = [
+            port
+            for svc in cfg["services"].values()
+            for port in svc.get("ports", [])
+        ]
+        vnc = [port for port in published if "6000-6100" in str(port)]
+        assert vnc, name
+        for port in vnc:
+            assert str(port).startswith("127.0.0.1:"), f"{name}: {port}"

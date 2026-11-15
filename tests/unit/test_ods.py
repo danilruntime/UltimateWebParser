@@ -65,6 +65,16 @@ def test_filename_appends_extension_and_keeps_literal_parts():
     assert report_filename("{site_name}.ods", "P", "S", when) == "s.ods"
 
 
+def test_filename_cannot_escape_the_exports_directory():
+    """The template is operator input; ``../`` must not write outside exports."""
+    when = datetime(2026, 1, 2, 3, 4, tzinfo=UTC)
+
+    assert "/" not in report_filename("../{site_name}", "P", "S", when)
+    assert "\\" not in report_filename("..\\{site_name}", "P", "S", when)
+    assert report_filename("../../etc/passwd", "P", "S", when) == "etc_passwd.ods"
+    assert report_filename("/abs/{site_name}", "P", "S", when) == "abs_s.ods"
+
+
 def test_report_contents(tmp_path):
     cols = [Column("title", "Title", 30), Column("url", "URL", 40), Column("price", "Price", 10)]
     rows = [
@@ -118,6 +128,26 @@ def test_report_links_url_and_suffixed_url_keys(tmp_path):
     doc = load(str(path))
     hrefs = [a.getAttribute("href") for a in doc.getElementsByType(A)]
     assert hrefs == ["https://x/page", "https://x/img.png"]
+
+
+def test_report_drops_dangerous_hyperlink_schemes(tmp_path):
+    """``url`` comes from scraped HTML: a javascript:/file: target is data, not a link."""
+    cols = [Column("url", "URL", 40)]
+    rows = [
+        {"external_key": "1", "url": "javascript:alert(document.cookie)"},
+        {"external_key": "2", "url": "file:///etc/passwd"},
+        {"external_key": "3", "url": "JaVaScRiPt:alert(1)"},
+        {"external_key": "4", "url": "https://x/ok"},
+    ]
+    path = write_report(tmp_path / "t.ods", rows, cols, {})
+
+    doc = load(str(path))
+    hrefs = [a.getAttribute("href") for a in doc.getElementsByType(A)]
+    assert hrefs == ["https://x/ok"]
+    # The cell keeps the value as text, so the admin still sees what was scraped.
+    texts = [p for row in _rows(_sheet(doc, "Данные")) for p in row]
+    assert "javascript:alert(document.cookie)" in texts
+    assert "file:///etc/passwd" in texts
 
 
 def test_report_skips_empty_url_and_highlights_changed(tmp_path):

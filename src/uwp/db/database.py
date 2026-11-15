@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
@@ -16,6 +17,18 @@ log = logging.getLogger(__name__)
 
 MIGRATIONS_PACKAGE = "uwp.migrations"
 _MIGRATION_NAME = re.compile(r"^(\d+)_.*\.sql$")
+
+
+def _sidecars(path: Path) -> tuple[Path, Path]:
+    return Path(f"{path}-wal"), Path(f"{path}-shm")
+
+
+def _chmod_private(path: Path) -> None:
+    """Best-effort ``0600``; a missing file or a foreign owner is not fatal."""
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
 
 
 class Database:
@@ -48,6 +61,11 @@ class Database:
             return
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+            # The file holds proxy passwords, VNC passwords and session rows.
+            # Create it private before SQLite writes anything, then re-assert
+            # the mode: an existing world-readable file keeps its permissions.
+            Path(self.path).touch(mode=0o600, exist_ok=True)
+            _chmod_private(Path(self.path))
         conn = await aiosqlite.connect(self.path, isolation_level=None)
         conn.row_factory = aiosqlite.Row
         # ``busy_timeout`` must come before ``journal_mode=WAL``: switching the
@@ -57,6 +75,11 @@ class Database:
         await conn.execute("PRAGMA busy_timeout=5000")
         if self.path != ":memory:":
             await conn.execute("PRAGMA journal_mode=WAL")
+            # The sidecars are a full copy of the pages (secrets included) and
+            # SQLite creates them with the process umask, not the mode of the
+            # database file.
+            for sidecar in _sidecars(Path(self.path)):
+                _chmod_private(sidecar)
         await conn.execute("PRAGMA foreign_keys=ON")
         self._conn = conn
 
@@ -64,6 +87,9 @@ class Database:
         if self._conn is not None:
             await self._conn.close()
             self._conn = None
+            if self.path != ":memory:":
+                for sidecar in _sidecars(Path(self.path)):
+                    _chmod_private(sidecar)
 
     async def execute(self, sql: str, params: Sequence[Any] = ()) -> int:
         """Run a statement and return ``cursor.lastrowid``.

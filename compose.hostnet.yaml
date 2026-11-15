@@ -9,7 +9,12 @@
 #
 # The VNC ports need no publishing here: host networking binds them directly.
 # Only one such deployment can run on a machine (the ports are global).
+#
+# websockify must bind loopback in this mode: with no port publishing there is
+# nothing between it and every interface of the host.
 services:
   uwp:
     network_mode: host
+    environment:
+      UWP_VNC_LISTEN_HOST: 127.0.0.1
     ports: !reset []

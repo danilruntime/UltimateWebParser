@@ -1,6 +1,8 @@
 """Tests for the runtime wiring shared by the bot and the worker."""
 import asyncio
+import os
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 
@@ -49,7 +51,6 @@ async def _orphan(runtime, status, lease_until=None):
             port=6100,
             display=100,
             password="p",
-            token=f"t{profile_id}",
             status=VncStatus.running,
             expires_at=utcnow() + timedelta(minutes=30),
         )
@@ -113,7 +114,6 @@ async def test_run_worker_launches_a_booking_made_before_it_started(runtime):
             port=6101,
             display=101,
             password="p",
-            token="early",
             status=VncStatus.requested,
             expires_at=utcnow() + timedelta(minutes=30),
         )
@@ -169,6 +169,41 @@ async def test_runtime_migrates_the_database(runtime):
 
 async def test_run_once_survives_an_empty_queue(runtime):
     await runtime.run_once()
+
+
+async def test_run_once_deletes_expired_clean_profiles(runtime):
+    """``cleanup_clean`` had no caller, so ``data/profiles/tmp`` grew forever."""
+    profile = await runtime.worker.runner.profiles.create_clean(run_id=1)
+    await runtime.worker.runner.profiles.repo.update(
+        profile.id, expires_at=utcnow() - timedelta(hours=1)
+    )
+    folder = Path(profile.user_data_dir)
+    folder.mkdir(parents=True, exist_ok=True)
+
+    await runtime.run_once()
+
+    assert not folder.exists()
+    assert await runtime.vnc.profiles.get(profile.id) is None
+
+
+async def test_maintenance_prunes_old_run_artifacts(tmp_path):
+    """Screenshots of failed runs are unbounded; keep the newest N."""
+    from uwp.artifacts import prune_artifacts
+
+    for index in range(5):
+        run = tmp_path / str(index)
+        run.mkdir()
+        (run / "screenshot.png").write_bytes(b"x")
+        os.utime(run, (index, index))
+
+    assert prune_artifacts(tmp_path, keep=2) == 3
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["3", "4"]
+
+
+def test_artifact_pruning_of_a_missing_directory_is_a_noop(tmp_path):
+    from uwp.artifacts import prune_artifacts
+
+    assert prune_artifacts(tmp_path / "missing", keep=2) == 0
 
 
 async def test_with_bot_requires_a_token(tmp_path):

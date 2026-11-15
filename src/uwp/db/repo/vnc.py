@@ -1,5 +1,6 @@
 """Repository for VNC login sessions."""
 
+from datetime import datetime
 from typing import Any
 
 import aiosqlite
@@ -13,7 +14,6 @@ _COLUMNS: dict[str, tuple[str, Any]] = {
     "port": ("port", int),
     "display": ("display", int),
     "password": ("password", lambda v: v),
-    "token": ("token", lambda v: v),
     "status": ("status", str),
     "started_at": ("started_at", dt),
     "expires_at": ("expires_at", dt),
@@ -31,7 +31,6 @@ def _row_to_session(row: aiosqlite.Row) -> VncSession:
         port=row["port"],
         display=row["display"],
         password=row["password"],
-        token=row["token"],
         status=VncStatus(row["status"]),
         started_at=parse_dt(row["started_at"]),
         expires_at=parse_dt(row["expires_at"]),
@@ -54,16 +53,15 @@ class VncRepo:
 
     async def create(self, session: VncSession) -> int:
         return await self.db.execute(
-            """INSERT INTO vnc_sessions (profile_id, port, display, password, token,
+            """INSERT INTO vnc_sessions (profile_id, port, display, password,
                                          status, started_at, expires_at, started_by,
                                          last_client_at, url, proxy_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 session.profile_id,
                 session.port,
                 session.display,
                 session.password,
-                session.token,
                 str(session.status),
                 dt(session.started_at),
                 dt(session.expires_at),
@@ -116,6 +114,24 @@ class VncRepo:
         )
         return [_row_to_session(r) for r in rows]
 
+    async def claim(self, session_id: int) -> bool:
+        """Take a ``requested`` session for launching; ``False`` if already taken.
+
+        Two callers can see the same row as ``requested``: in combined mode the
+        bot's ``reserve_and_launch`` starts the stack while the worker's tick
+        runs its own ``reconcile`` on the same row, and the launch takes about a
+        second before it flips the status. A second stack on the same display
+        and port cannot start, and it used to overwrite the live handle.
+
+        One conditional UPDATE makes the claim atomic for both processes,
+        unlike an in-memory flag.
+        """
+        changed = await self.db.execute_rowcount(
+            "UPDATE vnc_sessions SET status = ? WHERE id = ? AND status = ?",
+            (VncStatus.running.value, session_id, VncStatus.requested.value),
+        )
+        return changed == 1
+
     async def pending_stop(self) -> list[VncSession]:
         """Sessions an admin asked to stop; the owner kills the processes."""
         rows = await self.db.fetchall(
@@ -166,7 +182,7 @@ class VncRepo:
             VncStatus.stopping.value,
         )
         rows = await self.db.fetchall(
-            """UPDATE vnc_sessions SET status = ?
+            """UPDATE vnc_sessions SET status = ?, password = ''
                WHERE status IN (?, ?) RETURNING profile_id""",
             (VncStatus.failed.value, *unfinished),
         )
@@ -174,3 +190,19 @@ class VncRepo:
         # unfinished sessions would repeat; ``DISTINCT`` did not. Keep the
         # distinct contract with order preserved.
         return list(dict.fromkeys(row["profile_id"] for row in rows))
+
+    async def purge_finished(self, before: datetime) -> int:
+        """Delete finished session rows older than ``before``; return the count.
+
+        A stopped row keeps an encrypted (or, without a key, a plain) password
+        forever otherwise, and every copy of the database makes that history
+        readable. Nothing references ``vnc_sessions``, so the row can go.
+        """
+        return await self.db.execute_rowcount(
+            "DELETE FROM vnc_sessions WHERE status IN (?, ?) AND started_at < ?",
+            (
+                VncStatus.stopped.value,
+                VncStatus.failed.value,
+                dt(before),
+            ),
+        )

@@ -7,6 +7,11 @@
 # working ``docker compose up`` and a crash loop on first start. Privileges are
 # dropped before the CLI runs, so nothing below that point is root.
 set -e
+# Everything the container writes (profiles with live cookies, the database and
+# its WAL, screenshots, VNC password files) is private to uid 1000. The database
+# and the data directory are chmod-ed by the app as well; the umask covers files
+# SQLite creates later, such as -wal/-shm.
+umask 077
 
 DATA_DIR="${UWP_DATA_DIR:-/data}"
 UWP_UID="${UWP_UID:-1000}"

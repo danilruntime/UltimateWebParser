@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from uwp.browser import BrowserUnavailable, launch
+from uwp.browser import BrowserUnavailable, ProfileInUse, launch
 from uwp.config import Settings
 from uwp.db.repo.items import ItemsRepo
 from uwp.db.repo.runs import RunsRepo
@@ -173,6 +173,13 @@ class Runner:
             outcome.status = RunStatus.failed
             return outcome
         except BrowserUnavailable as exc:
+            outcome.error_kind = ErrorKind.config_error
+            outcome.error = str(exc)
+            outcome.status = RunStatus.failed
+            return outcome
+        except ProfileInUse as exc:
+            # A blocked profile is an environment problem, not a parser bug:
+            # the raw Playwright text here is a 7 KB call log.
             outcome.error_kind = ErrorKind.config_error
             outcome.error = str(exc)
             outcome.status = RunStatus.failed

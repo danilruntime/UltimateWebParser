@@ -8,6 +8,7 @@ from typing import Any
 
 from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 
+from uwp.bot.texts import esc as _esc
 from uwp.config import Settings
 from uwp.domain import Event
 from uwp.events import (
@@ -25,6 +26,10 @@ log = logging.getLogger(__name__)
 
 POLL_SECONDS = 5
 PURGE_EVERY_SECONDS = 3600
+# Telegram's hard limit for one message, measured after entity parsing.
+MAX_MESSAGE_LENGTH = 4096
+# Same limit for a media caption; a photo with a longer caption is refused.
+CAPTION_LENGTH = 1024
 # A failed send waits longer each time: 10 s, 20 s, 40 s … up to a minute.
 # Without this a transient outage retries one event every 5 s for the whole TTL,
 # which is ~50 000 requests for a single report.
@@ -157,9 +162,9 @@ class EventDelivery:
             return
         if payload.get("report_status") == "failed":
             # The run was fine but the export was not: say so, do not pretend.
-            reason = payload.get("report_error") or "неизвестная ошибка"
+            reason = _esc(payload.get("report_error") or "неизвестная ошибка")
             await self.bot.send_message(
-                admin_id, f"{caption}\n⚠️ Отчёт не создан: {reason}"
+                admin_id, _limit(f"{caption}\n⚠️ Отчёт не создан: {reason}")
             )
             return
         log.warning("run %s has no report file (%s)", event.run_id, path)
@@ -238,38 +243,57 @@ def _caption_for(event: Event) -> str:
         rows = payload.get("rows", 0)
         new = payload.get("new", 0)
         head = "⚠️ Прогон частичный" if payload.get("status") == "partial" else "📊"
-        text = f"{head} {site}\nСтрок: {rows}, новых: {new}"
+        text = f"{head} {_esc(site)}\nСтрок: {rows}, новых: {new}"
         if payload.get("notes"):
-            text += f"\n{payload['notes']}"
+            text += f"\n{_esc(payload['notes'])}"
         if payload.get("report_status") == "failed":
             text += "\n⚠️ Отчёт не создан"
-        return text
+        return _limit(text, CAPTION_LENGTH)
     if event.kind == RUN_FAILED:
-        reason = payload.get("text") or payload.get("error") or "неизвестная ошибка"
-        return f"❌ {site}: {reason}"
-    return f"{site}"
+        reason = _esc(payload.get("text") or payload.get("error") or "неизвестная ошибка")
+        return _limit(f"❌ {_esc(site)}: {reason}")
+    return f"{_esc(site)}"
+
+
+def _limit(text: str, limit: int = MAX_MESSAGE_LENGTH) -> str:
+    """Keep a message inside Telegram's hard limit.
+
+    ``text`` is measured after entity parsing, so escaping makes an already
+    long error longer. Truncating is better than a message Telegram refuses —
+    but the cut must not land inside an entity: ``&lt;`` sliced to ``&l`` is
+    rejected exactly like the raw tag was.
+    """
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 1]
+    head, sep, tail = cut.rpartition("&")
+    if sep and ";" not in tail:
+        cut = head
+    return cut + "…"
 
 
 def _text_for(event: Event) -> str:
     payload = event.payload or {}
     site = payload.get("site") or payload.get("site_name")
     if event.kind == RUN_FAILED:
-        reason = payload.get("text") or payload.get("error") or "неизвестная ошибка"
-        return f"❌ Прогон {'«' + site + '» ' if site else ''}не удался: {reason}"
+        reason = _esc(payload.get("text") or payload.get("error") or "неизвестная ошибка")
+        return _limit(f"❌ Прогон {_esc('«' + site + '» ') if site else ''}не удался: {reason}")
     if event.kind == SITE_PROBLEM:
-        return f"⚠️ Проблема с сайтом{' «' + site + '»' if site else ''}: " + str(
-            payload.get("text") or payload.get("error") or "—"
+        return _limit(
+            f"⚠️ Проблема с сайтом{_esc(' «' + site + '»') if site else ''}: "
+            + _esc(payload.get("text") or payload.get("error") or "—")
         )
     if event.kind == VNC_READY:
-        return (
+        return _limit(
             "🖥 Вход на сайт готов\n"
-            f"Ссылка: {payload.get('url', '—')}\n"
-            f"Пароль: {payload.get('password', '—')}"
+            f"Ссылка: {_esc(payload.get('url', '—'))}\n"
+            f"Пароль: {_esc(payload.get('password', '—'))}"
         )
     if event.kind == VNC_STOPPED:
         return "🖥 Сессия входа завершена."
     if event.kind == VNC_FAILED:
-        return "🖥 Не удалось запустить сессию входа: " + str(
-            payload.get("error") or "—"
+        return _limit(
+            "🖥 Не удалось запустить сессию входа: "
+            + _esc(payload.get("error") or "—")
         )
     return f"Уведомление: {event.kind}"

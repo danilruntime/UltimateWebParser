@@ -1,4 +1,6 @@
 """Application settings loaded from ``UWP_*`` environment variables and ``.env``."""
+import contextlib
+import os
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -59,9 +61,20 @@ class Settings(BaseSettings):
     vnc_ttl_minutes: int = 60
     vnc_idle_minutes: int = 20
     public_host: str = "localhost"
+    # ``https`` when a TLS reverse proxy fronts the VNC band; noVNC itself
+    # speaks plain HTTP and is bound to loopback by default.
+    public_scheme: str = "http"
+    # Inside a bridged container websockify must listen on 0.0.0.0 for Docker's
+    # port publishing to reach it; compose publishes the band on the host's
+    # 127.0.0.1. With ``network_mode: host`` there is no publishing, so the
+    # overlay sets this to 127.0.0.1 — otherwise noVNC lands on every host
+    # interface.
+    vnc_listen_host: str = "0.0.0.0"
     secret_key: str | None = None
     report_name_template: str = "{parser_title}_{site_name}_{timestamp}"
     exports_retention: int = 50
+    artifacts_retention: int = 20
+    vnc_history_days: int = 7
     event_ttl_days: int = 3
     headless: bool = True
     no_sandbox: bool = False
@@ -72,6 +85,17 @@ class Settings(BaseSettings):
     def _split_admin_ids(cls, value: object) -> object:
         if isinstance(value, str):
             return [part.strip() for part in value.split(",") if part.strip()]
+        return value
+
+    @field_validator("public_scheme", mode="before")
+    @classmethod
+    def _check_public_scheme(cls, value: object) -> object:
+        """A typo like ``htps`` must not produce a dead link silently."""
+        if isinstance(value, str):
+            value = value.strip().lower()
+            if value not in ("http", "https"):
+                raise ValueError("UWP_PUBLIC_SCHEME must be http or https")
+            return value
         return value
 
     @field_validator("telegram_proxy", mode="before")
@@ -143,5 +167,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         settings.exports_dir,
         settings.artifacts_dir,
     ):
-        directory.mkdir(parents=True, exist_ok=True)
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        # ``mkdir(mode=...)`` only applies to the directory it creates and is
+        # filtered by the umask; a pre-existing world-readable folder keeps its
+        # mode, so every run re-asserts it. Profiles hold live session cookies.
+        with contextlib.suppress(OSError):
+            os.chmod(directory, 0o700)
     return settings

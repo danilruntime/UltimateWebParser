@@ -398,6 +398,76 @@ async def test_a_chat_not_found_is_dropped_not_retried_forever(env):
     assert await bus.pending(222, utcnow()) == []
 
 
+async def test_html_in_an_error_is_escaped_not_a_parse_failure(env):
+    """Measured: Playwright's call log contains ``<launching>``.
+
+    The bot sends with ``parse_mode=HTML``, so Telegram rejected the whole
+    ``run_failed`` event with "can't parse entities: Unsupported start tag
+    launching" and the admin never learned why the run failed.
+    """
+    settings, bus, _tmp_path = env
+    bot = FakeBot()
+    delivery = EventDelivery(bot, bus, settings)
+    error = (
+        "BrowserType.launch_persistent_context: Failed to create a ProcessSingleton\n"
+        "Call log:\n"
+        "  - <launching> /opt/uwp/browser/chrome --fingerprint=1\n"
+        "  - [pid=938][err] <process did exit: exitCode=21>"
+    )
+    await bus.emit("run_failed", site_id=None, payload={"text": error})
+
+    await delivery.tick()
+
+    text = bot.messages[0][1]
+    assert "&lt;launching&gt;" in text
+    assert "<launching>" not in text.replace("&lt;launching&gt;", "")
+
+
+async def test_a_long_error_is_truncated_to_one_message(env):
+    """Telegram rejects a message over 4096 characters; the run error is longer."""
+    settings, bus, _tmp_path = env
+    bot = FakeBot()
+    delivery = EventDelivery(bot, bus, settings)
+    await bus.emit("run_failed", site_id=None, payload={"text": "x" * 10_000})
+
+    await delivery.tick()
+
+    assert bot.messages, "a long error must still reach the admin"
+    assert len(bot.messages[0][1]) <= 4096
+
+
+async def test_truncation_never_splits_an_html_entity(env):
+    """``&lt;`` cut in half is "can't parse entities" again — the same silence."""
+    settings, bus, _tmp_path = env
+    bot = FakeBot()
+    delivery = EventDelivery(bot, bus, settings)
+    await bus.emit("run_failed", site_id=None, payload={"text": "<" * 10_000})
+
+    await delivery.tick()
+
+    text = bot.messages[0][1]
+    assert len(text) <= 4096
+    assert text.endswith("…")
+    body = text[: -1]
+    assert body.count("&") == body.count(";"), "every escaped entity must be closed"
+
+
+async def test_a_report_failure_reason_is_escaped(env):
+    """``report_error`` is an exception string too, and can carry markup."""
+    settings, bus, _tmp_path = env
+    bot = FakeBot()
+    delivery = EventDelivery(bot, bus, settings)
+    await bus.emit(
+        "run_finished",
+        payload={"report_status": "failed", "report_error": "<ValueError: bad <tag>>"},
+    )
+
+    await delivery.tick()
+
+    assert bot.messages
+    assert "<tag>" not in bot.messages[0][1]
+
+
 async def test_a_network_error_is_still_retried(env):
     settings, bus, tmp_path = env
     report = tmp_path / "report.ods"

@@ -194,7 +194,6 @@ class VncSession(_Model):
     port: int
     display: int
     password: str
-    token: str
     status: VncStatus
     started_at: datetime = Field(default_factory=utcnow)
     expires_at: datetime

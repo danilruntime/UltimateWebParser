@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from uwp.config import Settings, load_settings
 
 
@@ -20,6 +23,15 @@ def test_directories_created(tmp_path):
     assert s.profiles_dir == tmp_path / "d" / "profiles"
     assert s.exports_dir == tmp_path / "d" / "exports"
     assert s.artifacts_dir == tmp_path / "d" / "artifacts"
+
+
+def test_data_directory_is_private(tmp_path):
+    """Everything below ``data`` holds profiles and secrets; no world/group bits."""
+    s = load_settings({"UWP_DATA_DIR": str(tmp_path / "d")})
+
+    assert s.data_dir.stat().st_mode & 0o077 == 0
+    assert s.profiles_dir.stat().st_mode & 0o077 == 0
+    assert s.exports_dir.stat().st_mode & 0o077 == 0
 
 
 def test_defaults():
@@ -110,3 +122,16 @@ def test_telegram_proxy_is_optional_and_blank_means_none():
         load_settings({"UWP_TELEGRAM_PROXY": " socks5://127.0.0.1:2080 "}).telegram_proxy
         == "socks5://127.0.0.1:2080"
     )
+
+
+def test_public_scheme_is_http_or_https(tmp_path):
+    """A typo like ``htps`` would otherwise produce a dead VNC link."""
+    assert load_settings({"UWP_DATA_DIR": str(tmp_path)}).public_scheme == "http"
+    assert (
+        load_settings(
+            {"UWP_DATA_DIR": str(tmp_path), "UWP_PUBLIC_SCHEME": "HTTPS"}
+        ).public_scheme
+        == "https"
+    )
+    with pytest.raises(ValidationError):
+        load_settings({"UWP_DATA_DIR": str(tmp_path), "UWP_PUBLIC_SCHEME": "htps"})

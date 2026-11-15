@@ -71,13 +71,18 @@ def report_filename(template: str, parser_title: str, site_name: str, when: date
     """Render the report file name; ``when`` is formatted in its own timezone.
 
     Only the substituted values are slugified; the literal parts of the
-    template are kept as given.
+    template are kept as given — except for path separators. The template is
+    operator input stored in the database, so ``../`` in it must not be able to
+    write outside ``data/exports``.
     """
     name = template.format(
         parser_title=slugify(parser_title),
         site_name=slugify(site_name),
         timestamp=when.strftime(TIMESTAMP_FORMAT),
     )
+    name = re.sub(r"[/\\]+", "_", name).lstrip("_.").strip(" ")
+    if not name:
+        name = f"report_{when.strftime(TIMESTAMP_FORMAT)}"
     if not name.endswith(".ods"):
         name += ".ods"
     return name
@@ -86,6 +91,26 @@ def report_filename(template: str, parser_title: str, site_name: str, when: date
 def _is_link_key(key: str) -> bool:
     """``url`` and any ``*_url`` column holds a hyperlink target."""
     return key == "url" or key.endswith("_url")
+
+
+# Only web links become clickable cells. Column values come from scraped HTML,
+# so ``javascript:``/``data:``/``file:`` must stay inert text: a report is opened
+# by the admin in LibreOffice, whose hyperlink handler is another attack surface.
+_LINK_SCHEMES = frozenset({"http", "https"})
+
+
+def safe_href(value: str) -> str | None:
+    """Return ``value`` when it is an http(s) URL, else ``None``.
+
+    Checked case-insensitively and with leading control characters/whitespace
+    stripped, since browsers ignore those before the scheme.
+    """
+    cleaned = value.strip().lstrip("\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\r")
+    scheme, sep, _rest = cleaned.partition(":")
+    if not sep or scheme.lower() not in _LINK_SCHEMES:
+        return None
+    return cleaned
+
 
 
 def _changed_keys(meta: dict[str, Any]) -> set[str]:
@@ -321,7 +346,7 @@ def write_report(
             value = row.get(col.key)
             href = None
             if _is_link_key(col.key) and isinstance(value, str) and value:
-                href = value
+                href = safe_href(value)
             if href:
                 style = changed_link_style if is_changed else link_style
                 table_row.addElement(_text_cell(doc, str(value), style, href=href))

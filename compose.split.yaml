@@ -47,8 +47,11 @@ services:
     security_opt:
       - seccomp=./docker/seccomp-uwp.json
     shm_size: 1gb
+    # noVNC is plain HTTP with an 8-character password: publishing the band on
+    # 0.0.0.0 puts an unencrypted desktop on every host interface. Loopback by
+    # default; a remote admin tunnels over SSH or fronts it with TLS.
     ports:
-      - "6000-6100:6000-6100"
+      - "127.0.0.1:6000-6100:6000-6100"
     healthcheck:
       # Through the entrypoint: the check must run as uid 1000, not root.
       # --offline: the proxy probe crosses a third-party proxy, and its

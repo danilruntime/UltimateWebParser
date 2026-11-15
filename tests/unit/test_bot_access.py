@@ -1,6 +1,5 @@
 """Tests for the admin gate: only configured Telegram ids may use the bot."""
-import pytest
-from aiogram.dispatcher.event.bases import SkipHandler
+from aiogram.dispatcher.event.bases import UNHANDLED
 from aiogram.types import User
 
 from uwp.bot import texts
@@ -27,8 +26,7 @@ async def test_non_admin_is_refused():
     async def handler(event, data):
         raise AssertionError("handler must not run")
 
-    with pytest.raises(SkipHandler):
-        await mw(handler, event, {})
+    assert await mw(handler, event, {}) is UNHANDLED
 
     assert event.answers == [texts.ACCESS_DENIED]
 
@@ -59,10 +57,42 @@ async def test_message_without_user_is_refused():
     mw = AdminOnlyMiddleware({111})
     event = Anonymous()
 
-    with pytest.raises(SkipHandler):
-        await mw(lambda e, d: None, event, {})
+    assert await mw(lambda e, d: None, event, {}) is UNHANDLED
 
     assert event.answers == [texts.ACCESS_DENIED]
+
+
+async def test_a_wrapped_update_is_checked_by_its_inner_sender():
+    """The gate is registered on ``dp.update``, so it sees the ``Update`` wrapper."""
+    class Wrapped:
+        """Stands in for ``aiogram.types.Update``: no ``from_user`` of its own."""
+
+        def __init__(self, inner):
+            self.event = inner
+
+    class Inner:
+        def __init__(self, uid):
+            self.from_user = User(id=uid, is_bot=False, first_name="x")
+            self.answers = []
+
+        async def answer(self, text=None, **kw):
+            self.answers.append(text)
+
+    mw = AdminOnlyMiddleware({111})
+    inner = Inner(999)
+
+    assert await mw(lambda e, d: None, Wrapped(inner), {}) is UNHANDLED
+
+    # The refusal goes to the nested message, not silently into the log.
+    assert inner.answers == [texts.ACCESS_DENIED]
+
+    data: dict = {}
+
+    async def handler(event, data):
+        return "ran"
+
+    assert await mw(handler, Wrapped(Inner(111)), data) == "ran"
+    assert data["is_admin"] is True
 
 
 def test_sites_keyboard_offers_every_site_and_add():
@@ -95,10 +125,56 @@ def test_gate_runs_as_outer_middleware():
     )
 
     # Outer middleware runs once per update, before handler resolution, so a
-    # non-admin cannot get one refusal per matching handler.
-    assert len(dp.message.outer_middleware) == 1
-    assert len(dp.callback_query.outer_middleware) == 1
+    # non-admin cannot get one refusal per matching handler — and an update of
+    # any type is gated, not just messages and callback queries.
+    assert any(
+        isinstance(mw, AdminOnlyMiddleware) for mw in dp.update.outer_middleware
+    )
+    assert not any(
+        isinstance(mw, AdminOnlyMiddleware) for mw in dp.message.outer_middleware
+    )
+    assert not any(
+        isinstance(mw, AdminOnlyMiddleware)
+        for mw in dp.callback_query.outer_middleware
+    )
     assert len(dp.message.middleware) == 0
+
+
+async def test_a_stranger_is_refused_by_the_real_dispatcher(monkeypatch):
+    """``SkipHandler`` at update level escapes ``feed_update`` and is logged as
+    an error; the gate must return ``UNHANDLED`` instead. The refusal itself
+    must reach the sender, so Telegram's answer is stubbed, not the gate.
+    """
+    from aiogram import Bot
+    from aiogram.types import Chat, Message, Update, User
+
+    answered: list[str] = []
+
+    async def fake_answer(self, text=None, **kw):
+        answered.append(text)
+        return True
+
+    monkeypatch.setattr(Message, "answer", fake_answer)
+    dp = build_dispatcher(
+        Settings(admin_ids=[111]), BotDeps(sites=object(), registry=object())
+    )
+    bot = Bot("123456:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+    update = Update(
+        update_id=1,
+        message=Message(
+            message_id=1,
+            date=0,
+            chat=Chat(id=1, type="private"),
+            from_user=User(id=999, is_bot=False, first_name="x"),
+            text="/start",
+        ),
+    )
+    try:
+        assert await dp.feed_update(bot, update) is UNHANDLED
+    finally:
+        await bot.session.close()
+
+    assert answered == [texts.ACCESS_DENIED]
 
 
 def test_site_card_keyboard_has_toggle_run_settings_back():

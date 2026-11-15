@@ -11,6 +11,7 @@ import base64
 import ipaddress
 import logging
 import ssl
+from urllib.parse import urlsplit
 
 from uwp.domain import Proxy, ProxyScheme
 from uwp.services.proxies import parse_proxy_url
@@ -39,12 +40,51 @@ def _describe(proxy: Proxy) -> str:
     return f"{proxy.scheme}://{proxy.host}:{proxy.port}"
 
 
+# Names that resolve to the container itself, the host or a link-local service.
+# The bridge is an unauthenticated proxy on loopback, so a target that is not a
+# public site would let any local process use the admin's paid proxy to reach
+# the Docker socket, a cloud metadata endpoint or another loopback service.
+_INTERNAL_SUFFIXES = (
+    ".local",
+    ".localhost",
+    ".internal",
+    ".intranet",
+    ".lan",
+    ".home",
+    ".localdomain",
+)
+_INTERNAL_NAMES = frozenset({"localhost", "metadata", "metadata.google.internal"})
+
+
+def _is_internal_host(host: str) -> bool:
+    host = host.lower().rstrip(".")
+    if host in _INTERNAL_NAMES:
+        return True
+    if any(host.endswith(suffix) for suffix in _INTERNAL_SUFFIXES):
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    # ``is_private`` covers RFC 1918, loopback and IPv6 ULA; ``is_link_local``
+    # covers 169.254.169.254 (cloud metadata); the rest are special-purpose.
+    return (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_unspecified
+        or address.is_reserved
+        or address.is_multicast
+    )
+
+
 def _parse_target(target: str) -> tuple[str, int]:
     """Split ``host:port`` and reject values that cannot be encoded downstream.
 
     The target comes from the page Chromium is loading, so it is untrusted: a
     port above 65535 or a 70-character label must become a :class:`ProxyError`,
-    not an ``OverflowError`` escaping into the event loop.
+    not an ``OverflowError`` escaping into the event loop. Internal targets are
+    refused as well; see :func:`_is_internal_host`.
     """
     host, _, port_text = target.rpartition(":")
     if not host or not port_text.isdigit():
@@ -54,7 +94,23 @@ def _parse_target(target: str) -> tuple[str, int]:
         raise ProxyError(f"CONNECT target port out of range: {port}")
     if host.startswith("[") and host.endswith("]"):
         host = host[1:-1]  # IPv6 literal, as sent by Chromium
+    if _is_internal_host(host):
+        raise ProxyError(f"refusing a request to an internal host: {host}")
     return host, port
+
+
+def _parse_plain_target(target: str) -> tuple[str, int]:
+    """The host of an absolute ``http://``/``https://`` request URI."""
+    parts = urlsplit(target)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise ProxyError("plain requests must use an absolute URI")
+    try:
+        port = parts.port or (443 if parts.scheme == "https" else 80)
+    except ValueError as exc:
+        raise ProxyError(f"request URI port is invalid: {exc}") from exc
+    if _is_internal_host(parts.hostname):
+        raise ProxyError(f"refusing a request to an internal host: {parts.hostname}")
+    return parts.hostname, port
 
 
 def _socks5_address(host: str, port: int) -> bytes:
@@ -331,6 +387,7 @@ class ProxyBridge:
     ) -> None:
         if not target.lower().startswith(("http://", "https://")):
             raise ProxyError("plain requests must use an absolute URI")
+        _parse_plain_target(target)
         up_reader, up_writer = await self._open_upstream()
         try:
             kept = [

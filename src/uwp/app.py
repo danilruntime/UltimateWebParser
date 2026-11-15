@@ -8,8 +8,10 @@ import asyncio
 import contextlib
 import logging
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Any
 
+from uwp.artifacts import prune_artifacts
 from uwp.bot.app import BotDeps, build_dispatcher, make_bot
 from uwp.bot.delivery import EventDelivery
 from uwp.config import Settings
@@ -44,6 +46,9 @@ WORKER_ID = "worker-1"
 # Short enough that a login requested in the bot's process (split mode) turns
 # into a live browser while the admin is still reading the message.
 MAINTENANCE_SECONDS = 5
+# Housekeeping (dead profiles, old session rows, screenshots) is cheap but not
+# free; once an hour is enough for data that ages in days.
+CLEANUP_SECONDS = 3600
 
 
 class NullBot:
@@ -110,13 +115,53 @@ class Runtime:
         await self.worker.scheduler.tick(now)
         await self.worker.process_one(now)
         await self.vnc.tick(now)
+        await self._cleanup(now)
+
+    async def _cleanup(self, now: Any = None) -> None:
+        """Housekeeping: expired clean profiles, VNC history, run artifacts.
+
+        Every step is best-effort: a full disk or a permission error in one of
+        them must not stop the VNC tick that follows in the same loop.
+        """
+        now = now or utcnow()
+        try:
+            removed = await self.worker.runner.profiles.cleanup_clean(now)
+            if removed:
+                log.info("removed %d expired clean profile(s)", removed)
+        except Exception:
+            log.exception("cleanup of expired clean profiles failed")
+        try:
+            # A stopped login row keeps its port reserved in taken_ports only
+            # while unfinished; the row itself is history after a week.
+            purged = await self.vnc.sessions.purge_finished(
+                now - timedelta(days=self.settings.vnc_history_days)
+            )
+            if purged:
+                log.info("purged %d finished VNC session(s)", purged)
+        except Exception:
+            log.exception("purging finished VNC sessions failed")
+        try:
+            pruned = prune_artifacts(
+                self.settings.artifacts_dir, self.settings.artifacts_retention
+            )
+            if pruned:
+                log.info("pruned %d artifact director(ies)", pruned)
+        except Exception:
+            log.exception("pruning run artifacts failed")
 
     async def _maintain(self, stop: asyncio.Event) -> None:
+        last_cleanup: float | None = None
         while not stop.is_set():
             try:
                 await self.vnc.tick(utcnow())
             except Exception:
                 log.exception("VNC maintenance tick failed")
+            if (
+                last_cleanup is None
+                or asyncio.get_running_loop().time() - last_cleanup >= CLEANUP_SECONDS
+            ):
+                last_cleanup = asyncio.get_running_loop().time()
+                await self._cleanup(utcnow())
             try:
                 await asyncio.wait_for(stop.wait(), timeout=MAINTENANCE_SECONDS)
             except TimeoutError:

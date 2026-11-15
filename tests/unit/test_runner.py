@@ -360,6 +360,33 @@ async def test_busy_persistent_profile_is_config_error(env):
     assert launches == []
 
 
+async def test_a_profile_held_by_a_live_browser_is_a_clear_config_error(env):
+    """The raw Playwright text is a 7 KB traceback labelled ``parser_error``.
+
+    Measured: when a leaked login browser kept ``SingletonLock``, every run
+    failed with "Failed to create a ProcessSingleton for your profile
+    directory", which blamed the parser instead of the environment.
+    """
+    from uwp.browser import ProfileInUse
+
+    runner, site, job, _, _, _, _ = env
+    profile = await runner.profiles.create_persistent("main")
+    site = site.model_copy(
+        update={"profile_mode": ProfileKind.persistent, "profile_id": profile.id}
+    )
+
+    async def locked(*a, **kw):
+        raise ProfileInUse("профиль занят другим браузером (pid 753)")
+
+    runner.launcher = locked
+    out = await runner.run(site, job, proxy=None)
+
+    assert out.status == RunStatus.failed
+    assert out.error_kind == ErrorKind.config_error
+    assert "занят" in out.error
+    assert "Traceback" not in out.error
+
+
 async def test_proxy_bridge_is_started_and_stopped(env):
     runner, site, job, _, db, launches, bridges = env
     proxy = Proxy(name="p", scheme=ProxyScheme.http, host="10.0.0.1", port=8080)
