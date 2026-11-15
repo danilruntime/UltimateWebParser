@@ -150,8 +150,11 @@ class Runner:
             if exc.partial_rows:
                 outcome.rows = exc.partial_rows
                 try:
+                    # ``complete=False``: these rows are a truncated slice, so
+                    # the rows missing from it are not evidence of a sale ending
+                    # and must not be flagged absent.
                     new_keys, changed_keys, vanished = await self._save_rows(
-                        site, exc.partial_rows
+                        site, exc.partial_rows, complete=False
                     )
                     outcome.new_count = len(new_keys)
                     outcome.duration_ms = int((time.monotonic() - started) * 1000)
@@ -312,7 +315,7 @@ class Runner:
         )
 
     async def _save_rows(
-        self, site: Site, rows: list[dict]
+        self, site: Site, rows: list[dict], *, complete: bool = True
     ) -> tuple[set[str], set[str], int]:
         """Store every row; return the new keys, changed keys and vanished count.
 
@@ -322,9 +325,12 @@ class Runner:
 
         A row counts as new when it was never stored (``created``) or when the
         previous run did not see it (``returned``): a discount that ends and
-        comes back must show up again. Rows the run did not see are flagged
-        afterwards, so they can return on the next run and so ``vanished``
-        counts this run's disappearances instead of the whole history.
+        comes back must show up again.
+
+        ``complete=False`` means the row list is a truncated slice (a partial
+        run). Presence is then left untouched: rows missing from a captcha'd
+        page are not evidence that anything disappeared, and flagging them
+        would turn the next full run into a mass of false new rows.
         """
         now = utcnow()
         parser = self.registry.get(site.parser_key)
@@ -352,7 +358,7 @@ class Runner:
             ):
                 changed_keys.add(key)
 
-        vanished = await self.items.settle(site.id, seen)
+        vanished = await self.items.settle(site.id, seen) if complete else 0
         return new_keys, changed_keys, vanished
 
 

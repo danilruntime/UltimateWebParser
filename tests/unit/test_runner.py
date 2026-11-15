@@ -203,6 +203,27 @@ async def test_a_row_that_comes_back_is_new_again(env):
     assert await ItemsRepo(db).count(1) == 2
 
 
+async def test_a_partial_run_does_not_mark_unseen_rows_absent(env):
+    """A captcha on page 2 is not evidence that the rest of the catalog is gone.
+
+    ``_save_rows`` also stores partial rows. Treating that truncated slice as
+    the run's full presence would mark every unseen row absent, and the next
+    complete run would report the whole catalog as new.
+    """
+    runner, site, job, _, db, *_ = env
+    await runner.run(site, job, proxy=None)  # stores rows 1 and 2
+
+    FakeParser.behavior = "partial"  # only row 9 arrives, then a captcha
+    out = await runner.run(site, job, proxy=None)
+    assert out.status == RunStatus.partial
+
+    FakeParser.behavior = "ok"
+    complete = await runner.run(site, job, proxy=None)
+
+    assert complete.new_count == 0
+    assert await ItemsRepo(db).count(1) == 3
+
+
 async def test_vanished_counts_only_rows_missing_from_this_run(env):
     runner, site, job, *_ = env
     await runner.run(site, job, proxy=None)  # stores rows 1 and 2
