@@ -108,6 +108,10 @@ async def _pretend_ready(monkeypatch, vnc):
     # The host may well have 6100 published by a real deployment; the port
     # check has its own test.
     monkeypatch.setattr(vnc, "_port_is_free", lambda *_args: True)
+    # ``_wait_for_websockify`` really connects to the port, so without this the
+    # test only passed while some foreign listener owned 6100. Websockify
+    # readiness has dedicated tests below.
+    monkeypatch.setattr(vnc, "_wait_for_websockify", ready)
 
 
 async def _factory_env(tmp_path):
