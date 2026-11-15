@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import yaml
@@ -158,6 +159,21 @@ def test_env_example_lists_the_required_variables():
         "UWP_NO_SANDBOX",
     ):
         assert f"{name}=" in text
+
+
+def test_env_example_documents_every_setting():
+    """The README says «полный список» — a new setting must not silently skip it.
+
+    A commented default (``# UWP_X=...``) counts as documented: ``UWP_NO_SANDBOX``
+    and the VNC listen host are deliberately left at the image default.
+    """
+    from uwp.config import Settings
+
+    text = (ROOT / ".env.example").read_text(encoding="utf-8")
+    documented = set(re.findall(r"^#?\s*(UWP_[A-Z0-9_]+)=", text, re.MULTILINE))
+
+    expected = {f"UWP_{name.upper()}" for name in Settings.model_fields}
+    assert expected - documented == set()
 
 
 def test_env_example_documents_the_telegram_proxy():
