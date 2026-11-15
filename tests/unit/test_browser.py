@@ -3,6 +3,8 @@ import os
 import random
 import socket
 import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -160,10 +162,16 @@ async def test_launch_refuses_a_profile_a_live_browser_holds(tmp_path, monkeypat
     identity = random_identity(random.Random(7))
     profile = tmp_path / "prof"
     profile.mkdir()
-    _lock_on(profile, os.getpid())
+    # A real process that names this profile, so it *is* the browser owner.
+    holder = _process_on(profile)
+    _lock_on(profile, holder.pid)
 
-    with pytest.raises(ProfileInUse, match=str(os.getpid())):
-        await browser_mod.launch(settings, identity, profile, None)
+    try:
+        with pytest.raises(ProfileInUse, match=str(holder.pid)):
+            await browser_mod.launch(settings, identity, profile, None)
+    finally:
+        holder.kill()
+        holder.wait()
 
     assert chromium.kwargs == {}, "no browser may be started on a held profile"
 
@@ -214,21 +222,115 @@ def test_a_lock_of_a_live_browser_is_left_alone(tmp_path):
     profile = tmp_path / "prof"
     profile.mkdir()
     _lock_on(profile, os.getpid())
+    # The pytest process is alive but does not use the profile; pretend it is
+    # the browser the lock names, which is the case this rule protects.
+    import uwp.browser as browser_mod
 
-    assert clear_stale_singleton_lock(profile) is False
+    original = browser_mod._owns_profile
+    browser_mod._owns_profile = lambda pid, path: pid == os.getpid()
+    try:
+        assert clear_stale_singleton_lock(profile) is False
+    finally:
+        browser_mod._owns_profile = original
     assert (profile / "SingletonLock").is_symlink()
 
 
-def test_a_lock_from_another_host_is_left_alone(tmp_path):
-    """The pid of another machine says nothing about ours."""
+def test_owns_profile_reads_the_user_data_dir_from_the_command_line(tmp_path):
+    """The only evidence that a pid is *the* browser, not a reused number."""
+    from uwp.browser import _owns_profile
+
+    profile = tmp_path / "prof"
+    profile.mkdir()
+    holder = _process_on(profile)
+    try:
+        assert _owns_profile(holder.pid, profile) is True
+        assert _owns_profile(os.getpid(), profile) is False
+    finally:
+        holder.kill()
+        holder.wait()
+
+
+def _process_on(profile: Path) -> subprocess.Popen:
+    """A live process whose command line names ``profile`` as its data dir."""
+    return subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)", f"--user-data-dir={profile}"]
+    )
+
+
+def test_a_previous_containers_lock_is_removed(tmp_path):
+    """Measured on ForSteam: the lock named ``fedora-147``.
+
+    A combined container wrote it while a login browser was open; the split
+    worker that replaced it has hostname ``7417efec8aad`` and no pid 147, so
+    the lock looked like "another computer" forever and Chromium refused every
+    launch with "The profile appears to be in use by another Chromium process
+    (147) on another computer (fedora)".
+
+    Chromium stores the path of its own mount namespace in ``SingletonSocket``.
+    That temp directory dies with the container, and a socket that cannot be
+    connected to proves the owner cannot be running any more.
+    """
+    from uwp.browser import clear_stale_singleton_lock
+
+    profile = tmp_path / "prof"
+    profile.mkdir()
+    (profile / "SingletonLock").symlink_to("some-other-host-4242")
+    (profile / "SingletonCookie").symlink_to("12345678901234567890")
+    (profile / "SingletonSocket").symlink_to(
+        str(tmp_path / "gone-namespace" / "SingletonSocket")
+    )
+
+    assert clear_stale_singleton_lock(profile) is True
+    assert list(profile.iterdir()) == []
+
+
+def test_a_lock_of_a_live_browser_on_another_host_is_left_alone(tmp_path):
+    """A listening socket means the browser really is using the profile."""
+    from uwp.browser import clear_stale_singleton_lock
+
+    profile = tmp_path / "prof"
+    profile.mkdir()
+    socket_path = tmp_path / "SingletonSocket"
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(str(socket_path))
+    listener.listen(1)
+    try:
+        (profile / "SingletonLock").symlink_to("some-other-host-4242")
+        (profile / "SingletonCookie").symlink_to("12345678901234567890")
+        (profile / "SingletonSocket").symlink_to(str(socket_path))
+
+        assert clear_stale_singleton_lock(profile) is False
+        assert (profile / "SingletonLock").is_symlink()
+    finally:
+        listener.close()
+
+
+def test_a_lock_without_singleton_socket_is_removed(tmp_path):
+    """Chromium writes all three files; a lone lock is a leftover."""
     from uwp.browser import clear_stale_singleton_lock
 
     profile = tmp_path / "prof"
     profile.mkdir()
     (profile / "SingletonLock").symlink_to("some-other-host-4242")
 
-    assert clear_stale_singleton_lock(profile) is False
-    assert (profile / "SingletonLock").is_symlink()
+    assert clear_stale_singleton_lock(profile) is True
+    assert list(profile.iterdir()) == []
+
+
+def test_prepare_profile_clears_a_previous_containers_lock(tmp_path):
+    """The login stack must not fail on a lock its own namespace cannot hold."""
+    from uwp.browser import prepare_profile
+
+    profile = tmp_path / "prof"
+    profile.mkdir()
+    (profile / "SingletonLock").symlink_to("some-other-host-4242")
+    (profile / "SingletonSocket").symlink_to(
+        str(tmp_path / "gone-namespace" / "SingletonSocket")
+    )
+
+    prepare_profile(profile)
+
+    assert not (profile / "SingletonLock").is_symlink()
 
 
 def test_a_profile_without_a_lock_is_untouched(tmp_path):

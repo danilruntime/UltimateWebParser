@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from uwp import secretbox
-from uwp.browser import clear_stale_singleton_lock
+from uwp.browser import prepare_profile
 from uwp.config import Settings
 from uwp.db.repo.profiles import ProfilesRepo
 from uwp.db.repo.vnc import VncRepo
@@ -266,6 +266,27 @@ async def _wait_for_port(port: int, timeout: float) -> bool:
     return False
 
 
+async def _wait_for_browser(
+    process: asyncio.subprocess.Process, user_data_dir: Path, timeout: float
+) -> bool:
+    """Wait until the browser claims its profile, or report that it died.
+
+    A refused ``ProcessSingleton`` makes Chromium exit within a second while
+    Xvfb, x11vnc and websockify stay up, so the session looked healthy and
+    noVNC showed an empty desktop with no reason. Measured on ForSteam: the
+    browser logged "profile appears to be in use" and exited.
+    """
+    deadline = asyncio.get_running_loop().time() + timeout
+    lock = user_data_dir / "SingletonLock"
+    while asyncio.get_running_loop().time() < deadline:
+        if process.returncode is not None:
+            return False
+        if lock.is_symlink():
+            return True
+        await asyncio.sleep(0.05)
+    return process.returncode is None
+
+
 def _log_tail(path: Path, limit: int = 600) -> str:
     try:
         text = path.read_text(encoding="utf-8", errors="replace").strip()
@@ -296,8 +317,9 @@ def _default_process_factory(
         base_env = child_env()
         # A crashed parse run can leave Chromium's single-instance lock in the
         # shared persistent profile; the login browser would then refuse to
-        # start with "Failed to create a ProcessSingleton".
-        clear_stale_singleton_lock(Path(profile.user_data_dir))
+        # start with "Failed to create a ProcessSingleton". A lock that belongs
+        # to a browser which is really alive raises a readable error instead.
+        prepare_profile(Path(profile.user_data_dir))
         store = await _spawn(
             ["x11vnc", "-storepasswd", password, str(password_file)], env=base_env
         )
@@ -362,6 +384,7 @@ def _default_process_factory(
             ],
         ]
         processes: list[asyncio.subprocess.Process] = []
+        browser_process: asyncio.subprocess.Process | None = None
         stack: _Stack | None = None
         try:
             # fluxbox reads its toolbar settings from ``$HOME/.fluxbox``, so it
@@ -393,8 +416,19 @@ def _default_process_factory(
                     env = wm_env
                 else:
                     env = base_env
-                processes.append(await _spawn(command, stderr=log_file, env=env))
-            # x11vnc binds its RFB port late; noVNC would show a blank page.
+                process = await _spawn(command, stderr=log_file, env=env)
+                processes.append(process)
+                if command[0] == executable:
+                    browser_process = process
+            # A browser that died on the profile lock leaves Xvfb and x11vnc
+            # healthy, so the stack would report success over an empty desktop.
+            assert browser_process is not None, "the command list always starts a browser"
+            if not await _wait_for_browser(
+                browser_process, Path(profile.user_data_dir), READY_TIMEOUT
+            ):
+                raise RuntimeError(
+                    f"браузер не запустился: {_log_tail(log_name, 2000)}"
+                )
             if not await _wait_for_port(vnc_port, READY_TIMEOUT):
                 raise RuntimeError(
                     f"x11vnc не слушает порт {vnc_port}: {_log_tail(log_name)}"

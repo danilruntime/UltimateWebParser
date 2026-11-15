@@ -49,6 +49,57 @@ def _is_alive(pid: int) -> bool:
     return True
 
 
+def _owns_profile(pid: int, user_data_dir: Path) -> bool:
+    """Whether ``pid`` is a browser whose command line names this profile.
+
+    A pid from a lock can outlive its process: container pid namespaces start
+    from 1 again, so an unrelated process may sit on the number a previous
+    browser used. Treating it as the owner blocks the profile forever. When the
+    command line cannot be read (another user), assume the browser is real.
+    """
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return True
+    if not raw:
+        # A zombie or a process between fork and exec: too early to judge.
+        return True
+    wanted = os.path.realpath(user_data_dir)
+    for arg in raw.split(b"\0"):
+        if not arg.startswith(b"--user-data-dir="):
+            continue
+        value = arg.split(b"=", 1)[1].decode(errors="replace")
+        if os.path.realpath(value) == wanted:
+            return True
+    return False
+
+
+def _socket_is_live(user_data_dir: Path) -> bool:
+    """Whether the browser behind a foreign-host lock still listens here.
+
+    Chromium puts ``SingletonSocket`` in a temp directory of its *own* mount
+    namespace, so a recreated container leaves a lock naming a path that cannot
+    exist any more. Connecting is the same liveness probe Chromium uses for a
+    lock from the same host; a successful connect means the browser is real.
+    """
+    link = user_data_dir / "SingletonSocket"
+    try:
+        target = os.readlink(link)
+    except OSError:
+        return False
+    if not os.path.isabs(target):
+        target = str(link.parent / target)
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        probe.settimeout(0.2)
+        probe.connect(target)
+    except OSError:
+        return False
+    finally:
+        probe.close()
+    return True
+
+
 def clear_stale_singleton_lock(user_data_dir: Path) -> bool:
     """Drop Chromium's single-instance files when their owner is gone.
 
@@ -57,9 +108,14 @@ def clear_stale_singleton_lock(user_data_dir: Path) -> bool:
     leftovers still broke every launch with "Failed to create a ProcessSingleton
     for your profile directory" / "SingletonLock: File exists".
 
-    Only an orphaned lock is removed. A lock from a *live* process on this host
-    is the browser actually using the profile, and a lock from another hostname
-    cannot be checked at all, so both are left for Chromium to judge.
+    A lock from the same hostname is kept while its pid is alive. A lock from a
+    *different* hostname is normally another machine sharing the profile, which
+    this deployment does not support (SQLite lives in the same directory). It is
+    usually a recreated container: Docker gives every new container a new
+    hostname, so the lock names a process that cannot be checked locally.
+    Chromium then refuses the profile forever with "appears to be in use by
+    another Chromium process on another computer". Such a lock is removed unless
+    its socket still accepts connections, which proves the browser is alive.
     """
     link = user_data_dir / "SingletonLock"
     if not link.is_symlink():
@@ -68,22 +124,14 @@ def clear_stale_singleton_lock(user_data_dir: Path) -> bool:
     if owner is None:
         return False
     host, pid = owner
-    if host != socket.gethostname() or _is_alive(pid):
+    if host == socket.gethostname():
+        if _is_alive(pid) and _owns_profile(pid, user_data_dir):
+            return False
+    elif _socket_is_live(user_data_dir):
         return False
     for name in SINGLETON_FILES:
         (user_data_dir / name).unlink(missing_ok=True)
     return True
-
-
-def live_lock_pid(user_data_dir: Path) -> int | None:
-    """Pid of the browser holding this profile, if it is still running here."""
-    owner = _lock_owner(user_data_dir / "SingletonLock")
-    if owner is None:
-        return None
-    host, pid = owner
-    if host != socket.gethostname() or not _is_alive(pid):
-        return None
-    return pid
 
 
 def prepare_profile(user_data_dir: Path) -> None:
@@ -94,12 +142,19 @@ def prepare_profile(user_data_dir: Path) -> None:
     that reads like a parser bug.
     """
     clear_stale_singleton_lock(user_data_dir)
-    pid = live_lock_pid(user_data_dir)
-    if pid is not None:
+    owner = _lock_owner(user_data_dir / "SingletonLock")
+    if owner is None:
+        return
+    host, pid = owner
+    if host == socket.gethostname():
         raise ProfileInUse(
             f"профиль уже открыт другим браузером (pid {pid}); "
             "закройте сессию входа или дождитесь её завершения"
         )
+    raise ProfileInUse(
+        f"профиль уже открыт браузером на хосте {host}; "
+        "закройте сессию входа или дождитесь её завершения"
+    )
 
 
 

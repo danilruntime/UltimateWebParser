@@ -104,6 +104,7 @@ async def _pretend_ready(monkeypatch, vnc):
 
     monkeypatch.setattr(vnc, "_wait_for_path", ready)
     monkeypatch.setattr(vnc, "_wait_for_port", ready)
+    monkeypatch.setattr(vnc, "_wait_for_browser", ready)
 
 
 async def _factory_env(tmp_path):
@@ -412,6 +413,71 @@ async def test_default_factory_kills_partial_stack_on_failure(tmp_path, monkeypa
     assert [p.command[0] for p in spawned] == ["x11vnc", "Xvfb"]
     # The storepasswd helper already exited; the running Xvfb must be killed.
     assert spawned[1].terminated
+
+
+async def test_default_factory_reports_a_browser_that_died(tmp_path, monkeypatch):
+    """A refused profile lock left Xvfb healthy and noVNC blank, with no reason."""
+    from uwp import vnc
+
+    settings, profile = await _factory_env(tmp_path)
+    spawned: list[FakeSpawned] = []
+
+    async def fake_spawn(command, **kw):
+        # Chromium exits at once when it cannot take its profile lock.
+        process = FakeSpawned(
+            command, returncode=1 if command[0] == str(settings.browser_path) else None
+        )
+        spawned.append(process)
+        return process
+
+    monkeypatch.setattr(vnc, "_spawn", fake_spawn)
+    # Only the slow readiness probes are faked here; the browser probe is real.
+    async def ready(*_args, **_kwargs):
+        return True
+
+    monkeypatch.setattr(vnc, "_wait_for_path", ready)
+    monkeypatch.setattr(vnc, "_wait_for_port", ready)
+
+    with pytest.raises(RuntimeError, match="браузер не запустился"):
+        await vnc._default_process_factory(settings)(
+            display=100,
+            port=6100,
+            password="pw",
+            profile=profile,
+            url="https://example.com",
+            proxy_url=None,
+        )
+
+    # The stack that was still running is stopped, so no X server leaks. The
+    # first entry is the short-lived ``-storepasswd`` helper.
+    stack = spawned[1:]
+    assert all(p.terminated for p in stack if p.returncode is None)
+
+
+async def test_wait_for_browser_reports_an_exit_before_the_lock(tmp_path):
+    """The readiness probe must not wait out its timeout for a dead browser."""
+    from uwp import vnc
+
+    class Exited:
+        returncode = 1
+
+    profile = tmp_path / "prof"
+    profile.mkdir()
+
+    assert await vnc._wait_for_browser(Exited(), profile, 5.0) is False
+
+
+async def test_wait_for_browser_accepts_a_live_browser_with_a_lock(tmp_path):
+    from uwp import vnc
+
+    class Running:
+        returncode = None
+
+    profile = tmp_path / "prof"
+    profile.mkdir()
+    (profile / "SingletonLock").symlink_to("host-1")
+
+    assert await vnc._wait_for_browser(Running(), profile, 5.0) is True
 
 
 async def test_client_count_reads_the_hook_marker(tmp_path):
