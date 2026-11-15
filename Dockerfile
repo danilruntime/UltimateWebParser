@@ -32,8 +32,13 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     UWP_BROWSER_PATH=/opt/uwp/browser/chrome \
-    UWP_NO_SANDBOX=true \
     UWP_DATA_DIR=/data
+
+# ``UWP_NO_SANDBOX`` is deliberately *not* set: Chromium builds its own sandbox
+# from user namespaces, and ``docker/seccomp-uwp.json`` lets it. See
+# ``docker/README-seccomp.md`` for the two relaxed rules and the measurements.
+# An operator who cannot use the profile still has the escape hatch:
+# ``UWP_NO_SANDBOX=true``.
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -63,6 +68,7 @@ ENV PATH="/opt/venv/bin:${PATH}"
 
 COPY --from=browser /opt/uwp/browser /opt/uwp/browser
 COPY docker/entrypoint.sh /entrypoint.sh
+COPY docker/seccomp-uwp.json docker/README-seccomp.md /opt/uwp/seccomp/
 RUN chmod +x /entrypoint.sh /opt/uwp/browser/chrome \
     && mkdir -p /data \
     && chown -R uwp:uwp /data /opt/uwp

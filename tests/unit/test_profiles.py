@@ -217,6 +217,19 @@ def test_browser_flags_omit_optional_flags(tmp_path):
     assert "--no-sandbox" not in flags
 
 
+def test_browser_flags_never_sandbox_the_renderer_by_default(tmp_path):
+    """Playwright adds ``--no-sandbox`` itself unless it is asked not to.
+
+    Without an explicit ``chromium_sandbox=True`` the renderer runs unconfined
+    and a compromised page reads the bot token out of ``/proc/<pid>/environ``.
+    """
+    ident = random_identity(random.Random(7))
+    assert "--no-sandbox" not in browser_flags(ident, tmp_path, None, headless=True)
+    assert "--no-sandbox" in browser_flags(
+        ident, tmp_path, None, headless=True, no_sandbox=True
+    )
+
+
 def test_browser_flags_size_a_headful_window(tmp_path):
     ident = identity_from_seed(7)
 

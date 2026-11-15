@@ -41,6 +41,11 @@ services:
       UWP_DATA_DIR: /data
     volumes:
       - ./data:/data:z
+    # Chromium builds its sandbox from user namespaces, which Docker's stock
+    # seccomp profile refuses. This profile relaxes exactly the three rules that
+    # block it; see docker/README-seccomp.md.
+    security_opt:
+      - seccomp=./docker/seccomp-uwp.json
     shm_size: 1gb
     ports:
       - "6000-6100:6000-6100"

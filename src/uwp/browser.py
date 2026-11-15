@@ -71,6 +71,12 @@ async def launch(
             locale=identity.locale,
             timezone_id=identity.timezone,
             ignore_default_args=["--enable-automation"],
+            # Playwright appends ``--no-sandbox`` itself unless this is True, so
+            # leaving it unset silently disables the renderer sandbox even when
+            # ``browser_flags`` never asked for it. An operator can still force
+            # the old behaviour with ``UWP_NO_SANDBOX=true`` (that path also
+            # adds the flag through ``browser_flags``).
+            chromium_sandbox=not settings.no_sandbox,
         )
     except BaseException:
         await playwright.stop()

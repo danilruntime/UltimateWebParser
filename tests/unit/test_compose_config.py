@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import yaml
@@ -59,7 +60,54 @@ def test_dockerfile_uses_tini_and_unprivileged_user():
     # drops to the unprivileged user before running the CLI.
     assert "USER uwp" not in text
     assert "UWP_BROWSER_PATH=/opt/uwp/browser/chrome" in text
-    assert "UWP_NO_SANDBOX=true" in text
+    # The sandbox is on by default; ``UWP_NO_SANDBOX`` must appear only in the
+    # comment that documents the escape hatch.
+    assert "\n    UWP_NO_SANDBOX=true" not in text
+
+
+def test_the_image_ships_the_seccomp_profile():
+    text = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "docker/seccomp-uwp.json" in text
+    assert (ROOT / "docker" / "seccomp-uwp.json").is_file()
+
+
+def test_seccomp_profile_keeps_the_three_relaxations():
+    """Docker's stock profile blocks Chromium's sandbox in three places.
+
+    Regenerating the profile from upstream silently drops them, and the only
+    symptom is ``No usable sandbox`` at runtime, so pin the three edits here.
+    """
+    profile = json.loads((ROOT / "docker" / "seccomp-uwp.json").read_text(encoding="utf-8"))
+    rules = {tuple(sorted(rule.get("names") or [])): rule for rule in profile["syscalls"]}
+
+    # The one added rule: unshare, but only CLONE_NEWNS (0x20000).
+    unshare = rules[("unshare",)]
+    assert unshare["action"] == "SCMP_ACT_ALLOW"
+    assert unshare["args"] == [{"index": 0, "value": 131072, "op": "SCMP_CMP_MASKED_EQ"}]
+
+    # ``clone`` must accept CLONE_NEWNS alone, not only the stock all-flags mask.
+    clones = [r for r in profile["syscalls"] if (r.get("names") or []) == ["clone"]]
+    x86 = next(r for r in clones if "s390" not in json.dumps(r.get("includes", {})))
+    assert x86["args"][0]["value"] == 131072
+
+    # ``clone3`` must be allowed, not ENOSYS.
+    clone3 = [r for r in profile["syscalls"] if (r.get("names") or []) == ["clone3"]]
+    assert [r["action"] for r in clone3] == ["SCMP_ACT_ALLOW"]
+
+
+def test_compose_mounts_the_seccomp_profile():
+    """Only the services that launch a browser need it."""
+    for name in ("compose.yaml", "compose.split.yaml"):
+        cfg = yaml.safe_load((ROOT / name).read_text(encoding="utf-8"))
+        browser_services = {
+            svc_name: svc
+            for svc_name, svc in cfg["services"].items()
+            if svc.get("command") in (None, ["run"], ["worker"])
+        }
+        assert browser_services, name
+        for svc in browser_services.values():
+            assert "seccomp=./docker/seccomp-uwp.json" in svc["security_opt"], name
 
 
 def test_entrypoint_execs_the_cli():
