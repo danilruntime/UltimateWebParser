@@ -20,18 +20,30 @@ Measured, uid 1000, `ultimate-web-parser:latest`:
 | `seccomp=unconfined` | no | renders, renderer gets its own userns+pidns |
 | patched profile (allows `CLONE_NEWUSER`) | no | renders, renderer isolated |
 
-Why the default profile blocks it: the `clone` rule requires **all** namespace
-flags at once (`2114060288 == 0x7E020000`), and `clone3` is forced to `ENOSYS`
-without `CAP_SYS_ADMIN`. Chromium asks for `CLONE_NEWUSER` alone
-(`0x10000000`).
+Why the default profile blocks it — three rules, each verified by removing it
+and watching `No usable sandbox` come back:
+
+| Rule | Stock | Needed |
+|---|---|---|
+| `clone` | matches only when every namespace flag is set (`2114060288 == 0x7E020000`) | match `CLONE_NEWNS` alone (`131072 == 0x20000`) |
+| `clone3` | `SCMP_ACT_ERRNO` (ENOSYS) without `CAP_SYS_ADMIN` | `SCMP_ACT_ALLOW` |
+| `unshare` | allowed only with `CAP_SYS_ADMIN` | a dedicated rule for `CLONE_NEWNS` |
+
+My first guess was `CLONE_NEWUSER`; it was wrong. Measured: `clone` with
+`NEWUSER`, `NEWUSER|NEWNS`, `NEWUSER|NEWPID` and the stock all-flags mask all
+fail, while `NEWNS` alone succeeds. The relaxations stay narrow — `mount`,
+`setns` and `unshare(CLONE_NEWUSER)` are still refused for uid 1000.`
 
 In the sandboxed configuration the renderer cannot see `/data`, cannot read the
 app's `/proc/<pid>/environ`, and has `NoNewPrivs: 1`.
 
-Plan: ship `docker/seccomp-uwp.json` (Docker's default profile with exactly two
-rules relaxed), drop `UWP_NO_SANDBOX` from the image, pass
+Plan: ship `docker/seccomp-uwp.json` (Docker's default profile with exactly the
+three rules above relaxed), drop `UWP_NO_SANDBOX` from the image, pass
 `chromium_sandbox=True` from `browser.py`, and set
 `security_opt: ["seccomp=./docker/seccomp-uwp.json"]` in both compose files.
+Verified in the rebuilt image through the application's own `launch()` and
+through the VNC process factory: renderer gets its own user and mount
+namespace, `NoNewPrivs: 1`, cannot see `/data` or the app's environment.
 
 ## Problem 2 — Steam prices and reviews break outside `en`/`us`
 
