@@ -14,6 +14,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 
 from uwp.config import Settings, load_settings
+from uwp.env import hide_process_environment
 from uwp.seed import SEED_SITE_NAME
 
 log = logging.getLogger(__name__)
@@ -186,7 +187,9 @@ def _check_telegram_proxy(proxy: str, online: bool = True) -> tuple[str, bool, s
     return (label, reason is None, reason or "")
 
 
-def cmd_doctor(settings: Settings, quiet: bool = False, offline: bool = False) -> int:
+def cmd_doctor(
+    settings: Settings, quiet: bool = False, offline: bool = False, worker: bool = False
+) -> int:
     from uwp.browser import BrowserUnavailable, resolve_browser
 
     checks: list[tuple[str, bool, bool]] = []  # (text, ok, is_warning)
@@ -265,7 +268,10 @@ def cmd_doctor(settings: Settings, quiet: bool = False, offline: bool = False) -
             first_line = output.splitlines()[0] if output else ""
             check("драйвер playwright", completed.returncode == 0, first_line)
 
-    check("UWP_BOT_TOKEN", bool(settings.bot_token), "не задан")
+    # The split worker never polls Telegram, so a deployment that keeps the
+    # token out of its environment is correct, not broken.
+    if not worker:
+        check("UWP_BOT_TOKEN", bool(settings.bot_token), "не задан")
     check("UWP_ADMIN_IDS", bool(settings.admin_ids), "пусто")
     if settings.telegram_proxy:
         check(*_check_telegram_proxy(settings.telegram_proxy, online=not offline))
@@ -750,6 +756,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="не ходить в сеть (так его зовёт healthcheck контейнера)",
     )
+    doctor.add_argument(
+        "--worker",
+        action="store_true",
+        help="процесс без Telegram: UWP_BOT_TOKEN не требуется",
+    )
 
     browser = sub.add_parser("browser", help="управление браузером")
     browser_sub = browser.add_subparsers(dest="browser_command", required=True)
@@ -827,6 +838,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     # all written by this process. The default 022 umask would make them
     # world-readable on the host (``./data`` is a bind mount).
     os.umask(0o077)
+    # This process holds UWP_BOT_TOKEN and UWP_SECRET_KEY in its environment.
+    # The VNC browser runs as the same uid, so ``file:///proc/<pid>/environ``
+    # would hand both to any page that escapes Chromium's sandbox.
+    hide_process_environment()
     logging.basicConfig(
         level=os.environ.get("UWP_LOG_LEVEL", "WARNING"),
         format="%(levelname)s %(name)s: %(message)s",
@@ -837,7 +852,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "init":
         return cmd_init(settings)
     if args.command == "doctor":
-        return cmd_doctor(settings, quiet=args.quiet, offline=args.offline)
+        return cmd_doctor(
+            settings, quiet=args.quiet, offline=args.offline, worker=args.worker
+        )
     if args.command == "browser":
         return cmd_browser_install(
             settings,

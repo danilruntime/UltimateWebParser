@@ -39,6 +39,10 @@ services:
         required: false
     environment:
       UWP_DATA_DIR: /data
+      # The worker never polls Telegram: only ``bot`` needs the token. Both
+      # services read the same ``.env``, so blank it here instead of leaving a
+      # live secret in the process that also runs a browser.
+      UWP_BOT_TOKEN: ""
     volumes:
       - ./data:/data:z
     # Chromium builds its sandbox from user namespaces, which Docker's stock
@@ -56,7 +60,8 @@ services:
       # Through the entrypoint: the check must run as uid 1000, not root.
       # --offline: the proxy probe crosses a third-party proxy, and its
       # slowness must not mark a working container unhealthy.
-      test: ["CMD", "/entrypoint.sh", "doctor", "--offline", "--quiet"]
+      # --worker: this process has no bot token on purpose.
+      test: ["CMD", "/entrypoint.sh", "doctor", "--offline", "--quiet", "--worker"]
       interval: 60s
       timeout: 30s
       start_period: 30s

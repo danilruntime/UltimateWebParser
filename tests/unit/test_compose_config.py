@@ -31,6 +31,29 @@ def test_split_compose_worker_owns_vnc_ports():
     assert cfg["services"]["worker"]["command"] == ["worker"]
 
 
+def test_split_worker_does_not_receive_the_bot_token():
+    """Only the bot polls Telegram; the worker has no use for the token.
+
+    Both services read the same ``.env``, so the worker has to blank the token
+    explicitly. Leaving it in place puts a live secret into a second process
+    that also runs a browser.
+    """
+    cfg = yaml.safe_load((ROOT / "compose.split.yaml").read_text(encoding="utf-8"))
+
+    assert cfg["services"]["worker"]["environment"]["UWP_BOT_TOKEN"] == ""
+    # The bot keeps whatever ``.env`` provides.
+    assert "UWP_BOT_TOKEN" not in cfg["services"]["bot"].get("environment", {})
+
+
+def test_the_split_worker_healthcheck_knows_it_has_no_token():
+    """``doctor`` fails without the token unless it is told this is a worker."""
+    cfg = yaml.safe_load((ROOT / "compose.split.yaml").read_text(encoding="utf-8"))
+
+    worker_check = cfg["services"]["worker"]["healthcheck"]["test"]
+    assert "--worker" in worker_check
+    assert "--worker" not in cfg["services"]["bot"]["healthcheck"]["test"]
+
+
 def test_dockerfile_pins_browser_sha():
     text = (ROOT / "Dockerfile").read_text(encoding="utf-8")
 

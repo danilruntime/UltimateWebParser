@@ -31,6 +31,44 @@ def test_doctor_quiet_prints_nothing_on_failure(capsys, monkeypatch, tmp_path):
     assert capsys.readouterr().out == ""
 
 
+def test_doctor_does_not_require_a_bot_token_for_the_worker(capsys, monkeypatch, tmp_path):
+    """The worker never polls Telegram, so it must start without the token.
+
+    A split deployment deliberately keeps ``UWP_BOT_TOKEN`` out of the worker's
+    environment; the healthcheck calls ``doctor``, so requiring the token there
+    would mark a correctly configured worker unhealthy forever.
+    """
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("UWP_BROWSER_PATH", "/bin/true")
+    monkeypatch.delenv("UWP_BOT_TOKEN", raising=False)
+    monkeypatch.setenv("UWP_ADMIN_IDS", "1")
+    monkeypatch.setenv("UWP_SECRET_KEY", "k" * 32)
+    monkeypatch.delenv("UWP_TELEGRAM_PROXY", raising=False)
+    # pydantic also reads ``.env`` from the working directory; a stray token
+    # there would make this test pass for the wrong reason.
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["doctor", "--offline", "--worker"]) == 0
+
+    out = capsys.readouterr().out
+    assert "UWP_BOT_TOKEN" not in out
+
+
+def test_doctor_still_requires_a_bot_token_for_the_bot(capsys, monkeypatch, tmp_path):
+    """The bot process is exactly the one that needs the token."""
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("UWP_BROWSER_PATH", "/bin/true")
+    monkeypatch.delenv("UWP_BOT_TOKEN", raising=False)
+    monkeypatch.setenv("UWP_ADMIN_IDS", "1")
+    monkeypatch.setenv("UWP_SECRET_KEY", "k" * 32)
+    monkeypatch.delenv("UWP_TELEGRAM_PROXY", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["doctor", "--offline"]) == 1
+
+    assert "UWP_BOT_TOKEN" in capsys.readouterr().out
+
+
 def test_site_add_and_list(capsys, monkeypatch, tmp_path):
     monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
 
