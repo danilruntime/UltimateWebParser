@@ -312,6 +312,18 @@ new game still writes a report (`report_status == "written"`).
 
 Record both runs in the plan's evidence table before claiming success.
 
+Evidence, measured after rebuilding `uwp-worker` from `86d77e7`:
+
+| run | rows | new | report | note |
+|---|---|---|---|---|
+| 72 | 49 | 0 | **written** | old code still in the container |
+| 73 | 49 | 1 | written | one game back on sale; the file is correct |
+| 74 | 49 | 0 | **not written** | 10 rows drifted in `Отзывов, шт`, no event emitted |
+
+`events` holds no row for run 74 (`select count(*) ... where run_id=74` → 0),
+while run 73 produced one `run_finished` with `report_status=written`.
+Before the fix the same comparison produced a file on 43 of 63 runs.
+
 ## Verification
 
 - Negative control: temporarily revert the `tracked` filter in `_save_rows` — the volatile test must fail again.
