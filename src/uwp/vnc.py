@@ -12,6 +12,7 @@ import logging
 import secrets
 import shlex
 import shutil
+import socket
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -287,6 +288,27 @@ async def _wait_for_browser(
     return process.returncode is None
 
 
+def _port_is_free(host: str, port: int) -> bool:
+    """Tell whether ``websockify`` could bind the noVNC port right now.
+
+    Two deployments on one machine share the published band; the loser's
+    websockify exits with ``OSError: [Errno 98] Address already in use`` while
+    the rest of the stack stays healthy. Asking the kernel first turns that into
+    a readable error before anything is started.
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        # A listener still owns the port; ``SO_REUSEADDR`` only forgives sockets
+        # left in TIME_WAIT, so this does not hide a live collision.
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        probe.bind((host, port))
+    except OSError:
+        return False
+    finally:
+        probe.close()
+    return True
+
+
 async def _wait_for_websockify(
     process: asyncio.subprocess.Process, port: int, timeout: float
 ) -> bool:
@@ -312,7 +334,10 @@ async def _wait_for_websockify(
             await writer.wait_closed()
         except OSError:
             pass
-        return True
+        # An accept only proves *someone* listens. The bind error lands a moment
+        # after the socket exists, so give the child a chance to reveal it.
+        await asyncio.sleep(0.2)
+        return process.returncode is None
     # The published port is the whole point of this process: no listener means
     # the link would not work, whatever the process is still doing.
     return False
@@ -351,6 +376,13 @@ def _default_process_factory(
         # start with "Failed to create a ProcessSingleton". A lock that belongs
         # to a browser which is really alive raises a readable error instead.
         prepare_profile(Path(profile.user_data_dir))
+        # A second deployment (combined plus split) shares the published band;
+        # the loser's websockify would die and leave a link that resets the
+        # connection. Refuse before spending time on Xvfb and Chromium.
+        if not _port_is_free(settings.vnc_listen_host, port):
+            raise RuntimeError(
+                f"порт {port} уже занят: похоже, запущен второй стек UWP"
+            )
         store = await _spawn(
             ["x11vnc", "-storepasswd", password, str(password_file)], env=base_env
         )

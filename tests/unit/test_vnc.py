@@ -105,6 +105,9 @@ async def _pretend_ready(monkeypatch, vnc):
     monkeypatch.setattr(vnc, "_wait_for_path", ready)
     monkeypatch.setattr(vnc, "_wait_for_port", ready)
     monkeypatch.setattr(vnc, "_wait_for_browser", ready)
+    # The host may well have 6100 published by a real deployment; the port
+    # check has its own test.
+    monkeypatch.setattr(vnc, "_port_is_free", lambda *_args: True)
 
 
 async def _factory_env(tmp_path):
@@ -437,6 +440,7 @@ async def test_default_factory_reports_a_browser_that_died(tmp_path, monkeypatch
 
     monkeypatch.setattr(vnc, "_wait_for_path", ready)
     monkeypatch.setattr(vnc, "_wait_for_port", ready)
+    monkeypatch.setattr(vnc, "_port_is_free", lambda *_args: True)
 
     with pytest.raises(RuntimeError, match="браузер не запустился"):
         await vnc._default_process_factory(settings)(
@@ -508,6 +512,8 @@ async def test_default_factory_fails_when_websockify_cannot_bind(tmp_path, monke
     monkeypatch.setattr(vnc, "_wait_for_path", ready)
     # x11vnc's RFB port is fine; only the published noVNC port is dead.
     monkeypatch.setattr(vnc, "_wait_for_browser", ready)
+    # The host may publish 6100 for real; only the noVNC readiness matters here.
+    monkeypatch.setattr(vnc, "_port_is_free", lambda *_args: True)
 
     with pytest.raises(RuntimeError, match="websockify"):
         await vnc._default_process_factory(settings)(
@@ -522,6 +528,46 @@ async def test_default_factory_fails_when_websockify_cannot_bind(tmp_path, monke
     assert all(p.terminated for p in spawned[1:] if p.returncode is None)
 
 
+async def test_default_factory_refuses_a_taken_port_before_spawning(
+    tmp_path, monkeypatch
+):
+    """Measured: the port was held by the other deployment's docker-proxy.
+
+    The stack used to start, websockify died on ``EADDRINUSE`` and the admin got
+    a link that resets the connection. The port must be checked before anything
+    is spawned.
+    """
+    from uwp import vnc
+
+    settings, profile = await _factory_env(tmp_path)
+    spawned: list[FakeSpawned] = []
+
+    async def fake_spawn(command, **kw):
+        spawned.append(FakeSpawned(command))
+        return spawned[-1]
+
+    monkeypatch.setattr(vnc, "_spawn", fake_spawn)
+
+    holder = socket.socket()
+    holder.bind(("0.0.0.0", 0))
+    holder.listen(1)
+    port = holder.getsockname()[1]
+    try:
+        with pytest.raises(RuntimeError, match=str(port)):
+            await vnc._default_process_factory(settings)(
+                display=100,
+                port=port,
+                password="pw",
+                profile=profile,
+                url="https://example.com",
+                proxy_url=None,
+            )
+    finally:
+        holder.close()
+
+    assert spawned == []
+
+
 async def test_wait_for_websockify_reports_an_exit(tmp_path):
     """A dead listener must not pass for a live one, even if the port answers."""
     from uwp import vnc
@@ -530,6 +576,46 @@ async def test_wait_for_websockify_reports_an_exit(tmp_path):
         returncode = 1
 
     assert await vnc._wait_for_websockify(Exited(), 6100, 5.0) is False
+
+
+async def test_wait_for_websockify_ignores_a_foreign_listener(tmp_path):
+    """Somebody else's listener must not vouch for a websockify that just died."""
+    from uwp import vnc
+
+    class Exited:
+        returncode = 1
+
+    holder = socket.socket()
+    holder.bind(("127.0.0.1", 0))
+    holder.listen(1)
+    port = holder.getsockname()[1]
+    try:
+        assert await vnc._wait_for_websockify(Exited(), port, 5.0) is False
+    finally:
+        holder.close()
+
+
+async def test_wait_for_websockify_rejects_a_process_dying_on_bind(tmp_path):
+    """``EADDRINUSE`` lands a moment after the first accept; do not trust it."""
+    from uwp import vnc
+
+    class DiesSoon:
+        def __init__(self):
+            self.reads = 0
+
+        @property
+        def returncode(self):
+            self.reads += 1
+            return None if self.reads == 1 else 1
+
+    holder = socket.socket()
+    holder.bind(("127.0.0.1", 0))
+    holder.listen(1)
+    port = holder.getsockname()[1]
+    try:
+        assert await vnc._wait_for_websockify(DiesSoon(), port, 5.0) is False
+    finally:
+        holder.close()
 
 
 async def test_wait_for_websockify_needs_an_open_port(tmp_path):
