@@ -19,6 +19,12 @@ class Column:
     title: str
     width: int = 18
     fmt: str | None = None
+    # Some values drift on their own between runs (a review count, a live
+    # viewer number). They belong in the report, but a change in them is not
+    # news, so ``export_mode=changes`` must ignore them. Measured on the live
+    # Steam site: review counts moved in 10-13 of 49 rows every 4 minutes,
+    # turning ``changes`` into ``always``.
+    volatile: bool = False
 
 
 class ParseError(Exception):

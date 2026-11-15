@@ -341,7 +341,14 @@ class Runner:
         """
         now = utcnow()
         parser = self.registry.get(site.parser_key)
-        tracked = [column.key for column in parser.columns] if parser else []
+        # Volatile columns stay in the report and in the stored payload; only
+        # the change detection ignores them, or a drifting counter would make
+        # ``export_mode=changes`` write a file on every run.
+        tracked = (
+            [column.key for column in parser.columns if not column.volatile]
+            if parser
+            else []
+        )
         new_keys: set[str] = set()
         changed_keys: set[str] = set()
         seen: set[str] = set()

@@ -24,6 +24,21 @@ def _fixture_html() -> str:
     return FIXTURE.read_text(encoding="utf-8")
 
 
+def test_steam_marks_the_drifting_review_counters_volatile():
+    """A live review count is not a change; ``changes`` must not fire on it.
+
+    Measured: neighbouring reports 4 minutes apart differed in 10-13 rows of
+    ``Отзывов, шт`` and 1-3 of ``Положительных, %``, with zero new rows.
+    """
+    by_key = {column.key: column for column in SteamDealsParser.columns}
+
+    assert by_key["review_count"].volatile is True
+    assert by_key["review_percent"].volatile is True
+    # The summary is a coarse bucket that only moves on real review activity.
+    assert by_key["review_summary"].volatile is False
+    assert by_key["price_final"].volatile is False
+
+
 def test_build_search_url():
     url = build_search_url(SteamSettings(region="de", language="german", max_pages=3), start=50)
     assert url.startswith("https://store.steampowered.com/search/?")

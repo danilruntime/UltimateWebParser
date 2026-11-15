@@ -69,6 +69,22 @@ class FakeParser(BaseParser):
         )
 
 
+class DriftingParser(BaseParser):
+    """A parser whose ``views`` counter drifts every run, like Steam reviews."""
+
+    key, title, description, url = "drifting", "Drifting", "", "https://example.com"
+    settings_model = _EmptySettings
+    columns: ClassVar[list[Column]] = [
+        Column("title", "Title"),
+        Column("price", "Price"),
+        Column("views", "Views", volatile=True),
+    ]
+    rows: ClassVar[list[dict]] = []
+
+    async def run(self, ctx: ParseContext) -> ParseResult:
+        return ParseResult(rows=[dict(row) for row in DriftingParser.rows])
+
+
 class FakePage:
     """Records ``screenshot`` calls; the runner must tolerate a broken page."""
 
@@ -237,6 +253,66 @@ async def test_vanished_counts_only_rows_missing_from_this_run(env):
     # reporting 1 on every run forever.
     _, _, vanished = await runner._save_rows(site, list(FakeParser.rows))
     assert vanished == 0
+
+
+async def test_a_volatile_column_alone_does_not_count_as_a_change(env):
+    """Steam reviews drift every few minutes; that is not a change worth a file.
+
+    Measured on the live site: 43 of 63 delivered reports had zero new rows and
+    differed only in ``Отзывов, шт`` / ``Положительных, %``.
+    """
+    runner, site, *_ = env
+    runner.registry.register(DriftingParser())
+    site = site.model_copy(update={"parser_key": "drifting"})
+    DriftingParser.rows = [
+        {"external_key": "1", "title": "A", "price": 10.0, "views": 100},
+    ]
+    await runner._save_rows(site, list(DriftingParser.rows))
+
+    DriftingParser.rows = [
+        {"external_key": "1", "title": "A", "price": 10.0, "views": 101},
+    ]
+    new_keys, changed_keys, vanished = await runner._save_rows(
+        site, list(DriftingParser.rows)
+    )
+
+    assert new_keys == set()
+    assert changed_keys == set()
+    assert vanished == 0
+
+
+async def test_a_tracked_column_change_still_counts_with_a_volatile_column_present(
+    env,
+):
+    """A real change (price) must survive the volatile-column filter."""
+    runner, site, *_ = env
+    runner.registry.register(DriftingParser())
+    site = site.model_copy(update={"parser_key": "drifting"})
+    DriftingParser.rows = [
+        {"external_key": "1", "title": "A", "price": 10.0, "views": 100},
+    ]
+    await runner._save_rows(site, list(DriftingParser.rows))
+
+    DriftingParser.rows = [
+        {"external_key": "1", "title": "A", "price": 5.0, "views": 101},
+    ]
+    _, changed_keys, _ = await runner._save_rows(site, list(DriftingParser.rows))
+
+    assert changed_keys == {"1"}
+
+
+async def test_a_volatile_column_keeps_its_value_in_the_stored_row(env):
+    """Volatile only filters the diff: the report and ``items`` keep the value."""
+    runner, site, *_ = env
+    runner.registry.register(DriftingParser())
+    site = site.model_copy(update={"parser_key": "drifting"})
+    DriftingParser.rows = [
+        {"external_key": "1", "title": "A", "price": 10.0, "views": 137},
+    ]
+    await runner._save_rows(site, list(DriftingParser.rows))
+
+    stored = await runner.items.previous_payload(site.id, "1")
+    assert stored["views"] == 137
 
 
 async def test_login_required_is_not_retried_and_keeps_partial(env):

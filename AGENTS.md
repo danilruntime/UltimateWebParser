@@ -146,6 +146,11 @@ gets one refusal and the handler never runs.
 for new/changed detection. `runner._row_key` raises `ValueError` without it.
 A row that vanishes and later returns is new again (`items.absent`).
 
+**A self-drifting column must be `volatile=True`.** `export_mode=changes`
+compares every non-volatile column, so a live counter (a review count, a viewer
+number) makes it fire on every run. `volatile` keeps the column in the report
+and out of the diff.
+
 **Browser env is an allowlist.** `env.browser_env()` strips everything except
 `BROWSER_ENV_KEYS`. Adding a variable there leaks it to page-controlled
 processes. `env.hide_process_environment()` sets `PR_SET_DUMPABLE=0` so the VNC

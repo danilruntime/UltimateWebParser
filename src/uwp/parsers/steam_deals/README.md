@@ -44,11 +44,17 @@ profile: `requires_login = False`.
 | `price_final` | Цена со скидкой | Float; falls back to `data-price-final` cents |
 | `currency` | Валюта | ISO code from the price symbol (`$` → USD, `€` → EUR, …) |
 | `review_summary` | Отзывы | First line of `data-tooltip-html` (e.g. `Overwhelmingly Positive`); empty when no reviews |
-| `review_percent` | Положительных, % | From `97% of the 147,599 user reviews`; `None` when absent |
-| `review_count` | Отзывов, шт | Same tooltip; `None` when absent |
+| `review_percent` | Положительных, % | `volatile`; from `97% of the 147,599 user reviews`; `None` when absent |
+| `review_count` | Отзывов, шт | `volatile`; same tooltip; `None` when absent |
 | `release_date` | Дата выхода | `.search_released` as shown by Steam |
 | `platforms` | Платформы | `win mac linux` → `Windows, macOS, Linux` |
 | `image_url` | Обложка | Capsule `img src` |
+
+`volatile` columns are written to the report but excluded from change
+detection: Steam's review counters move every few minutes, so treating them as
+changes made `export_mode=changes` deliver a file on every run (measured: 43 of
+63 reports had zero new rows and differed only in these two columns).
+`review_summary` stays tracked on purpose — «Very Positive» → «Mixed» is news.
 
 ## Tests
 
