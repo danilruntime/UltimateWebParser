@@ -13,20 +13,66 @@ SEARCH_URL = "https://store.steampowered.com/search/"
 PAGE_SIZE = 50
 
 _PLATFORMS = {"win": "Windows", "mac": "macOS", "linux": "Linux"}
-# Longest symbol first: ``R$``/``CDN$`` would otherwise match the bare ``$``.
+# Ordered longest-symbol-first so ``CDN$`` wins over ``$`` and ``R$`` over ``R``.
+# Captured from live store pages in 48 regions; the region cannot be used as the
+# key because the store renders whatever wallet the session holds (``cz`` served
+# ``€``, ``tr`` served ``$``), so the symbol on the page is the only honest source.
 _CURRENCY_SYMBOLS = (
     ("CDN$", "CAD"),
+    ("Mex$", "MXN"),
+    ("COL$", "COP"),
+    ("CLP$", "CLP"),
+    ("HK$", "HKD"),
+    ("NT$", "TWD"),
+    ("NZ$", "NZD"),
+    ("A$", "AUD"),
+    ("C$", "CAD"),
+    ("S$", "SGD"),
     ("R$", "BRL"),
+    ("Rp", "IDR"),
+    ("RM", "MYR"),
+    ("S/.", "PEN"),
+    ("CHF", "CHF"),
+    ("AED", "AED"),
+    ("SR", "SAR"),
+    ("руб", "RUB"),
+    ("zł", "PLN"),
+    ("kr", "NOK"),
     ("$", "USD"),
     ("€", "EUR"),
     ("£", "GBP"),
     ("₽", "RUB"),
     ("¥", "JPY"),
     ("₴", "UAH"),
+    ("₸", "KZT"),
+    ("₪", "ILS"),
+    ("₱", "PHP"),
+    ("฿", "THB"),
+    ("₫", "VND"),
+    ("₹", "INR"),
+    # ``R`` last: it is also a prefix of ``R$`` and a suffix of nothing else.
+    ("R", "ZAR"),
 )
-_CURRENCY_CODES = {"USD", "EUR", "GBP", "RUB", "UAH", "JPY", "KZT", "BRL", "CAD", "TRY", "PLN"}
+_CURRENCY_CODES = {
+    "USD", "EUR", "GBP", "RUB", "UAH", "JPY", "KZT", "BRL", "CAD", "TRY", "PLN",
+    "AUD", "CHF", "INR", "IDR", "MYR", "NOK", "PHP", "THB", "VND", "TWD", "HKD",
+    "SGD", "NZD", "MXN", "CLP", "COP", "PEN", "ZAR", "SAR", "AED", "ILS", "CNY",
+    "SEK", "DKK",
+}
+# A few glyphs denote different currencies in different stores, so the symbol
+# alone cannot decide. The region is consulted *only* for these.
+_AMBIGUOUS_SYMBOLS: dict[str, dict[str, str]] = {
+    "¥": {"jp": "JPY", "cn": "CNY", "tw": "TWD"},
+    "kr": {"no": "NOK", "se": "SEK", "dk": "DKK"},
+}
+_AMBIGUOUS_DEFAULT = {"¥": "JPY", "kr": "NOK"}
 
-_REVIEW_RE = re.compile(r"(\d+)%\s+of\s+the\s+([\d,]+)\s+user\s+reviews", re.IGNORECASE)
+# Structural split, not a sentence: the store localises the review line, and an
+# English-only regex left both fields ``None`` on every non-English page.
+_REVIEW_BREAK_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
+_TAG_RE = re.compile(r"<[^>]+>")
+_PERCENT_RE = re.compile(r"(\d[\d\s.,]*)\s*%")
+_REVIEW_NUMBER_RE = re.compile(r"\d[\d\s.,]*\d|\d")
 _NUMBER_RE = re.compile(r"-?\d[\d,.\s]*")
 
 
@@ -69,22 +115,38 @@ def _text(node: Tag | None) -> str:
     return node.get_text(strip=True) if node is not None else ""
 
 
-def _parse_price(text: str) -> tuple[float | None, str]:
+def _parse_price(text: str, region: str | None = None) -> tuple[float | None, str]:
     """Parse ``$19.99`` / ``4,99€`` / ``1.234,56€`` into a float and an ISO currency code.
 
     Steam formats the same amount as ``1,234.56`` or ``1.234,56`` depending on
     the store region, and sometimes uses a space as the thousands separator.
     When both separators are present the rightmost one is the decimal point;
     with a single separator it is decimal only if 1-2 digits follow it.
+
+    ``region`` is consulted only for glyphs that mean different currencies in
+    different stores (``¥`` is JPY in Japan and CNY in China); every other
+    symbol decides on its own, because the store renders whatever wallet the
+    session holds regardless of ``cc``.
     """
     text = text.strip()
     if not text:
         return None, ""
     currency = ""
+    # Only a prefix or a suffix counts: a symbol buried inside the digits would
+    # be a decoding artefact, not a currency marker.
+    head = text.lstrip("0123456789 -")
+    tail = text.rstrip("0123456789 .-")
     for symbol, code in _CURRENCY_SYMBOLS:
-        if symbol in text:
+        if not (head.startswith(symbol) or tail.endswith(symbol)):
+            continue
+        ambiguous = _AMBIGUOUS_SYMBOLS.get(symbol)
+        if ambiguous is not None:
+            currency = ambiguous.get(
+                (region or "").lower(), _AMBIGUOUS_DEFAULT[symbol]
+            )
+        else:
             currency = code
-            break
+        break
     if not currency:
         for token in re.findall(r"[A-Z]{3}", text):
             if token in _CURRENCY_CODES:
@@ -129,15 +191,42 @@ def _parse_discount(node: Tag | None) -> int:
 
 
 def _parse_review(row: Tag) -> tuple[str, int | None, int | None]:
+    """Split the tooltip structurally: the store localises the sentence.
+
+    ``97% of the 147,599 user reviews``, ``96% из 139,634 обзоров``,
+    ``97 % der 29,219 Nutzerrezensionen`` and ``52,966 篇用户评测中有 96%`` all
+    have the same shape: a summary, then exactly one percentage and one count,
+    in either order. The percentage is whichever number carries ``%``; the
+    count is the largest remaining number.
+    """
     summary_node = row.select_one(".search_review_summary")
     if summary_node is None:
         return "", None, None
     tooltip = summary_node.get("data-tooltip-html") or ""
-    summary = tooltip.split("<br>")[0].strip()
-    match = _REVIEW_RE.search(tooltip)
-    if match is None:
-        return summary, None, None
-    return summary, int(match.group(1)), int(match.group(2).replace(",", ""))
+    parts = _REVIEW_BREAK_RE.split(tooltip)
+    summary = parts[0].strip()
+    # The figures live in the second segment; later segments are prose notes
+    # ("review bombing excluded", a year, and so on) and their digits must not
+    # be mistaken for the count.
+    rest = _TAG_RE.sub(" ", parts[1] if len(parts) > 1 else "")
+    percent = None
+    consumed: list[int] = []
+    match = _PERCENT_RE.search(rest)
+    if match is not None:
+        digits = re.sub(r"[,.\s]", "", match.group(1))
+        if digits.isdigit() and 0 <= int(digits) <= 100:
+            percent = int(digits)
+            consumed = list(range(match.start(), match.end()))
+    counts = []
+    for number in _REVIEW_NUMBER_RE.finditer(rest):
+        if number.start() in consumed:
+            continue
+        # Thousands separators only: ``139,634`` / ``29.219`` / ``1 234``.
+        digits = re.sub(r"[,.]", "", re.sub(r"\s", "", number.group(0)))
+        if digits.isdigit():
+            counts.append(int(digits))
+    count = max(counts) if counts else None
+    return summary, percent, count
 
 
 def _parse_platforms(row: Tag) -> str:
@@ -149,7 +238,7 @@ def _parse_platforms(row: Tag) -> str:
     return ", ".join(names)
 
 
-def _parse_row(row: Tag) -> dict | None:
+def _parse_row(row: Tag, region: str | None = None) -> dict | None:
     app_id = (row.get("data-ds-appid") or "").split(",")[0].strip()
     discount = _parse_discount(row.select_one(".discount_pct"))
     if not app_id or discount <= 0:
@@ -159,8 +248,12 @@ def _parse_row(row: Tag) -> dict | None:
     parts = urlsplit(href)
     url = urlunsplit((parts.scheme, parts.netloc, f"/app/{app_id}/", "", ""))
 
-    price_original, currency = _parse_price(_text(row.select_one(".discount_original_price")))
-    price_final, final_currency = _parse_price(_text(row.select_one(".discount_final_price")))
+    price_original, currency = _parse_price(
+        _text(row.select_one(".discount_original_price")), region=region
+    )
+    price_final, final_currency = _parse_price(
+        _text(row.select_one(".discount_final_price")), region=region
+    )
     if price_final is None:
         cents = row.select_one("[data-price-final]")
         if cents is not None and (cents.get("data-price-final") or "").isdigit():
@@ -194,7 +287,7 @@ def parse_search_page(html: str, settings: SteamSettings) -> list[dict]:
     soup = BeautifulSoup(html, "html.parser")
     rows = []
     for node in soup.select("a.search_result_row"):
-        row = _parse_row(node)
+        row = _parse_row(node, region=settings.region)
         if row is None:
             continue
         if row["discount_percent"] < settings.min_discount_percent:

@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 
 import pytest
+from bs4 import BeautifulSoup
 
 from uwp.domain import ErrorKind
 from uwp.parsers.base import ParseContext, ParseError
@@ -11,6 +12,7 @@ from uwp.parsers.steam_deals.parser import (
     SteamDealsParser,
     SteamSettings,
     _parse_price,
+    _parse_review,
     build_search_url,
     parse_search_page,
 )
@@ -151,6 +153,151 @@ def test_parse_price_keeps_a_negative_sign():
 def test_parse_price_reads_brazilian_and_canadian_dollars_as_their_own_currency():
     assert _parse_price("R$ 19,99") == (19.99, "BRL")
     assert _parse_price("CDN$ 19,99") == (19.99, "CAD")
+
+
+@pytest.mark.parametrize(
+    "text,currency",
+    [
+        # Captured from live store pages in 48 regions. A bare code on the right
+        # is what the store writes when the wallet's symbol is a word.
+        ("317 руб", "RUB"),
+        ("1269 руб", "RUB"),
+        ("19,99 zł", "PLN"),
+        ("7 040,00₸", "KZT"),
+        ("CHF 4.74", "CHF"),
+        ("₹1,200.00", "INR"),
+        ("Rp 227 999", "IDR"),
+        ("RM67.20", "MYR"),
+        ("55,00 kr", "NOK"),
+        ("R 252.00", "ZAR"),
+        ("73.60 AED", "AED"),
+        ("57.56 SR", "SAR"),
+        ("₪105.56", "ILS"),
+        ("₱840.00", "PHP"),
+        ("฿544.00", "THB"),
+        ("356.000₫", "VND"),
+        ("S/. 58.40", "PEN"),
+        ("COL$ 64.800,00", "COP"),
+        ("CLP$14.400", "CLP"),
+    ],
+)
+def test_parse_price_recognises_every_regional_symbol(text, currency):
+    """An unknown symbol used to yield ``""``; a wrong one is worse than none."""
+    value, got = _parse_price(text)
+    assert value is not None, text
+    assert got == currency, text
+
+
+@pytest.mark.parametrize(
+    "text,currency",
+    [
+        # All of these start with ``$`` and used to be reported as USD.
+        ("C$ 35.99", "CAD"),
+        ("CDN$ 35.99", "CAD"),
+        ("A$ 40.76", "AUD"),
+        ("Mex$ 311.99", "MXN"),
+        ("NT$ 113.00", "TWD"),
+        ("HK$ 34.24", "HKD"),
+        ("S$23.20", "SGD"),
+        ("NZ$ 39.99", "NZD"),
+        ("$26.65", "USD"),
+        ("¥2,520", "JPY"),
+    ],
+)
+def test_parse_price_does_not_report_every_dollar_sign_as_usd(text, currency):
+    assert _parse_price(text)[1] == currency, text
+
+
+@pytest.mark.parametrize(
+    "text,region,currency",
+    [
+        # The same glyph means different currencies, so the region decides.
+        ("¥2,520", "jp", "JPY"),
+        ("¥18.20", "cn", "CNY"),
+        ("55,00 kr", "no", "NOK"),
+        ("55,00 kr", "se", "SEK"),
+        ("55,00 kr", "dk", "DKK"),
+        # A region-aware hint must not override a symbol that is unambiguous.
+        ("19,99 zł", "de", "PLN"),
+        ("$26.65", "ca", "USD"),
+    ],
+)
+def test_parse_price_uses_the_region_only_for_ambiguous_symbols(text, region, currency):
+    assert _parse_price(text, region=region)[1] == currency, text
+
+
+def test_parse_search_page_passes_the_region_to_price_parsing():
+    """A Chinese store page lists ``¥`` prices; they are CNY, not JPY."""
+    html = """
+    <a class="search_result_row" data-ds-appid="9" href="https://store.steampowered.com/app/9/Z/">
+      <span class="title">CNY game</span>
+      <div class="discount_block" data-discount="50">
+        <div class="discount_pct">-50%</div>
+        <div class="discount_original_price">¥36.40</div>
+        <div class="discount_final_price">¥18.20</div>
+      </div>
+    </a>
+    """
+    rows = parse_search_page(html, SteamSettings(region="cn"))
+    assert rows[0]["currency"] == "CNY"
+    assert rows[0]["price_final"] == 18.20
+
+
+@pytest.mark.parametrize(
+    "tooltip,summary,percent,count",
+    [
+        # English, as the fixture holds it.
+        (
+            "Overwhelmingly Positive&lt;br&gt;97% of the 147,599 user reviews for this game are positive.",
+            "Overwhelmingly Positive",
+            97,
+            147599,
+        ),
+        # Russian: ``96% из 139,634 обзоров положительные``.
+        (
+            "Крайне положительные&lt;br&gt;96% из 139,634 обзоров положительные.",
+            "Крайне положительные",
+            96,
+            139634,
+        ),
+        # German uses a thin space inside the count.
+        (
+            "Äußerst positiv&lt;br&gt;97 % der 29,219 Nutzerrezensionen für dieses Spiel sind positiv.",
+            "Äußerst positiv",
+            97,
+            29219,
+        ),
+        # Chinese puts the count before the percent and uses no separator.
+        (
+            "好评如潮&lt;br&gt;此游戏的 52,966 篇用户评测中有 96% 为好评。",
+            "好评如潮",
+            96,
+            52966,
+        ),
+        # Polish: ``88% z 1 234 recenzji``.
+        (
+            "Bardzo pozytywne&lt;br&gt;88% z 1 234 recenzji użytkowników jest pozytywnych.",
+            "Bardzo pozytywne",
+            88,
+            1234,
+        ),
+        # A stray extra number must not be mistaken for the review count.
+        (
+            "Very Positive&lt;br&gt;93% of the 143 user reviews for this game are positive.&lt;br&gt;&lt;br&gt;2024 edition",
+            "Very Positive",
+            93,
+            143,
+        ),
+    ],
+)
+def test_parse_review_reads_a_localised_tooltip(tooltip, summary, percent, count):
+    """The English-only regex left both fields ``None`` on every non-en page."""
+    row = BeautifulSoup(
+        f'<a class="search_result_row"><div class="search_review_summary" '
+        f'data-tooltip-html="{tooltip}"></div></a>',
+        "html.parser",
+    ).select_one("a")
+    assert _parse_review(row) == (summary, percent, count)
 
 
 def test_parser_metadata_and_columns():
