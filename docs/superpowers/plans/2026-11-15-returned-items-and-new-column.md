@@ -53,15 +53,20 @@ Files: `src/uwp/migrations/004_items_absent.sql` (create),
 Interfaces:
 - `ItemsRepo.upsert(...) -> UpsertResult` (was `bool`).
 - `UpsertResult(created: bool, returned: bool)`, property `is_new`.
-- `ItemsRepo.mark_all_absent(site_id: int) -> None`.
-- `ItemsRepo.absent_count(site_id: int) -> int`.
+- `ItemsRepo.settle(site_id: int, seen: set[str]) -> int` — flags the rows
+  this run did not see and returns how many disappeared *now*.
 
-The migration adds the column and backfills `absent = 1` for every existing
-row: no earlier run recorded presence, so claiming otherwise would make the
-first post-migration run report every historical row as vanished.
+The migration adds the column and leaves existing rows `NULL`. Backfilling 0
+would report the whole history as vanished on the first run after the upgrade;
+backfilling 1 would report it as new.
 
-- [ ] Failing tests: created vs returned, `is_new`, absent reset by upsert,
-      `absent_count`, migration backfill on a database stopped at version 3.
+`settle` has to handle `NULL` rows explicitly: a legacy row that is never
+settled would stay `NULL` forever, so a game returning after the upgrade would
+not be reported — the exact case this feature exists for. It is settled to
+`absent = 1` without being counted, so the next sighting is new.
+
+- [ ] Failing tests: created vs returned, `is_new`, `settle` counting, migration
+      backfill on a database stopped at version 3, legacy-row normalisation.
 - [ ] Implement migration + repo; run the file.
 - [ ] Commit.
 
@@ -70,10 +75,10 @@ first post-migration run report every historical row as vanished.
 Files: `src/uwp/runner.py` (`_save_rows`), `tests/unit/test_runner.py`.
 
 `_save_rows` validates and dedups every row before it touches the database,
-then calls `mark_all_absent`, upserts, and reads `absent_count`.
+upserts them, then calls `settle`.
 
 - [ ] Failing tests: `[A,B] → [] → [A,B]` makes both rows new again;
-      `[A,B] → [A] → [A]` reports vanished 0 on the third run.
+      `[A,B] → [A] → [A]` reports vanished 1 then 0.
 - [ ] Implement; run the file.
 - [ ] Commit.
 
@@ -90,3 +95,20 @@ Files: `src/uwp/reports.py`, `tests/unit/test_reports.py`, `README.md`.
 - [ ] `pytest` (full suite) and `ruff check src tests`.
 - [ ] Rebuild and recreate the container, confirm a fresh report carries the
       column against the live `steam_skidki` site.
+
+## Verification
+
+Full suite `474 passed, 3 skipped`; `ruff check src tests` clean. Mutation-tested:
+sourcing new keys from `result.created` only, dropping `settle`, reinstating the
+mode gate, counting legacy `NULL` rows as vanished, and never settling them —
+each makes the new tests fail.
+
+Live, in the running container:
+
+| run | rows | new | note |
+|---|---|---|---|
+| 40 (post-upgrade) | 20 | 0 | 209 legacy rows settled to `absent = 1`, none counted |
+| 41 (two rows flagged by hand) | 20 | 2 | `Новое` = «да» for exactly those two |
+
+Header of the delivered report ends with `…, Платформы, Обложка, Новое`; no run
+of the upgrade reported a phantom mass disappearance.
