@@ -329,7 +329,6 @@ class Runner:
         now = utcnow()
         parser = self.registry.get(site.parser_key)
         tracked = [column.key for column in parser.columns] if parser else []
-        present = await self.items.present_keys(site.id)
         new_keys: set[str] = set()
         changed_keys: set[str] = set()
         seen: set[str] = set()
@@ -353,8 +352,8 @@ class Runner:
             ):
                 changed_keys.add(key)
 
-        await self.items.mark_absent(site.id, present - seen)
-        return new_keys, changed_keys, len(present - seen)
+        vanished = await self.items.settle(site.id, seen)
+        return new_keys, changed_keys, vanished
 
 
 

@@ -326,7 +326,7 @@ async def test_items_upsert_reports_a_returned_row_as_new(db):
     again = await items.upsert(sid, "k1", {"price": 10}, NOW + timedelta(minutes=5))
     assert (again.created, again.returned, again.is_new) == (False, False, False)
 
-    await items.mark_absent(sid, ["k1"])
+    await items.settle(sid, set())
     back = await items.upsert(sid, "k1", {"price": 10}, NOW + timedelta(minutes=10))
     assert (back.created, back.returned, back.is_new) == (False, True, True)
 
@@ -340,7 +340,7 @@ async def test_items_present_keys_hold_the_previous_run(db):
     assert await items.present_keys(sid) == {"a", "b", "c"}
 
     # A run that sees only ``a``: ``b`` and ``c`` are gone as of this run.
-    await items.mark_absent(sid, ["b", "c"])
+    await items.settle(sid, {"a"})
     assert await items.present_keys(sid) == {"a"}
 
     # ``b`` comes back: present again, and reported as new.
@@ -373,6 +373,58 @@ async def test_migration_backfills_absent_for_history(db, monkeypatch):
     # vanished nor returned on the first run after the upgrade.
     assert row["absent"] is None
     assert await ItemsRepo(db).present_keys(sid) == set()
+
+
+async def test_history_rows_are_normalised_by_the_first_run_that_misses_them(db, monkeypatch):
+    """A legacy NULL row must still be reported when it comes back.
+
+    Leaving it NULL forever would hide a returning game for the whole history
+    — exactly the case this feature exists for. The first run that does not
+    see it settles it to ``absent``, without counting it as a disappearance
+    (its presence was never established).
+    """
+    from uwp.db import database as database_module
+
+    real = database_module._load_migrations
+    monkeypatch.setattr(
+        database_module, "_load_migrations", lambda: [m for m in real() if m[0] <= 3]
+    )
+    await db.migrate()
+    sid = await SitesRepo(db).create(make_site("s"))
+    await db.execute(
+        "INSERT INTO items (site_id, external_key, payload, first_seen_at, last_seen_at)"
+        " VALUES (?, 'old', '{}', ?, ?)",
+        (sid, "2026-11-01T00:00:00Z", "2026-11-01T00:00:00Z"),
+    )
+    monkeypatch.setattr(database_module, "_load_migrations", real)
+    await db.migrate()
+    items = ItemsRepo(db)
+
+    assert await items.settle(sid, set()) == 0
+    row = await db.fetchone("SELECT absent FROM items WHERE external_key = 'old'")
+    assert row["absent"] == 1
+
+    back = await items.upsert(sid, "old", {}, NOW)
+    assert back.is_new is True
+
+
+async def test_settle_counts_only_rows_that_were_present(db):
+    sites, items = SitesRepo(db), ItemsRepo(db)
+    sid = await sites.create(make_site("s"))
+    for key in ("a", "b", "c"):
+        await items.upsert(sid, key, {"v": key}, NOW)
+
+    # ``b`` and ``c`` were present last run and are gone now.
+    assert await items.settle(sid, {"a"}) == 2
+    assert await items.present_keys(sid) == {"a"}
+
+    # Same input again: nothing new disappeared.
+    assert await items.settle(sid, {"a"}) == 0
+    assert await items.present_keys(sid) == {"a"}
+
+    # ``a`` is dropped too.
+    assert await items.settle(sid, set()) == 1
+    assert await items.present_keys(sid) == set()
 
 
 async def test_items_upsert_keeps_first_seen(db):

@@ -1,6 +1,5 @@
 """Repository for scraped items (used for "new" detection and change mode)."""
 import json
-from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -58,16 +57,30 @@ class ItemsRepo:
             )
             return UpsertResult(created=False, returned=returned)
 
-    async def mark_absent(self, site_id: int, keys: Iterable[str]) -> None:
-        """Flag rows the finished run did not see; the next sighting is new."""
-        keys = list(keys)
-        if not keys:
-            return
-        placeholders = ", ".join("?" for _ in keys)
-        await self.db.execute(
-            f"UPDATE items SET absent = 1 WHERE site_id = ? AND external_key IN ({placeholders})",
-            (site_id, *keys),
-        )
+    async def settle(self, site_id: int, seen: set[str]) -> int:
+        """Record this run's presence and return how many rows disappeared now.
+
+        Rows not in ``seen`` become ``absent``; legacy rows (``absent`` NULL,
+        stored before presence was tracked) are settled the same way but are
+        not counted: their presence was never established, so calling them
+        vanished would report the whole history on the first run after the
+        upgrade. Once settled they behave like any other row, so a comeback is
+        still new.
+        """
+        async with self.db.transaction():
+            missing = await self.db.fetchall(
+                "SELECT external_key, absent FROM items WHERE site_id = ?", (site_id,)
+            )
+            gone = [row["external_key"] for row in missing if row["external_key"] not in seen]
+            vanished = sum(1 for row in missing if row["external_key"] not in seen and row["absent"] == 0)
+            if gone:
+                placeholders = ", ".join("?" for _ in gone)
+                await self.db.execute(
+                    f"UPDATE items SET absent = 1"
+                    f" WHERE site_id = ? AND external_key IN ({placeholders})",
+                    (site_id, *gone),
+                )
+            return vanished
 
     async def present_keys(self, site_id: int) -> set[str]:
         """Keys that were present in the previous run (``absent IS NOT 1``).
