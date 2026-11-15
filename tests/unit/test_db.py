@@ -30,6 +30,14 @@ from uwp.timeutil import utcnow
 NOW = datetime(2026, 11, 13, 1, 20, tzinfo=UTC)
 
 
+async def present_keys(db, site_id: int) -> set[str]:
+    """Keys the previous run established as present (``absent`` 0)."""
+    rows = await db.fetchall(
+        "SELECT external_key FROM items WHERE site_id = ? AND absent = 0", (site_id,)
+    )
+    return {row["external_key"] for row in rows}
+
+
 @pytest.fixture
 async def db():
     d = await Database.in_memory()
@@ -337,16 +345,16 @@ async def test_items_present_keys_hold_the_previous_run(db):
 
     for key in ("a", "b", "c"):
         await items.upsert(sid, key, {"v": key}, NOW)
-    assert await items.present_keys(sid) == {"a", "b", "c"}
+    assert await present_keys(db, sid) == {"a", "b", "c"}
 
     # A run that sees only ``a``: ``b`` and ``c`` are gone as of this run.
     await items.settle(sid, {"a"})
-    assert await items.present_keys(sid) == {"a"}
+    assert await present_keys(db, sid) == {"a"}
 
     # ``b`` comes back: present again, and reported as new.
     come_back = await items.upsert(sid, "b", {"v": "b"}, NOW + timedelta(minutes=10))
     assert come_back.is_new is True
-    assert await items.present_keys(sid) == {"a", "b"}
+    assert await present_keys(db, sid) == {"a", "b"}
 
 
 async def test_migration_backfills_absent_for_history(db, monkeypatch):
@@ -372,7 +380,7 @@ async def test_migration_backfills_absent_for_history(db, monkeypatch):
     # Presence was never recorded for history, so it must read as neither
     # vanished nor returned on the first run after the upgrade.
     assert row["absent"] is None
-    assert await ItemsRepo(db).present_keys(sid) == set()
+    assert await present_keys(db, sid) == set()
 
 
 async def test_history_rows_are_normalised_by_the_first_run_that_misses_them(db, monkeypatch):
@@ -416,15 +424,15 @@ async def test_settle_counts_only_rows_that_were_present(db):
 
     # ``b`` and ``c`` were present last run and are gone now.
     assert await items.settle(sid, {"a"}) == 2
-    assert await items.present_keys(sid) == {"a"}
+    assert await present_keys(db, sid) == {"a"}
 
     # Same input again: nothing new disappeared.
     assert await items.settle(sid, {"a"}) == 0
-    assert await items.present_keys(sid) == {"a"}
+    assert await present_keys(db, sid) == {"a"}
 
     # ``a`` is dropped too.
     assert await items.settle(sid, set()) == 1
-    assert await items.present_keys(sid) == set()
+    assert await present_keys(db, sid) == set()
 
 
 async def test_items_upsert_keeps_first_seen(db):

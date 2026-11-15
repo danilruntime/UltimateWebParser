@@ -82,17 +82,6 @@ class ItemsRepo:
                 )
             return vanished
 
-    async def present_keys(self, site_id: int) -> set[str]:
-        """Keys that were present in the previous run (``absent IS NOT 1``).
-
-        Rows stored before the migration have ``absent`` NULL and are excluded:
-        their presence is unknown, not established.
-        """
-        rows = await self.db.fetchall(
-            "SELECT external_key FROM items WHERE site_id = ? AND absent = 0", (site_id,)
-        )
-        return {row["external_key"] for row in rows}
-
     async def previous_payload(self, site_id: int, external_key: str) -> dict[str, Any] | None:
         row = await self.db.fetchone(
             "SELECT payload FROM items WHERE site_id = ? AND external_key = ?",
