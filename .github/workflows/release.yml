@@ -1,0 +1,84 @@
+name: release
+
+# A release is a tag, and a tag is cheap to get wrong: `git tag v0.2 b1` or a
+# tag pushed before the version bump both create a page that claims something
+# the files do not. So the tag is checked against `pyproject.toml` before
+# anything is published, and the archives are built from the tagged commit — a
+# release that cannot be built is not a release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      # Installed before the tag is validated because `packaging` is a
+      # transitive dependency here, not a declared one; importing it first would
+      # rely on whatever a stock runner happens to ship.
+      - name: Install the package
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      # `v0.1b1` -> `0.1b1`. Anything PEP 440 rejects (a space, a stray `v`) is
+      # not a version pip can install, so it is not a release here either.
+      - name: The tag names the version in pyproject.toml
+        run: |
+          python - <<'PY'
+          import os
+          import sys
+          import tomllib
+          from pathlib import Path
+
+          from packaging.version import InvalidVersion, Version
+
+          tag = os.environ["GITHUB_REF_NAME"]
+          declared = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+
+          try:
+              tagged = Version(tag.removeprefix("v"))
+          except InvalidVersion:
+              sys.exit(f"tag {tag!r} is not a PEP 440 version")
+
+          if tagged != Version(declared):
+              sys.exit(f"tag {tag} names {tagged}, pyproject.toml says {declared}")
+
+          notes = Path("docs/releases") / f"{tag}.md"
+          if not notes.is_file():
+              sys.exit(f"{notes} is missing: a release page with no notes is a stub")
+
+          print(f"releasing {tagged}, notes from {notes}")
+          PY
+
+      # The suite must pass on the exact commit being released, not on the tip
+      # of `main`: a tag can point at an older commit than the last green run.
+      - name: Test
+        run: pytest
+
+      - name: Build the wheel and the sdist
+        run: |
+          pip install build
+          python -m build --outdir dist
+
+      # Attaching the archives makes the release self-contained: a reader can
+      # download what CI verified instead of rebuilding it from a tarball.
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file "docs/releases/$GITHUB_REF_NAME.md" \
+            --verify-tag

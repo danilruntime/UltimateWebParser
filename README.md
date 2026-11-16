@@ -10,6 +10,9 @@
 > change between beta releases. Migrations are append-only, so an upgrade never
 > loses rows; a downgrade is not supported.
 
+The release notes of the current version, including what is known to be limited,
+are in [`docs/releases/v0.1b1.md`](docs/releases/v0.1b1.md).
+
 
 A self-hosted scraping service: Playwright drives a patched Chromium
 (`fingerprint-chromium`) against sites, a Telegram bot controls it, results are
