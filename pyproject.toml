@@ -66,7 +66,11 @@ uwp = "uwp.cli:main"
 packages = ["src/uwp"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+# "." is not redundant: `test_registry.py` imports `tests.unit.parsers` as a
+# package, and `pytest` does not put the rootdir on `sys.path` the way
+# `python -m pytest` does. Without it those six tests pass locally and fail in
+# CI.
+pythonpath = ["src", "."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = [

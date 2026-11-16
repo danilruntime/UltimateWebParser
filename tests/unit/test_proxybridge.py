@@ -237,7 +237,12 @@ async def test_upstream_rejection_closes_client_and_logs_without_password(caplog
 
 async def test_unreachable_upstream_closes_client():
     # Grab a free port and close it so nothing listens there.
-    probe = await asyncio.start_server(lambda r, w: None, "127.0.0.1", 0)
+    async def close_immediately(reader, writer):
+        # 3.12's `wait_closed()` waits for accepted connections; 3.14 does not.
+        writer.close()
+        await writer.wait_closed()
+
+    probe = await asyncio.start_server(close_immediately, "127.0.0.1", 0)
     dead_port = probe.sockets[0].getsockname()[1]
     probe.close()
     await probe.wait_closed()

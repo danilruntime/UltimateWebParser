@@ -72,7 +72,15 @@ async def test_delete(env, tmp_path):
 
 
 async def test_test_reports_latency_for_an_open_port(env, tmp_path):
-    server = await asyncio.start_server(lambda r, w: None, "127.0.0.1", 0)
+    async def close_immediately(reader, writer):
+        # Python 3.12 counts accepted connections: `wait_closed()` below blocks
+        # until each one is gone, so a handler that ignores its socket hangs the
+        # test forever. 3.14 changed this and hid the bug locally — the CI job
+        # for 3.12 is what found it.
+        writer.close()
+        await writer.wait_closed()
+
+    server = await asyncio.start_server(close_immediately, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
     svc = ProxyService(ProxiesRepo(env), load_settings({"UWP_DATA_DIR": str(tmp_path)}))
     proxy = await svc.add("LOCAL", f"http://127.0.0.1:{port}")
