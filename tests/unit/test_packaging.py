@@ -106,6 +106,11 @@ def test_the_declared_version_is_a_valid_prerelease_and_matches_the_package():
     to build it. ``0.1b1`` is the canonical spelling of the same thing, and the
     metadata sheet of every report quotes ``uwp.__version__``, so a drift
     between the two files reaches the delivered ``.ods``.
+
+    This used to assert that the version *is* a prerelease on the 0.1 line: a
+    guard for the first release, which would have blocked the first stable one
+    outright. Canonical form is what actually mattered — ``v0.1`` parses to
+    ``0.1``, so pip would see a different version than the file states.
     """
     from packaging.version import Version
 
@@ -116,5 +121,4 @@ def test_the_declared_version_is_a_valid_prerelease_and_matches_the_package():
     assert declared == __version__, f"pyproject says {declared}, the package says {__version__}"
 
     version = Version(declared)
-    assert version.is_prerelease, f"{declared} is not a beta release"
-    assert version.release[:2] == (0, 1), f"{declared} is not the 0.1 line"
+    assert str(version) == declared, f"{declared} is not the canonical spelling of {version}"

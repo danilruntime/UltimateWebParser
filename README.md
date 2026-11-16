@@ -559,6 +559,35 @@ ruff check src tests
 
 ---
 
+## Making a release
+
+A release is a git tag: pushing one makes `.github/workflows/release.yml` build
+the wheel, run the suite on the tagged commit, and publish the GitHub release
+page from `docs/releases/v<version>.md`. No token is needed locally.
+
+```bash
+./scripts/release.sh beta      # 0.1b1 -> 0.1b2   next beta on the same line
+./scripts/release.sh release   # 0.1b1 -> 0.1     drop the beta label
+./scripts/release.sh minor     # 0.1b1 -> 0.2b1   start a new line
+```
+
+The script bumps `pyproject.toml` and `src/uwp/__init__.py` (the version lives
+in both, and a test fails if they drift), points both READMEs at the new notes
+file, writes those notes from the commits since the last tag, runs the suite,
+then commits and pushes the tag. A red suite means no tag — and the working
+tree is restored, so the next attempt starts clean.
+
+Two flags exist for looking before you leap:
+
+- `--dry-run` prints what would change and writes nothing.
+- `--no-push` stops after the commit and the tag, so you can inspect them.
+
+Passing a comment is impossible: the notes are generated. Edit
+`docs/releases/v<version>.md` and run the workflow manually (from `main`, with
+the tag as an input) to republish a page.
+
+---
+
 ## Troubleshooting
 
 | Symptom | What to do |

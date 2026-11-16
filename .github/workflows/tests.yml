@@ -46,6 +46,14 @@ jobs:
       - name: Lint
         run: ruff check src tests
 
+      # ruff does not read shell scripts, so a syntax error in the release script
+      # would first surface on a machine that was about to tag a release.
+      - name: The shell scripts parse
+        run: |
+          for script in scripts/*.sh; do
+            bash -n "$script" && echo "ok $script"
+          done
+
       - name: Test
         run: pytest
 
