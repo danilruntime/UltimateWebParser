@@ -12,10 +12,15 @@ on:
   # file was edited after the tag, or the page lacks `--prerelease`. Re-running
   # for an existing tag updates it instead of failing, so a fix to the notes
   # does not require deleting and re-creating a tag that others may have fetched.
+  #
+  # Run this **from `main`**, not from the tag: a tag created before this trigger
+  # existed has no `workflow_dispatch` in its copy of the file, and GitHub
+  # refuses with "Workflow does not exist or does not have a workflow_dispatch
+  # trigger in this tag". The code still comes from the tag via `checkout ref:`.
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to create or update, e.g. v0.1b1"
+        description: "Tag to create or update, e.g. v0.1b1 (run from main, not from the tag)"
         required: true
 
 permissions:
@@ -34,9 +39,15 @@ jobs:
       # `ref:` is what makes a manual run honest: without it the checkout would
       # be the default branch, and the release would test code the tag does not
       # contain.
+      #
+      # `fetch-depth: 0` is for the notes, not the history: notes are read from
+      # the *triggering* commit (see below), which for a dispatch is `main` and
+      # is therefore not an ancestor of the tag. A shallow clone would not have
+      # it, and the run would silently fall back to the tag's older notes.
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.tag || github.ref_name }}
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -75,12 +86,27 @@ jobs:
           if tagged != Version(declared):
               sys.exit(f"tag {tag} names {tagged}, pyproject.toml says {declared}")
 
-          notes = Path("docs/releases") / f"{tag}.md"
-          if not notes.is_file():
-              sys.exit(f"{notes} is missing: a release page with no notes is a stub")
-
-          print(f"releasing {tagged}, notes from {notes}")
+          print(f"releasing {tagged}")
           PY
+
+      # The tag carries the notes as they were when it was cut. A manual run is
+      # usually a *repair* of those notes, so the published text is taken from
+      # the commit that started the run: `GITHUB_SHA` is the tag on a tag push
+      # and the selected branch on a dispatch. Reading the file from the checked
+      # out tree instead would silently republish the stale text the repair was
+      # meant to replace — measured: the tag says «631 тест», `main` does not.
+      - name: Read the notes from the triggering commit
+        run: |
+          if ! git show "$GITHUB_SHA:docs/releases/$RELEASE_TAG.md" > "$RUNNER_TEMP/notes.md"; then
+            echo "docs/releases/$RELEASE_TAG.md does not exist at $GITHUB_SHA ($RELEASE_TAG)" >&2
+            echo "add it, push, then run this workflow again" >&2
+            exit 1
+          fi
+          if [ ! -s "$RUNNER_TEMP/notes.md" ]; then
+            echo "docs/releases/$RELEASE_TAG.md is empty at $GITHUB_SHA" >&2
+            exit 1
+          fi
+          wc -c "$RUNNER_TEMP/notes.md"
 
       # The suite must pass on the exact commit being released, not on the tip
       # of `main`: a tag can point at an older commit than the last green run.
@@ -116,13 +142,14 @@ jobs:
             echo "release $RELEASE_TAG exists, updating it"
             gh release edit "$RELEASE_TAG" \
               --title "$RELEASE_TAG" \
-              --notes-file "docs/releases/$RELEASE_TAG.md" \
+              --notes-file "$RUNNER_TEMP/notes.md" \
+              --latest=false \
               $prerel
             gh release upload "$RELEASE_TAG" dist/* --clobber
           else
             gh release create "$RELEASE_TAG" dist/* \
               --title "$RELEASE_TAG" \
-              --notes-file "docs/releases/$RELEASE_TAG.md" \
+              --notes-file "$RUNNER_TEMP/notes.md" \
               --verify-tag \
               --latest=false \
               $prerel

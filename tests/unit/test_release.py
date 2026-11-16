@@ -46,6 +46,43 @@ def test_the_workflow_reads_notes_from_the_path_this_test_checks():
     assert "gh release create" in runs
 
 
+def test_a_manual_run_can_repair_an_existing_release():
+    """Measured: GitHub refused with "Workflow does not exist or does not have a
+    workflow_dispatch trigger in this tag".
+
+    Two causes, both fixed here. The trigger must exist at all, and the notes
+    must come from the commit that started the run — reading them from the
+    checked-out tag would republish the stale text a repair is meant to replace.
+    """
+    triggers = _workflow().get("on") or _workflow().get(True)
+
+    assert "workflow_dispatch" in triggers
+    assert triggers["workflow_dispatch"]["inputs"]["tag"]["required"] is True
+
+    runs = "\n".join(step["run"] for step in _steps() if "run" in step)
+    assert "gh release edit" in runs, "an existing release would fail instead of updating"
+    assert "gh release upload" in runs
+    assert "--clobber" in runs
+
+    # The checkout has to follow the requested tag, or a manual run tests `main`
+    # while claiming to describe the tag.
+    checkout = next(step for step in _steps() if step.get("uses", "").startswith("actions/checkout"))
+    assert "ref" in checkout["with"]
+
+
+def test_the_notes_are_read_from_the_triggering_commit():
+    """A repair run starts on `main`, where the notes were fixed.
+
+    `GITHUB_SHA` is the tag on a tag push and the branch on a dispatch, so both
+    cases read the right file; the checked-out tree is the tag, which still
+    holds the old text.
+    """
+    runs = "\n".join(step["run"] for step in _steps() if "run" in step)
+
+    assert 'git show "$GITHUB_SHA:docs/releases/$RELEASE_TAG.md"' in runs
+    assert '--notes-file "$RUNNER_TEMP/notes.md"' in runs
+
+
 def test_every_release_has_a_notes_file_named_after_its_tag():
     """A pushed tag is immutable in practice; a missing file blocks the release."""
     version = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
