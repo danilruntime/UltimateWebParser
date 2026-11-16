@@ -31,11 +31,6 @@ classifiers = [
     "Topic :: Office/Business :: Financial :: Spreadsheet",
 ]
 
-[project.urls]
-Homepage = "https://github.com/danilruntime/UltimateWebParser"
-Repository = "https://github.com/danilruntime/UltimateWebParser"
-Issues = "https://github.com/danilruntime/UltimateWebParser/issues"
-Changelog = "https://github.com/danilruntime/UltimateWebParser/commits/main"
 dependencies = [
     "playwright>=1.55",
     "aiogram>=3.20",
@@ -48,6 +43,12 @@ dependencies = [
     "cryptography>=43",
     "tzdata",
 ]
+
+[project.urls]
+Homepage = "https://github.com/danilruntime/UltimateWebParser"
+Repository = "https://github.com/danilruntime/UltimateWebParser"
+Issues = "https://github.com/danilruntime/UltimateWebParser/issues"
+Changelog = "https://github.com/danilruntime/UltimateWebParser/commits/main"
 
 [project.optional-dependencies]
 dev = [
