@@ -10,13 +10,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from odf.config import (
-    ConfigItem,
-    ConfigItemMapEntry,
-    ConfigItemMapIndexed,
-    ConfigItemMapNamed,
-    ConfigItemSet,
-)
 from odf.number import Number, NumberStyle
 from odf.opendocument import OpenDocumentSpreadsheet
 from odf.style import (
@@ -156,9 +149,27 @@ def _number_style(doc: OpenDocumentSpreadsheet, name: str, decimals: int) -> str
     return name
 
 
+def _column_width_points(characters: int) -> int:
+    """Convert ``Column.width`` (a character count) into an ODF length in points.
+
+    ``Column.width`` is a count of characters, as in Excel and openpyxl: parsers
+    write 12 for an app id, 40 for a title. ODF wants an absolute length, and
+    writing the number as points made a 12-character column 4.2 mm wide —
+    "147599" then rendered as ``##`` in every delivered report.
+
+    Measured in LibreOffice: the optimal width of a column holding text is
+    5.1 pt per character for prose and 6.9 pt for long numbers (which are set
+    in the same body font but are all digits). 7 pt per character plus a small
+    pad therefore fits the worst case instead of clipping it.
+    """
+    return max(characters, 1) * 7 + 4
+
+
 def _column_style(doc: OpenDocumentSpreadsheet, name: str, width: int) -> Style:
     style = Style(name=name, family="table-column")
-    style.addElement(TableColumnProperties(columnwidth=f"{width}pt"))
+    style.addElement(
+        TableColumnProperties(columnwidth=f"{_column_width_points(width)}pt")
+    )
     doc.automaticstyles.addElement(style)
     return style
 
@@ -235,40 +246,6 @@ def _column_letter(index: int) -> str:
         index, remainder = divmod(index - 1, 26)
         letters = chr(ord("A") + remainder) + letters
     return letters
-
-
-def _freeze_first_row(doc: OpenDocumentSpreadsheet, sheet: str) -> None:
-    """Freeze the header row via Calc's view settings in ``settings.xml``.
-
-    Freeze state is not part of ``content.xml``: ODF keeps it in the
-    ``ooo:view-settings`` config item set, which odfpy has no first-class API
-    for, so the config tree is built by hand.
-    """
-    view = ConfigItemMapEntry()
-    view.setAttribute("name", sheet)
-    for name, type_, value in (
-        ("VerticalSplitMode", "short", "2"),
-        ("VerticalSplitPosition", "short", "1"),
-        ("HorizontalSplitMode", "short", "0"),
-        ("HorizontalSplitPosition", "short", "0"),
-        ("ActiveTable", "string", sheet),
-    ):
-        item = ConfigItem(name=name, type=type_)
-        item.addText(value)
-        view.addElement(item)
-
-    tables = ConfigItemMapNamed(name="Tables")
-    tables.addElement(view)
-
-    entry = ConfigItemMapEntry()
-    entry.addElement(tables)
-
-    views = ConfigItemMapIndexed(name="Views")
-    views.addElement(entry)
-
-    view_settings = ConfigItemSet(name="ooo:view-settings")
-    view_settings.addElement(views)
-    doc.settings.addElement(view_settings)
 
 
 def _column_value_styles(
@@ -378,7 +355,6 @@ def write_report(
 
     # All sheets must be attached before the database range is added.
     _add_autofilter(doc, DATA_SHEET, len(headers), len(rows) + 1)
-    _freeze_first_row(doc, DATA_SHEET)
 
     doc.save(str(path))
     return path

@@ -1,5 +1,9 @@
 # UltimateWebParser
 
+[![tests](https://github.com/danilruntime/UltimateWebParser/actions/workflows/tests.yml/badge.svg)](https://github.com/danilruntime/UltimateWebParser/actions/workflows/tests.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![python: 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
+
 Сервис для сбора данных с сайтов: Playwright + fingerprint-chromium, управление
 из Telegram, отчёты в LibreOffice Calc (`.ods`), расписание, прокси и профили
 браузера.
@@ -32,6 +36,16 @@
 - **Бот с кнопками.** Сайты, расписание, профили, прокси, история прогонов.
 - **Отчёты `.ods`** с фильтрами, кликабельными ссылками, подсветкой изменённых
   строк и колонкой «Новое».
+
+![Отчёт, каким его открывает LibreOffice Calc: скидки Steam, колонка процента скидки, цены в рублях, сводка отзывов](docs/images/report.png)
+
+*Отчёт так, как его открывает Calc: 50 строк, автофильтр в шапке, ссылки ведут
+на страницу магазина, числа отформатированы, обрезанных ячеек нет.*
+
+![VNC-десктоп: Chromium на странице скидок Steam, ниже панель fluxbox](docs/images/vnc-desktop.png)
+
+*Ручной вход через VNC: Chromium на виртуальном экране за noVNC, песочница
+включена. Именно это открывает ссылка из чата.*
 
 ---
 

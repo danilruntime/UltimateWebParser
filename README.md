@@ -1,5 +1,9 @@
 # UltimateWebParser
 
+[![tests](https://github.com/danilruntime/UltimateWebParser/actions/workflows/tests.yml/badge.svg)](https://github.com/danilruntime/UltimateWebParser/actions/workflows/tests.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![python: 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
+
 A self-hosted scraping service: Playwright drives a patched Chromium
 (`fingerprint-chromium`) against sites, a Telegram bot controls it, results are
 rendered to LibreOffice Calc `.ods` reports, and runs are scheduled with
@@ -34,6 +38,16 @@ The first parser covers Steam discounts. A new site is a new folder under
 - **A bot with buttons.** Sites, schedule, profiles, proxies, run history.
 - **`.ods` reports** with autofilters, clickable links, highlighted changed
   rows and a «Новое» column.
+
+![The report LibreOffice Calc opens: Steam discounts with a discount column, prices in rubles and review summaries](docs/images/report.png)
+
+*A report as Calc opens it: 50 rows, an autofilter on the header, links that
+resolve to the store page, numbers formatted, no truncated cells.*
+
+![The VNC desktop: Chromium on the Steam specials page, with the fluxbox panel below](docs/images/vnc-desktop.png)
+
+*Manual login over VNC: Chromium on a virtual display behind noVNC, sandbox
+enabled. This is what the link in chat opens.*
 
 ---
 

@@ -1,6 +1,8 @@
 # UltimateWebParser Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Historical record.** This plan was executed task-by-task while the code was
+> being written. It is kept as evidence for the decisions in `AGENTS.md`, not as
+> instructions to follow.
 
 **Goal:** Self-hosted Docker service that scrapes sites on a schedule through Playwright in fingerprint-chromium, is controlled from a Telegram bot, and sends LibreOffice Calc (.ods) reports to the admin.
 

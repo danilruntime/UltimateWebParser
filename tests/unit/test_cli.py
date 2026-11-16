@@ -4,6 +4,19 @@ import pytest
 from uwp.cli import main
 
 
+@pytest.fixture
+def healthy_driver(monkeypatch):
+    """Stub the bundled-Node probe so a test depends on the code, not the host.
+
+    ``doctor`` really executes Playwright's ``node``, which needs
+    ``libatomic.so.1``. Without this stub the two token tests below fail on a
+    slim Debian image for a reason that has nothing to do with bot tokens —
+    measured in ``python:3.12-slim``. Tests that *are* about the driver run it
+    for real (see ``test_doctor_reports_a_broken_playwright_driver``).
+    """
+    monkeypatch.setattr("uwp.cli._check_playwright_driver", lambda: (True, "v22.0.0"))
+
+
 def test_parsers_list(capsys, monkeypatch, tmp_path):
     monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
 
@@ -31,7 +44,9 @@ def test_doctor_quiet_prints_nothing_on_failure(capsys, monkeypatch, tmp_path):
     assert capsys.readouterr().out == ""
 
 
-def test_doctor_does_not_require_a_bot_token_for_the_worker(capsys, monkeypatch, tmp_path):
+def test_doctor_does_not_require_a_bot_token_for_the_worker(
+    capsys, monkeypatch, tmp_path, healthy_driver
+):
     """The worker never polls Telegram, so it must start without the token.
 
     A split deployment deliberately keeps ``UWP_BOT_TOKEN`` out of the worker's
@@ -54,7 +69,9 @@ def test_doctor_does_not_require_a_bot_token_for_the_worker(capsys, monkeypatch,
     assert "UWP_BOT_TOKEN" not in out
 
 
-def test_doctor_still_requires_a_bot_token_for_the_bot(capsys, monkeypatch, tmp_path):
+def test_doctor_still_requires_a_bot_token_for_the_bot(
+    capsys, monkeypatch, tmp_path, healthy_driver
+):
     """The bot process is exactly the one that needs the token."""
     monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("UWP_BROWSER_PATH", "/bin/true")
@@ -151,6 +168,7 @@ def test_doctor_checks_the_playwright_driver(capsys, monkeypatch, tmp_path):
     monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("UWP_BOT_TOKEN", "1:fake")
     monkeypatch.setenv("UWP_ADMIN_IDS", "1")
+    monkeypatch.setattr("uwp.cli._check_playwright_driver", lambda: (True, "v22.0.0"))
 
     main(["doctor"])
 
@@ -158,27 +176,50 @@ def test_doctor_checks_the_playwright_driver(capsys, monkeypatch, tmp_path):
 
 
 def test_doctor_reports_a_broken_driver(monkeypatch, tmp_path):
+    """The measured symptom: ``node`` links against libatomic, a slim image has none."""
     monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("UWP_BOT_TOKEN", "1:fake")
     monkeypatch.setenv("UWP_ADMIN_IDS", "1")
 
     from uwp import cli
 
-    real_run = cli.subprocess.run
+    def broken():
+        return False, "error while loading shared libraries: libatomic.so.1"
 
-    class _Failed:
-        returncode = 127
-        stdout = ""
-        stderr = "error while loading shared libraries: libatomic.so.1"
+    monkeypatch.setattr("uwp.cli._check_playwright_driver", broken)
+
+    assert cli.main(["doctor"]) == 1
+
+
+def test_the_driver_check_really_executes_the_bundled_node(monkeypatch):
+    """Stubbing the driver everywhere else would hide a probe that never runs.
+
+    ``_check_playwright_driver`` exists because a file-exists test is not
+    enough: the binary can be present and still fail to load a shared library.
+    """
+    import subprocess as real_subprocess
+
+    from uwp import cli
+
+    seen: list[list[str]] = []
+
+    class _Ok:
+        returncode = 0
+        stdout = "v22.11.0\n"
+        stderr = ""
 
     def fake_run(cmd, *args, **kwargs):
-        if str(cmd[0]).endswith("node") and "--version" in cmd:
-            return _Failed()
-        return real_run(cmd, *args, **kwargs)
+        seen.append(list(cmd))
+        return _Ok()
 
     monkeypatch.setattr(cli.subprocess, "run", fake_run)
 
-    assert cli.main(["doctor"]) == 1
+    ok, detail = cli._check_playwright_driver()
+
+    assert ok is True
+    assert detail == "v22.11.0"
+    assert seen and seen[0][-1] == "--version"
+    assert real_subprocess  # the signature we replaced is the real one
 
 
 def test_doctor_probes_the_telegram_proxy(capsys, monkeypatch, tmp_path):

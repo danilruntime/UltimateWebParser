@@ -1,6 +1,8 @@
 # Volatile Columns in `changes` Mode — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Historical record.** This plan was executed task-by-task while the code was
+> being written. It is kept as evidence for the decisions in `AGENTS.md`, not as
+> instructions to follow.
 
 **Goal:** Make `export_mode=changes` fire only on meaningful row changes, by letting a parser mark drifting columns (review counts) as `volatile`.
 

@@ -9,6 +9,33 @@ description = "UltimateWebParser: Playwright-based site scraper controlled by a 
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.12"
+authors = [{ name = "danilruntime" }]
+keywords = [
+    "scraping",
+    "playwright",
+    "telegram-bot",
+    "libreoffice",
+    "odf",
+    "self-hosted",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: No Input/Output (Daemon)",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Internet :: WWW/HTTP :: Browsers",
+    "Topic :: Office/Business :: Financial :: Spreadsheet",
+]
+
+[project.urls]
+Homepage = "https://github.com/danilruntime/UltimateWebParser"
+Repository = "https://github.com/danilruntime/UltimateWebParser"
+Issues = "https://github.com/danilruntime/UltimateWebParser/issues"
+Changelog = "https://github.com/danilruntime/UltimateWebParser/commits/main"
 dependencies = [
     "playwright>=1.55",
     "aiogram>=3.20",

@@ -1,0 +1,88 @@
+name: tests
+
+# The unit suite needs no network and no browser: `integration` and `live` are
+# skipped without UWP_TEST_BROWSER / UWP_LIVE, so this runs in seconds on a bare
+# runner. It has been measured to pass with no `.env` present and with no system
+# libraries beyond a stock Python image — `doctor`'s probe of Playwright's
+# bundled Node is stubbed in the tests that are not about it.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # ``requires-python = ">=3.12"`` and the image builds on 3.12; 3.14 is
+        # what the project is developed on. Testing both ends catches a
+        # forward-reference or a removed stdlib alias early.
+        python-version: ["3.12", "3.14"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install the package
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check src tests
+
+      - name: Test
+        run: pytest
+
+      # A documentation change is not covered by pytest when it is a broken
+      # relative link, so check that every tracked markdown file's local links
+      # resolve. Cheaper than a link checker and needs no network.
+      - name: Markdown links resolve
+        run: |
+          python - <<'PY'
+          import re, sys
+          from pathlib import Path
+
+          root = Path.cwd()
+          broken = []
+          for path in root.rglob("*.md"):
+              if ".venv" in path.parts or ".git" in path.parts or "node_modules" in path.parts:
+                  continue
+              text = path.read_text(encoding="utf-8")
+              for target in re.findall(r"\]\(([^)#:]+?)\)", text):
+                  if target.startswith(("http", "mailto")):
+                      continue
+                  if not (path.parent / target).exists():
+                      broken.append(f"{path.relative_to(root)} -> {target}")
+          if broken:
+              print("Broken local links:")
+              print("\n".join(broken))
+              sys.exit(1)
+          print("OK")
+          PY
+
+  # Split mode is the documented deployment; a compose edit that breaks the port
+  # band or the seccomp mount is caught by tests, but only a real `config`
+  # invocation proves the two files still merge.
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The split stack still merges
+        run: |
+          docker compose -f compose.split.yaml -f compose.split.hostnet.yaml config -q

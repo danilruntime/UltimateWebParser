@@ -34,8 +34,16 @@ def test_security_policy_names_the_escape_hatches_it_documents():
 
 
 def test_security_policy_documents_what_is_out_of_scope():
-    """A policy that only lists defences promises more than the code does."""
-    text = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
+    """A policy that only lists defences promises more than the code does.
 
-    assert "Вне scope" in text
-    assert "Известные ограничения" in text
+    Both language versions are checked: the English file is the one GitHub
+    renders first, and a section dropped from a translation still leaves the
+    other one looking complete.
+    """
+    english = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
+    russian = (ROOT / "SECURITY.ru.md").read_text(encoding="utf-8")
+
+    assert "Out of scope" in english
+    assert "Known limitations" in english
+    assert "Вне scope" in russian
+    assert "Известные ограничения" in russian

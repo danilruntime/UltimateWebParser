@@ -187,6 +187,41 @@ def _check_telegram_proxy(proxy: str, online: bool = True) -> tuple[str, bool, s
     return (label, reason is None, reason or "")
 
 
+def _check_playwright_driver() -> tuple[bool, str]:
+    """Run the driver's bundled ``node --version``; returns ``(ok, detail)``.
+
+    Playwright talks to its own Node build, not the system one. A missing shared
+    library (``libatomic.so.1`` in a slim Debian image) makes every run fail
+    with "Connection closed while reading from the driver" while the browser
+    check still passes — hence a real execution rather than a file-exists test.
+
+    Split out of :func:`cmd_doctor` so tests can stub it: whether a test
+    machine happens to have ``libatomic1`` must not decide whether a test about
+    bot tokens passes.
+    """
+    try:
+        from playwright._impl._driver import compute_driver_executable
+
+        driver = compute_driver_executable()
+        node = str(driver[0] if isinstance(driver, tuple) else driver)
+    except Exception as exc:  # noqa: BLE001 - an import failure is a failed check
+        return False, f"не найден: {exc}"
+
+    try:
+        completed = subprocess.run(
+            [node, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, f"не запускается: {exc}"
+
+    output = (completed.stderr or completed.stdout).strip()
+    return completed.returncode == 0, output.splitlines()[0] if output else ""
+
+
 def cmd_doctor(
     settings: Settings, quiet: bool = False, offline: bool = False, worker: bool = False
 ) -> int:
@@ -245,28 +280,8 @@ def cmd_doctor(
     # missing shared library (``libatomic.so.1`` in a slim Debian image) makes
     # every run fail with "Connection closed while reading from the driver"
     # while the browser check above still passes.
-    try:
-        from playwright._impl._driver import compute_driver_executable
-
-        driver = compute_driver_executable()
-        node = str(driver[0] if isinstance(driver, tuple) else driver)
-    except Exception as exc:  # noqa: BLE001 - an import failure is a failed check
-        check("драйвер playwright", False, f"не найден: {exc}")
-    else:
-        try:
-            completed = subprocess.run(
-                [node, "--version"],
-                capture_output=True,
-                text=True,
-                timeout=20,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            check("драйвер playwright", False, f"не запускается: {exc}")
-        else:
-            output = (completed.stderr or completed.stdout).strip()
-            first_line = output.splitlines()[0] if output else ""
-            check("драйвер playwright", completed.returncode == 0, first_line)
+    ok, detail = _check_playwright_driver()
+    check("драйвер playwright", ok, detail)
 
     # The split worker never polls Telegram, so a deployment that keeps the
     # token out of its environment is correct, not broken.

@@ -1,127 +1,130 @@
 # Third-party notices
 
-UltimateWebParser распространяется под MIT (см. [`LICENSE`](LICENSE)). Часть
-файлов в этом репозитории написана не нами, и для них действуют другие условия.
-Ниже — что именно, чьё оно и по какой лицензии.
+UltimateWebParser is distributed under MIT (see [`LICENSE`](LICENSE)). Some
+files in this repository were not written by us and carry other terms. What
+follows is what they are, whose they are, and under which licence.
 
-Документ закрывает требование Apache-2.0 §4(a): получатель производной работы
-должен получить копию лицензии. Полный текст — в [приложении A](#приложение-a-apache-license-20).
+This document satisfies Apache-2.0 §4(a): a recipient of the derivative work
+must receive a copy of the licence. The full text is in
+[appendix A](#appendix-a-apache-license-20).
 
-## Сторонние файлы в репозитории
+**Русская версия:** [`THIRD_PARTY_NOTICES.ru.md`](THIRD_PARTY_NOTICES.ru.md).
+
+## Third-party files in the repository
 
 ### `docker/seccomp-uwp.json`
 
-- **Источник:** [`moby/moby`](https://github.com/moby/moby), тег `v28.0.0`,
+- **Source:** [`moby/moby`](https://github.com/moby/moby), tag `v28.0.0`,
   `profiles/seccomp/default.json`.
-- **Лицензия:** Apache License 2.0.
+- **Licence:** Apache License 2.0.
 - **Copyright:** Docker, Inc.
-- **Изменено:** да. Профиль Docker с тремя изменёнными правилами, без которых
-  Chromium не может собрать sandbox из user namespaces.
+- **Modified:** yes. The Docker profile with three changed rules, without which
+  Chromium cannot build its sandbox out of user namespaces.
 
-Изменения помечены в самом JSON полем `comment` (Apache-2.0 §4(b) требует
-помечать изменённые файлы):
+The changes are marked in the JSON itself with a `comment` field (Apache-2.0
+§4(b) requires modified files to be marked):
 
-| Правило | В стоковом профиле | Здесь | Зачем |
+| Rule | In the stock profile | Here | Why |
 |---|---|---|---|
-| `unshare` | разрешён только с `CAP_SYS_ADMIN` | новое правило: `unshare(CLONE_NEWNS)` (`0x20000`) | рендерер завершает сборку mount namespace |
-| `clone` | маска `2114060288` (`0x7E020000`) — все namespace-флаги сразу | маска `131072` (`0x20000`) — только `CLONE_NEWNS` | zygote создаёт namespace по одному флагу |
-| `clone3` | `SCMP_ACT_ERRNO`, `errnoRet: 38` | `SCMP_ACT_ALLOW` | тот же запрос приходит через `clone3` на современной glibc |
+| `unshare` | allowed only with `CAP_SYS_ADMIN` | new rule: `unshare(CLONE_NEWNS)` (`0x20000`) | the renderer finishes building the mount namespace |
+| `clone` | mask `2114060288` (`0x7E020000`) — all namespace flags at once | mask `131072` (`0x20000`) — `CLONE_NEWNS` only | the zygote creates namespaces one flag at a time |
+| `clone3` | `SCMP_ACT_ERRNO`, `errnoRet: 38` | `SCMP_ACT_ALLOW` | the same request arrives through `clone3` on a modern glibc |
 
-Остальные правила не тронуты. Как пересобрать профиль из свежего стокового
-файла — в [`docker/README-seccomp.md`](docker/README-seccomp.md).
+The other rules are untouched. Rebuilding the profile from a fresh stock file
+is described in [`docker/README-seccomp.md`](docker/README-seccomp.md).
 
 ### `tests/fixtures/steam_search.html`, `tests/fixtures/steam_search_ru.html`
 
-- **Источник:** страница поиска `store.steampowered.com/search/`, снятая `curl`-ом
-  анонимным запросом.
-- **Правообладатель:** Valve Corporation. Разметка и данные каталога — их
-  собственность.
-- **Лицензия:** не предоставлена. Файлы используются как тестовая фикстура:
-  парсер проверяется офлайн на реальной странице, чтобы тест не зависел от
-  доступности Steam и его текущих скидок.
+- **Source:** the `store.steampowered.com/search/` page, captured with `curl` in
+  an anonymous request.
+- **Rightsholder:** Valve Corporation. The markup and catalogue data are theirs.
+- **Licence:** none granted. The files serve as a test fixture: the parser is
+  checked offline against a real page, so the test does not depend on Steam
+  being reachable or on its current discounts.
 
-Это не код проекта и не распространяется под MIT. Обе страницы — публичный
-HTML без аутентификации: в них нет cookie, токенов входа и персональных данных.
-`g_sessionID` в фикстуре — анонимный идентификатор сессии, выданный `curl`-у, а
-не чьи-либо учётные данные.
+This is not project code and is not distributed under MIT. Both pages are
+public HTML without authentication: they contain no cookies, login tokens, or
+personal data. `g_sessionID` in the fixture is an anonymous session identifier
+issued to `curl`, not anyone's credentials.
 
-Если вы форкаете проект для публичного использования, оцените, приемлемо ли для
-вас держать чужую разметку в репозитории; заменить её на синтетический HTML
-можно без потери смысла тестов.
+If you fork the project for public use, judge for yourself whether keeping
+someone else's markup in the repository is acceptable to you; it can be
+replaced with synthetic HTML without losing the purpose of the tests.
 
-## Что устанавливается при сборке, но не лежит в репозитории
+## What is installed at build time but not kept in the repository
 
-Эти компоненты не входят в исходники. Они попадают только в собранный образ, и
-их лицензии действуют на образ, а не на код проекта.
+These components are not part of the sources. They only end up in the built
+image, and their licences apply to the image, not to the project code.
 
 ### `fingerprint-chromium`
 
-- **Лицензия:** BSD-3-Clause (Copyright 2015-2023, The ungoogled-chromium
-  Authors); внутри самого Chromium — сотни лицензий его компонентов.
-- **Где:** скачивается в `Dockerfile` во время сборки, версия и sha256
-  зафиксированы. Бинарник в репозиторий не коммитится.
+- **Licence:** BSD-3-Clause (Copyright 2015-2023, The ungoogled-chromium
+  Authors); inside Chromium itself there are hundreds of component licences.
+- **Where:** downloaded in the `Dockerfile` during the build, with the version
+  and sha256 pinned. The binary is not committed to the repository.
 
-Это существенно: пока бинарник не лежит в репозитории, вы не распространяете
-Chromium и не берёте на себя его лицензионные обязательства. Не коммитьте
-`data/browser` в git.
+This matters: as long as the binary is not in the repository, you are not
+distributing Chromium and do not take on its licence obligations. Do not commit
+`data/browser` to git.
 
-### Пакеты Debian (`python:3.12-slim-bookworm` + apt)
+### Debian packages (`python:3.12-slim-bookworm` + apt)
 
-| Пакет | Лицензия | Зачем |
+| Package | Licence | Why |
 |---|---|---|
-| `xvfb` (= X.Org) | MIT-подобная (X11) | виртуальный дисплей |
-| `x11vnc` | **GPL-2.0** | RFB-сервер для ручного входа |
-| `novnc` | **MPL-2.0** (+ BSD-2-Clause, OFL-1.1, CC-BY-SA-3.0) | веб-клиент в браузере админа |
-| `websockify` | **LGPL-3.0** / MPL-2.0 | TCP→WebSocket мост |
-| `fluxbox` | MIT (Expat) | оконный менеджер на дисплее |
-| `tini` | MIT (Expat) | PID 1, жнёт зомби |
+| `xvfb` (= X.Org) | MIT-like (X11) | the virtual display |
+| `x11vnc` | **GPL-2.0** | the RFB server for manual login |
+| `novnc` | **MPL-2.0** (+ BSD-2-Clause, OFL-1.1, CC-BY-SA-3.0) | the web client in the admin's browser |
+| `websockify` | **LGPL-3.0** / MPL-2.0 | the TCP→WebSocket bridge |
+| `fluxbox` | MIT (Expat) | the window manager on the display |
+| `tini` | MIT (Expat) | PID 1, reaps zombies |
 
-`x11vnc` под GPL-2.0 — самый строгий из них. На код проекта это не
-распространяется: GPL-2.0 срабатывает на производные работы, а не на агрегат.
-`x11vnc` запускается отдельным процессом через `subprocess`, обменивается с
-остальным стеком по TCP и X11-протоколу, и ничего из проекта в него не
-линкуется. Это агрегация, а не деривация. Тот же довод действует и для
-`websockify`.
+`x11vnc` under GPL-2.0 is the strictest of them. It does not reach the project
+code: GPL-2.0 applies to derivative works, not to an aggregate. `x11vnc` runs as
+a separate process through `subprocess`, talks to the rest of the stack over TCP
+and the X11 protocol, and nothing from the project is linked into it. That is
+aggregation, not derivation. The same argument holds for `websockify`.
 
-Тексты лицензий этих пакетов лежат внутри образа —
-`/usr/share/doc/<пакет>/copyright`. Если вы публикуете собранный образ, они
-уезжают вместе с ним, и отдельно копировать их не нужно.
+The licence texts for these packages live inside the image —
+`/usr/share/doc/<package>/copyright`. If you publish a built image, they travel
+with it, and there is no need to copy them separately.
 
-## Что образ несёт в себе
+## What the image carries
 
-`Dockerfile` копирует в образ сам `seccomp-uwp.json` (Apache-2.0, изменён).
-Поэтому этот документ тоже копируется — в `/opt/uwp/seccomp/`, рядом с
-профилем. Получатель образа получает и текст лицензии, а не только получатель
-git-клона: §4(a) говорит о получателе работы, а работа здесь — образ.
+The `Dockerfile` copies `seccomp-uwp.json` itself into the image (Apache-2.0,
+modified). This document is therefore copied too — to `/opt/uwp/seccomp/`, next
+to the profile. A recipient of the image receives the licence text as well, not
+only a recipient of a git clone: §4(a) speaks of the recipient of the work, and
+the work here is the image.
 
-`LICENSE` проекта лежит в образе в `/app/LICENSE`.
+The project's `LICENSE` sits in the image at `/app/LICENSE`.
 
-### Python-зависимости
+### Python dependencies
 
-Ставятся из PyPI по `pyproject.toml`. Совместимы с MIT-проектом: копилефта среди
-них нет.
+Installed from PyPI per `pyproject.toml`. Compatible with an MIT project: there
+is no copyleft among them.
 
-| Лицензия | Пакеты |
+| Licence | Packages |
 |---|---|
 | MIT | aiogram, aiosqlite, pydantic, pydantic-settings, pydantic-core, attrs, annotated-types, beautifulsoup4, soupsieve, magic-filter, typing-inspection, aiosignal |
 | Apache-2.0 | playwright, aiofiles, aiohttp-socks, multidict, yarl, propcache, frozenlist, python-socks, tzdata, odfpy |
 | Apache-2.0 AND MIT | aiohttp |
 | BSD-3-Clause | idna, pycparser, python-dotenv |
-| MPL-2.0 | certifi (файловый копилефт: касается только самого `certifi`) |
+| MPL-2.0 | certifi (file-level copyleft: applies to `certifi` only) |
 | PSF-2.0 / MIT AND PSF-2.0 | typing-extensions, aiohappyeyeballs, defusedxml, greenlet |
 | MIT-0 | cffi |
 
-Точный список для конкретной сборки:
+The exact list for a particular build:
 `docker compose exec worker /opt/venv/bin/pip list`.
 
-## Как это поддерживать
+## How to maintain this
 
-Добавили в `docker/` или `tests/fixtures/` файл не своего авторства — допишите
-его сюда. `tests/unit/test_third_party_notices.py` проверяет, что каждый файл в
-`docker/`, кроме наших собственных, упомянут в этом документе, и что для
-Apache-2.0-производной приложен полный текст лицензии.
+If you add a file of someone else's authorship to `docker/` or
+`tests/fixtures/`, add it here. `tests/unit/test_third_party_notices.py` checks
+that every file in `docker/` other than our own is mentioned in this document,
+and that a full licence text is attached for an Apache-2.0 derivative.
 
-## Приложение A: Apache License 2.0
+## Appendix A: Apache License 2.0
+
 
 
                                  Apache License

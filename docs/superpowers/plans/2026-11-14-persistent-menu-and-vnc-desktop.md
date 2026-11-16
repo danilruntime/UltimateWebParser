@@ -1,6 +1,8 @@
 # Persistent Menu, Full-Size VNC Desktop, and Deferred Fixes — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Historical record.** This plan was executed task-by-task while the code was
+> being written. It is kept as evidence for the decisions in `AGENTS.md`, not as
+> instructions to follow.
 
 **Goal:** Give the bot a permanent reply keyboard, make the VNC desktop look like a 1920×1080 Windows 10 screen with a taskbar and a browser filling the work area, and close seven deferred defects from the branch review.
 

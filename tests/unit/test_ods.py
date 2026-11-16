@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
+from zipfile import ZipFile
 
 import pytest
-from odf.config import ConfigItem
 from odf.number import Number
 from odf.opendocument import load
 from odf.style import Style, TableColumnProperties
@@ -106,12 +106,93 @@ def test_report_hyperlinks_and_widths(tmp_path):
         for s in doc.automaticstyles.getElementsByType(Style)
         if s.getAttribute("family") == "table-column"
     }
-    assert [widths[c.getAttribute("stylename")] for c in columns] == ["30pt", "40pt"]
+    # Widths are character counts converted to a real length; ``30`` characters
+    # is ``30 * 7 + 4`` points. Pinning the derivation rather than a magic
+    # number keeps a future font change from silently reintroducing ``##``.
+    assert [widths[c.getAttribute("stylename")] for c in columns] == ["214pt", "284pt"]
     # Hyperlink: the URL cell carries an <text:a href="..."> element.
     links = doc.getElementsByType(A)
     assert any(a.getAttribute("href") == "https://x/1" for a in links)
     # No «Новое» column when new_keys is None.
     assert _rows(table)[0] == ["Title", "URL"]
+
+
+def test_a_report_carries_no_freeze_state(tmp_path):
+    """The hand-written freeze never applied and painted the header twice.
+
+    Measured in LibreOffice 7.4 on a 50-row ``steam_deals`` report:
+
+    - scrolled ten rows, the header row left the screen, so the freeze was not
+      applied at all;
+    - opened at the top, row 1 was painted both in the frozen pane and in the
+      body, so the header appeared twice.
+
+    ``ooo:view-settings`` is LibreOffice's own scratch state, not document
+    content. A guessed subset of its keys is worse than nothing: a file without
+    it opens correctly, and Calc writes a complete set the first time a user
+    saves.
+    """
+    cols = [Column("title", "Title", 30)]
+    path = write_report(tmp_path / "t.ods", [{"external_key": "1", "title": "A"}], cols, {})
+
+    with ZipFile(path) as archive:
+        names = archive.namelist()
+        settings = (
+            archive.read("settings.xml").decode("utf-8") if "settings.xml" in names else ""
+        )
+
+    for key in ("VerticalSplitMode", "HorizontalSplitMode", "ActiveSplitRange"):
+        assert key not in settings, f"{key} came back into the report"
+
+
+def test_column_width_is_characters_not_points(tmp_path):
+    """``Column.width`` is a count of characters, as in Excel and openpyxl.
+
+    Measured in LibreOffice: the file used to carry ``style:column-width="12pt"``
+    for a column declared ``width=12`` — 4.2 mm, narrower than "147599", so
+    every number in the delivered report rendered as ``##``. The parser author
+    writes 12 meaning "about twelve characters".
+
+    ``Column`` defaults to 18, ``steam_deals`` uses 8–60, and the sample parser
+    in the README uses 12/40/60: all character counts, none of them usable as
+    points (8 pt is under 3 mm).
+    """
+    cols = [Column("n", "N", 12)]
+    rows = [{"external_key": "1", "n": "147599"}]
+    path = write_report(tmp_path / "t.ods", rows, cols, {})
+    doc = load(str(path))
+    columns = _sheet(doc, "Данные").getElementsByType(TableColumn)
+    width = {
+        s.getAttribute("name"): s.getElementsByType(TableColumnProperties)[0].getAttribute(
+            "columnwidth"
+        )
+        for s in doc.automaticstyles.getElementsByType(Style)
+        if s.getAttribute("family") == "table-column"
+    }[columns[0].getAttribute("stylename")]
+
+    points = float(str(width).removesuffix("pt"))
+    # Measured optimal width for six digits is 41.2 pt, and a header of 11
+    # characters needs 67.4 pt. A column declared as 12 characters must clear
+    # the former with room to spare.
+    assert points >= 41.2, f"12 characters rendered as {points} pt"
+
+
+def test_a_narrow_column_still_has_a_usable_width(tmp_path):
+    """``width=1`` must not produce a zero-width or negative length."""
+    cols = [Column("n", "N", 0)]
+    path = write_report(tmp_path / "t.ods", [{"external_key": "1", "n": "x"}], cols, {})
+    doc = load(str(path))
+    columns = _sheet(doc, "Данные").getElementsByType(TableColumn)
+    width = {
+        s.getAttribute("name"): s.getElementsByType(TableColumnProperties)[0].getAttribute(
+            "columnwidth"
+        )
+        for s in doc.automaticstyles.getElementsByType(Style)
+        if s.getAttribute("family") == "table-column"
+    }[columns[0].getAttribute("stylename")]
+
+    assert float(str(width).removesuffix("pt")) > 0
+
 
 
 def test_report_links_url_and_suffixed_url_keys(tmp_path):
@@ -173,7 +254,7 @@ def test_report_skips_empty_url_and_highlights_changed(tmp_path):
     assert meta[0][:2] == ["site", "S"]
 
 
-def test_report_autofilter_freeze_and_number_format(tmp_path):
+def test_report_autofilter_and_number_format(tmp_path):
     cols = [
         Column("title", "Title", 30),
         Column("url", "URL", 40),
@@ -192,14 +273,6 @@ def test_report_autofilter_freeze_and_number_format(tmp_path):
     # database-ranges must follow every sheet in document order.
     tags = [child.tagName for child in doc.spreadsheet.childNodes]
     assert tags.index("table:database-ranges") > tags.index("table:table", 1)
-
-    settings = doc.settings.getElementsByType(ConfigItem)
-    frozen = {
-        item.getAttribute("name"): item.firstChild.data
-        for item in settings
-        if item.getAttribute("name") in {"VerticalSplitMode", "VerticalSplitPosition"}
-    }
-    assert frozen == {"VerticalSplitMode": "2", "VerticalSplitPosition": "1"}
 
     # The "0.00" column gets a data style with two decimals.
     numbers = doc.styles.getElementsByType(Number)
