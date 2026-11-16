@@ -88,6 +88,20 @@ def test_the_english_readme_carries_the_numbers_that_matter():
         assert fact in text
 
 
+@pytest.mark.parametrize("name", ["README.md", "README.ru.md"])
+def test_the_quick_start_clones_the_real_repository(name: str):
+    """``git clone <repo>`` is a placeholder that survives until someone runs it.
+
+    The command is the first thing a reader copies, so a leftover angle-bracket
+    placeholder is the most expensive documentation bug in the file.
+    """
+    text = (ROOT / name).read_text(encoding="utf-8")
+
+    assert "git clone" in text, f"{name} lost its quick start"
+    assert "git clone <" not in text, f"{name} still has a clone placeholder"
+    assert "https://github.com/danilruntime/UltimateWebParser" in text
+
+
 def _heading_levels(path: Path) -> list[int]:
     return [
         len(line) - len(line.lstrip("#"))

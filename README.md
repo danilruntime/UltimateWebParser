@@ -56,7 +56,7 @@ enabled. This is what the link in chat opens.*
 You need Docker with Compose v2 and nothing else.
 
 ```bash
-git clone <repo> && cd UltimateWebParser
+git clone https://github.com/danilruntime/UltimateWebParser && cd UltimateWebParser
 cp .env.example .env
 $EDITOR .env          # fill in UWP_BOT_TOKEN and UWP_ADMIN_IDS
 docker compose -f compose.split.yaml -f compose.split.hostnet.yaml up -d --build

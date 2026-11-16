@@ -54,7 +54,7 @@
 Нужен Docker с Compose v2 и ничего больше.
 
 ```bash
-git clone <repo> && cd UltimateWebParser
+git clone https://github.com/danilruntime/UltimateWebParser && cd UltimateWebParser
 cp .env.example .env
 $EDITOR .env          # вписать UWP_BOT_TOKEN и UWP_ADMIN_IDS
 docker compose -f compose.split.yaml -f compose.split.hostnet.yaml up -d --build
