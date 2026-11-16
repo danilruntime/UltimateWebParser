@@ -1,261 +1,273 @@
 # UltimateWebParser
 
-Сервис для сбора данных с сайтов: Playwright + fingerprint-chromium, управление
-из Telegram, отчёты в LibreOffice Calc (`.ods`), расписание, прокси и профили
-браузера.
+A self-hosted scraping service: Playwright drives a patched Chromium
+(`fingerprint-chromium`) against sites, a Telegram bot controls it, results are
+rendered to LibreOffice Calc `.ods` reports, and runs are scheduled with
+per-site proxies and persistent browser profiles.
 
-Первый парсер — скидки в Steam. Новый сайт добавляется папкой в
-`src/uwp/parsers/`, ядро при этом не меняется.
+The first parser covers Steam discounts. A new site is a new folder under
+`src/uwp/parsers/`; the core does not change.
 
-**Содержание:** [что умеет](#что-умеет) · [быстрый старт](#быстрый-старт) ·
-[переменные](#переменные-окружения) · [режимы запуска](#режимы-запуска) ·
-[обслуживание](#обслуживание) · [работа в боте](#повседневное-использование) ·
-[VNC](#ручной-вход-через-vnc) · [отчёты](#отчёты) ·
-[свой парсер](#как-добавить-свой-парсер) · [CLI](#команды-без-бота) ·
-[безопасность](#безопасность) · [разработка](#разработка-без-docker) ·
-[если не работает](#если-что-то-не-работает)
+**Русская версия:** [`README.ru.md`](README.ru.md).
 
----
-
-## Что умеет
-
-- **Парсеры как плагины.** Новый сайт — папка с одним классом; бот подхватывает
-  его при перезапуске.
-- **Профили браузера.** Одноразовый (случайный отпечаток, чистые cookie) или
-  постоянный — для сайтов со входом, живёт между прогонами.
-- **Прокси на каждый сайт.** `http`, `https`, `socks5`; пароли шифруются в базе.
-- **Ручной вход через VNC.** Браузер на виртуальном экране, ссылка и пароль
-  приходят в чат. Нужно один раз войти на сайт руками — дальше профиль работает
-  сам.
-- **Бот с кнопками.** Сайты, расписание, профили, прокси, история прогонов.
-- **Отчёты `.ods`** с фильтрами, кликабельными ссылками, подсветкой изменённых
-  строк и колонкой «Новое».
+**Contents:** [features](#what-it-does) · [quick start](#quick-start) ·
+[environment](#environment-variables) · [run modes](#run-modes) ·
+[maintenance](#maintenance) · [daily use](#daily-use) ·
+[VNC](#manual-login-over-vnc) · [reports](#reports) ·
+[your own parser](#adding-your-own-parser) · [CLI](#commands-without-the-bot) ·
+[security](#security) · [development](#development-without-docker) ·
+[troubleshooting](#troubleshooting)
 
 ---
 
-## Быстрый старт
+## What it does
 
-Нужен Docker с Compose v2 и ничего больше.
+- **Parsers are plugins.** A new site is one folder with one class; the bot
+  picks it up on restart.
+- **Browser profiles.** Disposable (random fingerprint, clean cookies) or
+  persistent — for sites that need a login, kept between runs.
+- **A proxy per site.** `http`, `https`, `socks5`; passwords are encrypted in
+  the database.
+- **Manual login over VNC.** A browser on a virtual display; the link and
+  password arrive in chat. Log in by hand once — the profile works on its own
+  afterwards.
+- **A bot with buttons.** Sites, schedule, profiles, proxies, run history.
+- **`.ods` reports** with autofilters, clickable links, highlighted changed
+  rows and a «Новое» column.
+
+---
+
+## Quick start
+
+You need Docker with Compose v2 and nothing else.
 
 ```bash
 git clone <repo> && cd UltimateWebParser
 cp .env.example .env
-$EDITOR .env          # вписать UWP_BOT_TOKEN и UWP_ADMIN_IDS
+$EDITOR .env          # fill in UWP_BOT_TOKEN and UWP_ADMIN_IDS
 docker compose -f compose.split.yaml -f compose.split.hostnet.yaml up -d --build
 ```
 
-Через минуту напишите своему боту `/start`.
+A minute later, send `/start` to your bot.
 
-Что произойдёт: соберётся образ (внутри fingerprint-chromium и Xvfb), создастся
-база, появится выключенный сайт «Steam — скидки». Нажмите «🟢 Включить» — первый
-прогон начнётся сразу, отчёт придёт в чат.
+What happens: the image is built (it contains `fingerprint-chromium` and Xvfb),
+the database is created, and a disabled site «Steam — скидки» appears. Press
+«🟢 Включить» (enable) — the first run starts immediately and the report arrives
+in chat.
 
-### Почему именно эти два файла compose
+The bot's own interface is Russian: every button and message below is quoted in
+the original, with an English gloss where the meaning is not obvious.
 
-| Файл | Что задаёт |
+### Why these two compose files
+
+| File | What it sets |
 | --- | --- |
-| `compose.split.yaml` | Два контейнера: `uwp-bot` (Telegram) и `uwp-worker` (браузер, парсинг, VNC). |
-| `compose.split.hostnet.yaml` | Боту даёт сеть хоста — иначе он не увидит прокси на `127.0.0.1`. |
+| `compose.split.yaml` | Two containers: `uwp-bot` (Telegram) and `uwp-worker` (browser, parsing, VNC). |
+| `compose.split.hostnet.yaml` | Gives the bot the host network — otherwise it cannot reach a proxy on `127.0.0.1`. |
 
-`uwp-bot` живёт в сети хоста и достаёт до `socks5://127.0.0.1:2080`. `uwp-worker`
-остаётся в bridge-сети и публикует VNC-порты на loopback хоста. Разделение не
-случайное: если воркер тоже перевести в host-сеть, его `websockify` начнёт
-драться с docker-proxy за те же порты.
+`uwp-bot` lives on the host network and can reach `socks5://127.0.0.1:2080`.
+`uwp-worker` stays on the bridge network and publishes the VNC ports on the
+host's loopback. The split is deliberate: move the worker to the host network
+too and its `websockify` starts fighting docker-proxy for the same ports.
 
-**Hostnet нужен не всем.** Если `UWP_TELEGRAM_PROXY` не задан, или прокси слушает
-не loopback, а LAN-адрес хоста, второй файл не нужен:
+**Not everyone needs hostnet.** If `UWP_TELEGRAM_PROXY` is unset, or the proxy
+listens on the host's LAN address rather than loopback, drop the second file:
 
 ```bash
 docker compose -f compose.split.yaml up -d --build
 ```
 
-### Если нужен один контейнер
+### If you want a single container
 
-Combined проще: одна команда, один процесс. Плата — воркер получает токен бота, а
-перезапуск бота прерывает прогоны:
+Combined mode is simpler: one command, one process. The price is that the
+worker gets the bot token, and restarting the bot interrupts runs:
 
 ```bash
 docker compose up -d --build
 ```
 
-Порты те же, различия — в разделе [Режимы запуска](#режимы-запуска).
+Same ports; the differences are in [Run modes](#run-modes).
 
-### Права на `./data`
+### Permissions on `./data`
 
-Docker создаёт каталог от `root`, поэтому контейнер стартует от root, однократно
-выставляет владельца `1000:1000` и сразу сбрасывает привилегии до `uwp`. Руками
-ничего делать не нужно. Если прав на `chown` нет (например, том NFS), контейнер
-завершится с кодом 2 и подсказкой:
+Docker creates the directory as `root`, so the container starts as root, sets
+the owner to `1000:1000` once, and immediately drops privileges to `uwp`. You
+do not need to do anything by hand. Without permission to `chown` (an NFS
+volume, for example), the container exits with code 2 and a hint:
 
 ```bash
 mkdir -p data && sudo chown -R 1000:1000 data
 ```
 
-### Как узнать свой Telegram ID
+### How to find your Telegram ID
 
-Сам бот подсказать не может: команду `/id` он показывает только тому, кто уже
-админ, а незнакомцу отвечает отказом и id в лог не пишет. Возьмите id любым
-внешним способом — например, у бота `@userinfobot` — и впишите в `.env`:
+The bot cannot tell you: it only shows `/id` to someone who is already an
+admin, and it answers a stranger with a refusal without writing the id to the
+log. Get the id any external way — from `@userinfobot`, for example — write it
+into `.env` and bring the stack up:
 
 ```bash
+$EDITOR .env          # UWP_ADMIN_IDS=111,222
 docker compose -f compose.split.yaml -f compose.split.hostnet.yaml up -d
 ```
 
-`UWP_ADMIN_IDS` — список через запятую (`111,222`). Помимо `.env`, админов можно
-добавлять в таблицу `admins`: бот пускает объединение обоих списков, а
-уведомления шлёт только тем, у кого `admins.notify = 1`.
+`UWP_ADMIN_IDS` is a comma-separated list (`111,222`). Besides `.env`, admins
+can be added to the `admins` table: the bot admits the union of both lists, and
+notifies only those with `admins.notify = 1`.
 
 ---
 
-## Переменные окружения
+## Environment variables
 
-Обязательных две: токен и админы. Токен нужен только процессу, который опрашивает
-Telegram (в split-режиме — `bot`).
+Two are required: the token and the admins. The token is needed only by the
+process that polls Telegram (in split mode, `bot`).
 
-| Переменная | По умолчанию | Зачем |
+| Variable | Default | Purpose |
 | --- | --- | --- |
-| `UWP_BOT_TOKEN` | — | Токен от @BotFather. Без него бот не стартует. |
-| `UWP_ADMIN_IDS` | пусто | Кто имеет доступ к боту. |
-| `UWP_SECRET_KEY` | — | Шифрование паролей прокси и VNC. Без ключа лежат открыто (доктор предупредит). |
-| `UWP_TELEGRAM_PROXY` | — | Прокси **только** для Bot API. |
-| `UWP_TZ` | `Europe/Moscow` | Часовой пояс дат в боте и отчётах. |
-| `UWP_PUBLIC_HOST` | `localhost` | Хост, по которому вы открываете noVNC. |
-| `UWP_PUBLIC_SCHEME` | `http` | `https`, если перед VNC стоит TLS reverse proxy. |
-| `UWP_DATA_DIR` | `data` (в образе `/data`) | База, профили, отчёты, артефакты. |
-| `UWP_NO_SANDBOX` | `false` | Аварийный выход. По умолчанию sandbox **включён**. |
+| `UWP_BOT_TOKEN` | — | Token from @BotFather. The bot will not start without it. |
+| `UWP_ADMIN_IDS` | empty | Who has access to the bot. |
+| `UWP_SECRET_KEY` | — | Encryption of proxy and VNC passwords. Without a key they are stored in plaintext (the doctor warns). |
+| `UWP_TELEGRAM_PROXY` | — | Proxy for the Bot API **only**. |
+| `UWP_TZ` | `Europe/Moscow` | Timezone for dates in the bot and in reports. |
+| `UWP_PUBLIC_HOST` | `localhost` | The host you open noVNC on. |
+| `UWP_PUBLIC_SCHEME` | `http` | `https` if a TLS reverse proxy fronts VNC. |
+| `UWP_DATA_DIR` | `data` (`/data` in the image) | Database, profiles, reports, artifacts. |
+| `UWP_NO_SANDBOX` | `false` | Emergency exit hatch. The sandbox is **on** by default. |
 
-Полный список с комментариями — в `.env.example`.
+The full list with comments is in `.env.example`.
 
-### Если `api.telegram.org` недоступен
+### If `api.telegram.org` is unreachable
 
-Без прокси бот падает на старте с `TelegramNetworkError: Request timeout error`,
-а контейнер уходит в цикл перезапусков (`docker compose ps` показывает
-`Restarting`).
+Without a proxy the bot dies on start with
+`TelegramNetworkError: Request timeout error`, and the container enters a
+restart loop (`docker compose ps` shows `Restarting`).
 
 ```bash
 UWP_TELEGRAM_PROXY=socks5://127.0.0.1:2080
 ```
 
-Прокси применяется **только к Bot API**. Парсинг ходит через прокси, привязанные
-к сайтам, — это разные настройки. Схемы: `socks5://` (пакет `aiohttp-socks` уже
-в образе), `socks4://`, `http://`, `https://`; логин и пароль — прямо в URL.
+The proxy applies to the **Bot API only**. Scraping goes through the proxies
+attached to sites — different settings. Schemes: `socks5://` (the
+`aiohttp-socks` package is already in the image), `socks4://`, `http://`,
+`https://`; username and password go straight into the URL.
 
-Проверка:
+Checking it:
 
 ```bash
 docker compose -f compose.split.yaml -f compose.split.hostnet.yaml \
-  exec bot /entrypoint.sh doctor | grep -i прокси
+  exec bot /entrypoint.sh doctor | grep -i proxy
 ```
 
-`doctor` реально открывает `api.telegram.org` через прокси и печатает причину
-отказа (порт, таймаут TLS, неверная схема). Пароль в выводе маскируется.
-Healthcheck контейнера запускает `doctor --offline`: проверяется только формат
-адреса, потому что чужой прокси может отвечать по 15 секунд и не должен
-переводить рабочий контейнер в `unhealthy`.
+`doctor` actually opens `api.telegram.org` through the proxy and prints the
+reason for failure (port, TLS timeout, wrong scheme). The password is masked in
+the output. The container healthcheck runs `doctor --offline`: it checks only
+the address format, because a third-party proxy may take 15 seconds to answer
+and must not flip a working container to `unhealthy`.
 
-**Прокси на `127.0.0.1` хоста.** В bridged-контейнере `127.0.0.1` — это сам
-контейнер. Два способа:
+**A proxy on the host's `127.0.0.1`.** In a bridged container `127.0.0.1` is
+the container itself. Two ways out:
 
 ```bash
-# 1. Дать контейнеру сеть хоста (порт 2080 сразу виден как 127.0.0.1)
+# 1. Give the container the host network (port 2080 is then 127.0.0.1)
 docker compose -f compose.split.yaml -f compose.split.hostnet.yaml up -d
 
-# 2. Слушать на LAN-адресе хоста и указать его в .env
+# 2. Listen on the host's LAN address and point .env at it
 UWP_TELEGRAM_PROXY=socks5://192.168.1.10:2080
 ```
 
 ---
 
-## Режимы запуска
+## Run modes
 
-Оба режима используют один и тот же образ и один и тот же каталог `./data`.
+Both modes use the same image and the same `./data` directory.
 
-|  | Split (рекомендуется) | Combined |
+|  | Split (recommended) | Combined |
 | --- | --- | --- |
-| Файлы | `compose.split.yaml` + `compose.split.hostnet.yaml` | `compose.yaml` |
-| Контейнеры | `uwp-bot`, `uwp-worker` | `uwp` |
-| Прокси на `127.0.0.1` | да, через hostnet-overlay | только с `compose.hostnet.yaml` |
-| Перезапуск бота | не прерывает прогоны | прерывает |
-| Токен бота в воркере | нет | да (один процесс) |
+| Files | `compose.split.yaml` + `compose.split.hostnet.yaml` | `compose.yaml` |
+| Containers | `uwp-bot`, `uwp-worker` | `uwp` |
+| Proxy on `127.0.0.1` | yes, via the hostnet overlay | only with `compose.hostnet.yaml` |
+| Restarting the bot | does not interrupt runs | interrupts them |
+| Bot token in the worker | no | yes (single process) |
 
-Голый `docker compose up` поднимает combined: у него один файл, поэтому он и
-остаётся «умолчанием» Compose. Split требует явных `-f`, зато переживает
-перезапуск бота и не держит токен там, где работает браузер.
+A bare `docker compose up` brings up combined mode: it has a single file, which
+is why it stays Compose's default. Split needs explicit `-f`, but it survives a
+bot restart and keeps the token out of the process that runs the browser.
 
-**В split-режиме кнопка «Войти» не запускает браузер сразу.** Бот пишет заявку в
-базу, а `worker` поднимает Xvfb + Chromium в течение ~5 секунд на ближайшем тике.
-Отчёты в Telegram отправляет только бот: воркер уведомления не забирает, иначе
-они бы терялись.
+**In split mode the «🖥 Войти в профиль» button does not start the browser
+immediately.**
+The bot writes a request to the database and `worker` brings up Xvfb + Chromium
+within ~5 seconds on its next tick. Only the bot sends reports to Telegram: the
+worker does not drain notifications, otherwise they would be lost.
 
-> **Один стек на машину.** Combined и split делят порты 6000–6100. Второй стек
-> либо вообще не стартует (`port is already allocated`), либо его `websockify`
-> падает с `Address already in use` — и ссылка VNC рвёт соединение. Держите
-> запущенным ровно один.
+> **One stack per machine.** Combined and split share ports 6000–6100. A second
+> stack either fails to start (`port is already allocated`) or its `websockify`
+> dies with `Address already in use` — and the VNC link resets. Keep exactly one
+> running.
 
 ---
 
-## Обслуживание
+## Maintenance
 
-Все команды — из каталога проекта. Чтобы не повторять длинный `-f`, положите его
-в переменную:
+All commands run from the project directory. To avoid repeating the long `-f`,
+put it in a variable:
 
 ```bash
 COMPOSE="docker compose -f compose.split.yaml -f compose.split.hostnet.yaml"
 ```
 
-| Что нужно | Команда |
+| What you need | Command |
 | --- | --- |
-| Статус | `$COMPOSE ps` |
-| Логи | `$COMPOSE logs -f worker` |
-| Остановить, сохранив контейнеры | `$COMPOSE stop` |
-| Запустить обратно | `$COMPOSE start` |
-| Остановить и удалить | `$COMPOSE down` |
-| Поднять заново | `$COMPOSE up -d` |
-| Пересобрать после `git pull` | `$COMPOSE up -d --build` |
+| Status | `$COMPOSE ps` |
+| Logs | `$COMPOSE logs -f worker` |
+| Stop, keeping containers | `$COMPOSE stop` |
+| Start again | `$COMPOSE start` |
+| Stop and remove | `$COMPOSE down` |
+| Bring up again | `$COMPOSE up -d` |
+| Rebuild after `git pull` | `$COMPOSE up -d --build` |
 
-**`stop` ≠ `down`.** `stop` завершает процессы, но контейнеры остаются: `start`
-вернёт всё как было. `down` удаляет контейнеры — следующий `up` создаст новые
-(другой hostname, чистая сеть). Данные в обоих случаях целы: `./data` — папка на
-хосте, а именованных volumes у проекта нет, поэтому `down -v` не нужен и ничего
-не «очистит».
+**`stop` ≠ `down`.** `stop` ends the processes but keeps the containers:
+`start` restores everything. `down` removes the containers — the next `up`
+creates new ones (different hostname, clean network). Data survives either way:
+`./data` is a host directory and the project has no named volumes, so `down -v`
+is unnecessary and would not "clean" anything.
 
-**Перед `down` закройте VNC-сессии**, иначе останутся висеть строки `running`.
+**Close VNC sessions before `down`**, or `running` rows will be left behind.
 
 ```bash
 docker exec uwp-worker /entrypoint.sh vnc list
 docker exec uwp-worker /entrypoint.sh vnc stop <id>
 ```
 
-Воркер при следующем старте подметёт такие строки сам (`sweep_orphans`), но до
-этого профиль останется занятым.
+The worker sweeps such rows on its next start (`sweep_orphans`), but until then
+the profile stays busy.
 
 ---
 
-## Повседневное использование
+## Daily use
 
-Всё делается кнопками в боте. Постоянная клавиатура внизу — четыре кнопки:
-«🌐 Сайты», «👤 Профили», «🌍 Прокси», «❓ Помощь».
+Everything is done with buttons in the bot. The persistent keyboard at the
+bottom has four buttons: «🌐 Сайты», «👤 Профили», «🌍 Прокси», «❓ Помощь».
 
-- **🌐 Сайты** — список; у каждого сайта своя карточка с «🟢 Включить» /
-  «🔴 Выключить», «▶️ Запустить сейчас», «⚙️ Настройки», «🖥 Войти в профиль»,
-  «📜 История» и «🗑 Удалить».
-- **⚙️ Настройки** — интервал (`45-90`), профиль, прокси, режим отчёта, параметры
-  парсера.
-- **📜 История** — последние прогоны сайта, у упавшего есть «🔁 Повторить».
-- **👤 Профили** — создать постоянный профиль и открыть VNC.
-- **🌍 Прокси** — добавить и проверить.
+- **🌐 Сайты** (sites) — the list; each site has a card with «🟢 Включить» /
+  «🔴 Выключить», «▶️ Запустить сейчас», «⚙️ Настройки»,
+  «🖥 Войти в профиль», «📜 История» and «🗑 Удалить».
+- **⚙️ Настройки** — interval (`45-90`), profile, proxy, report mode, parser
+  settings.
+- **📜 История** — the site's recent runs; a failed one has «🔁 Повторить».
+- **👤 Профили** — create a persistent profile and open VNC.
+- **🌍 Прокси** — add and test.
 
-Интервал задаётся в минутах: `60` — каждые 60 минут, `45-90` — случайно в этом
-диапазоне. Ручной запуск не сдвигает расписание: он встаёт в очередь с
-приоритетом, а следующий плановый прогон считается от своего времени.
+The interval is in minutes: `60` is every 60 minutes, `45-90` is random within
+that range. A manual run does not shift the schedule: it joins the queue with
+priority, and the next scheduled run counts from its own time.
 
-Команды в чате: `/start`, `/help`, `/id`, `/sites`, `/runs`.
+Chat commands: `/start`, `/help`, `/id`, `/sites`, `/runs`.
 
 ---
 
-## Ручной вход через VNC
+## Manual login over VNC
 
-Сайты со входом используют постоянный профиль. Создайте его и попросите сессию:
+Sites with a login use a persistent profile. Create one and request a session:
 
 ```bash
 docker exec uwp-worker /entrypoint.sh profile create Steam-RU
@@ -263,76 +275,82 @@ docker exec uwp-worker /entrypoint.sh profile list
 docker exec uwp-worker /entrypoint.sh profile login 1
 ```
 
-`profile login` поднимает стек прямо в этом процессе и держит его: ссылка и пароль
-печатаются сразу, а Ctrl+C закрывает сессию. В боте удобнее — ссылка приходит
-сообщением, а сессией управляет воркер, и прерывать ничего не нужно.
+`profile login` brings up the stack in this very process and holds it: the link
+and password are printed right away, and Ctrl+C closes the session. The bot is
+more convenient — the link arrives as a message, the worker owns the session,
+and there is nothing to interrupt.
 
-То же есть в боте: «👤 Профили» → профиль → «🖥 Войти», либо карточка сайта →
-«🖥 Войти в профиль» (тогда браузер откроет страницу сайта и возьмёт его прокси).
+The same exists in the bot: «👤 Профили» → profile → «🖥 Войти», or a
+site card → «🖥 Войти в профиль» (then the browser opens the site's page and
+takes its proxy).
 
-Ссылка вида `http://<UWP_PUBLIC_HOST>:6042/vnc.html#autoconnect=1` открывается в
-браузере. Пароль едет во фрагменте (`#password=...`) и на сервер не отправляется.
-Войдите на сайт и нажмите «✅ Готово» — процессы остановятся, профиль освободится.
+A link like `http://<UWP_PUBLIC_HOST>:6042/vnc.html#autoconnect=1` opens in a
+browser. The password travels in the fragment (`#password=...`) and is not sent
+to the server. Log in to the site and press «✅ Готово» — the processes stop and
+the profile is released.
 
-Сессия живёт 60 минут (можно продлить на 30) и закрывается после 20 минут без
-клиентов. Пароль — 8 символов: RFB всё равно проверяет только первые восемь, и
-длинная строка показывала бы символы, которые сервер игнорирует.
+A session lives 60 minutes (extendable by 30) and closes after 20 minutes
+without clients. The password is 8 characters: RFB checks only the first eight
+anyway, and a longer string would display characters the server ignores.
 
-### Доступ с другой машины
+### Access from another machine
 
-Порты 6000–6100 опубликованы **только на `127.0.0.1` хоста**: noVNC говорит по
-HTTP, выставлять его в сеть нельзя. Туннель:
+Ports 6000–6100 are published **on the host's `127.0.0.1` only**: noVNC speaks
+HTTP and must not be exposed to the network. Tunnel:
 
 ```bash
 ssh -N -D 1080 user@server
 ```
 
-Направьте браузер (или отдельный профиль в нём) на SOCKS5 `127.0.0.1:1080`:
-`http://localhost:6042/vnc.html` пойдёт на сервер, порт наружу не откроется.
-Альтернатива — reverse proxy с TLS и Basic Auth, тогда `UWP_PUBLIC_HOST` и
-`UWP_PUBLIC_SCHEME=https` указывают на него.
+Point your browser (or a separate profile in it) at SOCKS5 `127.0.0.1:1080`:
+`http://localhost:6042/vnc.html` goes to the server and no port is opened
+outward. The alternative is a reverse proxy with TLS and Basic Auth, with
+`UWP_PUBLIC_HOST` and `UWP_PUBLIC_SCHEME=https` pointing at it.
 
-### Мелочи, которые экономят время
+### Small things that save time
 
-- Порт **6000 не выдаётся никогда**: браузеры считают его небезопасным (это порт
-  X11), поэтому первая сессия получает 6001.
-- В split-режиме порты принадлежат контейнеру `worker`.
-- Каждая сессия пишет лог в `/data/vnc/<id-профиля>-<порт>.log`.
-- Если браузер не смог занять профиль, сессия падает сразу с причиной в чате, а
-  не показывает пустой рабочий стол.
-- Пароль от сайта хранится только в профиле браузера, в базе его нет.
+- Port **6000 is never handed out**: browsers treat it as unsafe (it is the X11
+  port), so the first session gets 6001.
+- In split mode the ports belong to the `worker` container.
+- Every session writes a log to `/data/vnc/<profile-id>-<port>.log`.
+- If the browser could not take the profile, the session fails immediately with
+  the reason in chat instead of showing an empty desktop.
+- The site password is stored only in the browser profile; it is not in the
+  database.
 
 ---
 
-## Отчёты
+## Reports
 
-После прогона воркер пишет `.ods` в `data/exports/<slug-сайта>/` и ставит в
-очередь событие; бот отправляет файл админам. Имя —
-`{парсер}_{сайт}_{ГГГГ-ММ-ДД_ЧЧ-ММ}.ods`, шаблон меняется
-`UWP_REPORT_NAME_TEMPLATE`. Хранится последние `UWP_EXPORTS_RETENTION` (50) на
-сайт. Каталоги `data/artifacts/<id-прогона>` (скриншот упавшего прогона и прочее,
-что сохранил парсер) чистятся до последних `UWP_ARTIFACTS_RETENTION` (20).
+After a run the worker writes an `.ods` to `data/exports/<site-slug>/` and
+queues an event; the bot sends the file to the admins. The name is
+`{parser}_{site}_{YYYY-MM-DD_HH-MM}.ods`, and the template is changed by
+`UWP_REPORT_NAME_TEMPLATE`. The last `UWP_EXPORTS_RETENTION` (50) per site are
+kept. The directories `data/artifacts/<run-id>` (a screenshot of a failed run
+and whatever else the parser saved) are trimmed to the last
+`UWP_ARTIFACTS_RETENTION` (20).
 
-Режим отчёта настраивается на сайт:
+The report mode is set per site:
 
-- `always` — после каждого прогона (по умолчанию);
-- `changes` — только если есть новые или изменившиеся строки;
-- `never` — не писать.
+- `always` — after every run (the default);
+- `changes` — only if there are new or changed rows;
+- `never` — do not write.
 
-В файл всегда попадает полный срез и колонка «Новое»; изменившиеся строки
-подсвечиваются. Режим решает только, писать ли файл, а не что в нём.
+The file always contains the full snapshot and the «Новое» column; changed rows
+are highlighted. The mode decides only whether to write a file, not what goes
+into it.
 
-«Новое» — это «не было в прошлом прогоне», а не «не встречалось никогда». Строка,
-которая пропала с сайта и потом вернулась (скидка кончилась и началась снова),
-снова помечается новой. Колонка «Исчезло» в метаданных считает, сколько строк не
-встретилось именно в этом прогоне.
+«Новое» means "was not in the previous run", not "never seen". A row that
+disappeared from the site and later came back (a discount ended and began
+again) is marked new again. The «Исчезло» column in the metadata counts how many
+rows did not appear in this particular run.
 
-Если файл не нужен по режиму (`changes` без изменений, `never`), бот молчит. Если
-отчёт должен был появиться, но запись упала, придёт «⚠️ Отчёт не создан» с
-причиной. Частичный прогон помечается «⚠️ Прогон частичный» и перечисляет, что не
-удалось собрать.
+If the mode says no file is needed (`changes` with no changes, `never`), the
+bot stays silent. If a report was supposed to appear but writing failed, you
+get «⚠️ Отчёт не создан» with the reason. A partial run is marked
+«⚠️ Прогон частичный» and lists what could not be collected.
 
-Скачать отчёт вручную:
+Downloading a report by hand:
 
 ```bash
 docker exec uwp-worker /entrypoint.sh export steam_skidki -o /data/report.ods
@@ -341,10 +359,10 @@ docker cp uwp-worker:/data/report.ods .
 
 ---
 
-## Как добавить свой парсер
+## Adding your own parser
 
-1. Создайте папку `src/uwp/parsers/<ключ>/` с `__init__.py` и `parser.py`.
-2. В `parser.py` объявите ровно один наследник `BaseParser`:
+1. Create a folder `src/uwp/parsers/<key>/` with `__init__.py` and `parser.py`.
+2. In `parser.py` declare exactly one `BaseParser` subclass:
 
 ```python
 from typing import ClassVar
@@ -376,161 +394,176 @@ class MyParser(BaseParser):
         return ParseResult(rows=rows, meta={"pages": 1})
 ```
 
-3. Перезапустите сервис: `$COMPOSE restart worker`. Парсер появится в `uwp parsers
-   list` и в боте («🌐 Сайты» → «➕ Добавить сайт»).
+The strings in the sample are Russian for a reason: `title`, `description` and
+the column headers are shown to humans — in the bot and as `.ods` headers. Code
+identifiers stay English.
 
-Правила:
+3. Restart the service: `$COMPOSE restart worker`. The parser appears in
+   `uwp parsers list` and in the bot («🌐 Сайты» → «➕ Добавить сайт»).
 
-- **`external_key` обязателен в каждой строке** — по нему считается «новое» и
-  «изменённое» (для Steam это `app_id`). В отчёт он не попадает, если его нет в
-  `columns`.
-- Ошибки бросайте типизированно: `ParseError(kind=ErrorKind.blocked, message="…",
-  partial_rows=[…])`. Виды: `login_required`, `blocked`, `transient`,
-  `parser_error`, `config_error` — от вида зависят ретраи и уведомления.
-- `columns` задают отчёт: порядок, заголовки, ширину (`width`) и числовой формат
-  (`fmt`, например `"0.00"`). Ключи `url` и `*_url` рендерятся ссылками.
-  Если значение колонки меняется само по себе между прогонами (счётчик отзывов,
-  число зрителей), пометьте её `volatile=True`: она останется в отчёте, но
-  перестанет считаться изменением для режима «только изменения».
-- Сломанный парсер не роняет сервис: он помечается `broken` и виден в списке.
-- Пишите README рядом с парсером — как в `src/uwp/parsers/steam_deals/`.
+Rules:
 
-Скриншот для разбора проблем: `ctx.save_artifact("screenshot.png", data)`.
+- **`external_key` is mandatory in every row** — new/changed detection is based
+  on it (for Steam it is `app_id`). It does not appear in the report unless it
+  is in `columns`.
+- Raise errors with a type: `ParseError(kind=ErrorKind.blocked, message="…",
+  partial_rows=[…])`. Kinds: `login_required`, `blocked`, `transient`,
+  `parser_error`, `config_error` — retries and notifications depend on the kind.
+- `columns` define the report: order, headers, width (`width`) and numeric
+  format (`fmt`, e.g. `"0.00"`). The keys `url` and `*_url` are rendered as
+  links. If a column's value drifts between runs by itself (a review count, a
+  viewer number), mark it `volatile=True`: it stays in the report but stops
+  counting as a change for the "changes only" mode.
+- A broken parser does not take the service down: it is marked `broken` and
+  stays visible in the list.
+- Write a README next to the parser — as in `src/uwp/parsers/steam_deals/`.
+
+A screenshot for investigating problems: `ctx.save_artifact("screenshot.png", data)`.
 
 ---
 
-## Команды без бота
+## Commands without the bot
 
-В контейнере лежит CLI `uwp`. В split-режиме почти всё нужно воркеру:
+The image ships a `uwp` CLI. In split mode almost everything belongs to the
+worker:
 
 ```bash
-docker exec uwp-worker /entrypoint.sh doctor         # диагностика окружения
-docker exec uwp-worker /entrypoint.sh parsers list   # установленные парсеры
-docker exec uwp-worker /entrypoint.sh site list      # сайты и расписание
+docker exec uwp-worker /entrypoint.sh doctor         # environment diagnostics
+docker exec uwp-worker /entrypoint.sh parsers list   # installed parsers
+docker exec uwp-worker /entrypoint.sh site list      # sites and schedules
 docker exec uwp-worker /entrypoint.sh site run steam_skidki
-docker exec uwp-worker /entrypoint.sh profile list   # постоянные профили
-docker exec uwp-worker /entrypoint.sh proxy test 1   # проверить прокси
+docker exec uwp-worker /entrypoint.sh profile list   # persistent profiles
+docker exec uwp-worker /entrypoint.sh proxy test 1   # test a proxy
 docker exec uwp-worker /entrypoint.sh vnc list
 docker exec uwp-worker /entrypoint.sh export 12 -o /data/run12.ods
 docker cp uwp-worker:/data/run12.ods .
 ```
 
-`doctor` проверяет каталоги данных, бинарник браузера и его запуск,
-Xvfb/x11vnc/websockify (только предупреждение), токен, админов, ключ шифрования и
-миграции базы. Код возврата 1, если что-то сломано — на этом держится healthcheck.
+`doctor` checks the data directories, the browser binary and its launch,
+Xvfb/x11vnc/websockify (a warning only), the token, the admins, the encryption
+key and the database migrations. Exit code 1 if something is broken — the
+healthcheck relies on that.
 
-У воркера токена нет намеренно, поэтому его healthcheck зовёт
-`doctor --offline --worker`: флаг `--worker` убирает проверку `UWP_BOT_TOKEN`.
+The worker deliberately has no token, so its healthcheck calls
+`doctor --offline --worker`: the `--worker` flag drops the `UWP_BOT_TOKEN`
+check.
 
-В combined-режиме те же команды — через `docker compose exec uwp /entrypoint.sh …`.
+In combined mode the same commands go through
+`docker compose exec uwp /entrypoint.sh …`.
 
-`/entrypoint.sh` в `exec` — не украшение: без него команда выполнится от root и
-`doctor` подтвердит запись в каталоги, куда uid 1000 писать не может.
-
----
-
-## Безопасность
-
-- **Порты VNC — только loopback.** noVNC по HTTP с 8-символьным паролем наружу не
-  выставляется. Для удалённого доступа — SSH-туннель или TLS reverse proxy.
-- **Песочница Chromium.** Compose-файлы подключают `docker/seccomp-uwp.json` —
-  профиль Docker с тремя послаблениями, без которых Chromium не может собрать
-  песочницу из namespaces. Что именно послаблено и почему — в
-  `docker/README-seccomp.md`. При запуске голым `docker run` передайте
-  `--security-opt seccomp=./docker/seccomp-uwp.json`, иначе браузер честно
-  откажется стартовать. Аварийный вариант `UWP_NO_SANDBOX=true` запустит браузер,
-  но рендерер окажется в общих с контейнером namespaces и увидит `/data` —
-  профили с живыми cookie и базу.
-- **Окружение процесса скрыто.** CLI выставляет `PR_SET_DUMPABLE=0`, поэтому
-  `/proc/<pid>/environ` не читается даже процессами того же uid. Без этого VNC-
-  браузер (тот же uid 1000) мог бы прочитать `UWP_BOT_TOKEN` и `UWP_SECRET_KEY`.
-- **Токен только у бота.** В split-режиме `UWP_BOT_TOKEN` намеренно пустой у
-  воркера: Telegram опрашивает только `bot`.
-- **Админы.** Гейт стоит на уровне апдейта: бот игнорирует всех, кого нет в
-  `UWP_ADMIN_IDS`/`admins`, и отвечает одним вежливым отказом на любой тип
-  апдейта. Токен бота — такой же секрет, как пароль.
-- **Ключ шифрования.** `UWP_SECRET_KEY` задавайте до добавления прокси: без него
-  пароли хранятся открыто, а смена ключа делает старые нечитаемыми. Ключ —
-  длинный случайный (`openssl rand -hex 32`): он растягивается PBKDF2, поэтому
-  утечка базы не даёт быстрого перебора, но слабый ключ перебирается всё равно.
-- **Файлы.** `data` создаётся с правами `0700`, база — `0600`, процессы работают
-  с `umask 077`: профили с живыми cookie, WAL и пароли VNC не читаются другими
-  пользователями хоста. Пароль VNC стирается при остановке сессии, строка
-  удаляется через `UWP_VNC_HISTORY_DAYS` (7 дней).
-- **Мост прокси.** Chromium не умеет отправлять `Proxy-Authorization` в
-  `CONNECT`-туннель, поэтому пароль прокси добавляет локальный мост на
-  `127.0.0.1`. Мост не аутентифицирует клиента (Chromium не смог бы предъявить
-  пароль), поэтому он отказывается открывать внутренние адреса — loopback,
-  RFC 1918, link-local (включая `169.254.169.254`), `*.internal`/`*.local`. Так
-  любой процесс в контейнере не превратит оплаченный прокси в путь к Docker-
-  сокету или метаданным облака.
-- **Отчёты.** Значения из HTML попадают в `.ods`; кликабельными становятся только
-  `http(s)`-ссылки, `javascript:`/`file:`/`data:` остаются текстом. Шаблон имени
-  файла санитайзится: `../` не выведет запись за `data/exports`.
-- **Уборка.** Воркер раз в час удаляет истёкшие clean-профили, старые строки
-  VNC-сессий и лишние каталоги `data/artifacts`; вышедшие за лимит отчёты
-  подрезаются при каждой записи нового.
-
-Выше — что защищено. Что **сознательно не защищено** и от кого именно, включая
-модель угроз и известные ограничения (8-символьный пароль RFB, noVNC по HTTP,
-профили без шифрования), — в [`SECURITY.md`](SECURITY.md).
+`/entrypoint.sh` in `exec` is not decoration: without it the command runs as
+root and `doctor` confirms writes to directories that uid 1000 cannot write to.
 
 ---
 
-## Разработка без Docker
+## Security
+
+- **VNC ports are loopback-only.** noVNC speaks HTTP with an 8-character
+  password and is not exposed outward. For remote access, use an SSH tunnel or a
+  TLS reverse proxy.
+- **Chromium sandbox.** The compose files mount `docker/seccomp-uwp.json` — a
+  Docker profile with three relaxations, without which Chromium cannot build its
+  sandbox from namespaces. What exactly is relaxed and why is in
+  `docker/README-seccomp.md`. When starting with a bare `docker run`, pass
+  `--security-opt seccomp=./docker/seccomp-uwp.json`, otherwise the browser
+  honestly refuses to start. The emergency option `UWP_NO_SANDBOX=true` starts
+  the browser, but the renderer ends up in namespaces shared with the container
+  and can see `/data` — profiles with live cookies and the database.
+- **The process environment is hidden.** The CLI sets `PR_SET_DUMPABLE=0`, so
+  `/proc/<pid>/environ` cannot be read even by processes of the same uid.
+  Without that, the VNC browser (same uid 1000) could read `UWP_BOT_TOKEN` and
+  `UWP_SECRET_KEY`.
+- **The token belongs to the bot only.** In split mode `UWP_BOT_TOKEN` is
+  deliberately empty in the worker: only `bot` polls Telegram.
+- **Admins.** The gate sits at the update level: the bot ignores everyone not in
+  `UWP_ADMIN_IDS`/`admins` and answers with one polite refusal to any update
+  type. The bot token is as much a secret as a password.
+- **The encryption key.** Set `UWP_SECRET_KEY` before adding proxies: without it
+  passwords are stored in plaintext, and changing the key makes the old ones
+  unreadable. Use a long random key (`openssl rand -hex 32`): it is stretched by
+  PBKDF2, so a database leak does not allow a fast brute force, but a weak key is
+  still guessable.
+- **Files.** `data` is created with mode `0700`, the database with `0600`, and
+  processes run with `umask 077`: profiles with live cookies, the WAL and VNC
+  passwords are not readable by other users of the host. The VNC password is
+  wiped when the session stops, and the row is deleted after
+  `UWP_VNC_HISTORY_DAYS` (7 days).
+- **The proxy bridge.** Chromium cannot send `Proxy-Authorization` in a
+  `CONNECT` tunnel, so the proxy password is added by a local bridge on
+  `127.0.0.1`. The bridge does not authenticate the client (Chromium could not
+  present a password), so it refuses to open internal addresses — loopback,
+  RFC 1918, link-local (including `169.254.169.254`), `*.internal`/`*.local`.
+  That way no process in the container can turn a paid proxy into a path to the
+  Docker socket or cloud metadata.
+- **Reports.** Values from HTML end up in the `.ods`; only `http(s)` links become
+  clickable, while `javascript:`/`file:`/`data:` stay text. The file name
+  template is sanitised: `../` cannot write outside `data/exports`.
+- **Cleanup.** Once an hour the worker deletes expired clean profiles, old VNC
+  session rows and extra `data/artifacts` directories; reports beyond the limit
+  are trimmed on every new write.
+
+The above is what is protected. What is **deliberately not protected**, and
+from whom — including the threat model and the known limitations (the
+8-character RFB password, noVNC over HTTP, unencrypted profiles) — is in
+[`SECURITY.md`](SECURITY.md).
+
+---
+
+## Development without Docker
 
 ```bash
 python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
-uwp browser install      # скачает fingerprint-chromium в data/browser
+uwp browser install      # downloads fingerprint-chromium into data/browser
 uwp doctor
-uwp init && uwp run      # бот + воркер
+uwp init && uwp run      # bot + worker
 ```
 
-Тесты:
+Tests:
 
 ```bash
-pytest                                                    # юнит-тесты, без сети и браузера
-UWP_LIVE=1 pytest -m live                                 # живая страница Steam
-UWP_TEST_BROWSER=/path/to/chrome pytest -m integration    # прогон в браузере
+pytest                                                    # unit tests, no network, no browser
+UWP_LIVE=1 pytest -m live                                 # live Steam page
+UWP_TEST_BROWSER=/path/to/chrome pytest -m integration    # a run in a real browser
 ruff check src tests
 ```
 
-`ruff format` в проекте не используется — только `ruff check`.
+`ruff format` is not used in this project — only `ruff check`.
 
 ---
 
-## Если что-то не работает
+## Troubleshooting
 
-| Симптом | Что делать |
+| Symptom | What to do |
 | --- | --- |
-| Бот молчит | `$COMPOSE logs -f bot`; проверьте `UWP_BOT_TOKEN`; `uwp doctor`. |
-| «Нет доступа» в боте | Ваш id не в `UWP_ADMIN_IDS`/`admins`. Бот сам его не покажет: возьмите у `@userinfobot`. |
-| Контейнер `Restarting` | Скорее всего нет доступа к `api.telegram.org`: задайте `UWP_TELEGRAM_PROXY`. |
-| `fingerprint-chromium not found` | `uwp browser install` или проверьте `UWP_BROWSER_PATH`. |
-| Прогон падает с `blocked` | Капча или блок региона: добавьте прокси, смените регион парсера. |
-| Прогон падает с `login_required` | Нужен постоянный профиль и вход через VNC, затем привяжите профиль к сайту. |
-| Отчёт не пришёл | Проверьте режим отчёта (`changes` без изменений молчит) и `uwp export <id>`. |
-| VNC-ссылка не открывается | Порт опубликован только на `127.0.0.1`: с другой машины нужен SSH-туннель или TLS proxy, либо `UWP_PUBLIC_HOST` не тот; `uwp vnc list`. В split-режиме сессию поднимает `worker` — подождите несколько секунд. Если в логе VNC `Address already in use`, на машине запущен второй стек. |
-| VNC-ссылка рвёт соединение | `websockify` не занял порт (обычно из-за второго стека). Сессия падает с причиной в чате; проверьте, что запущен ровно один стек. |
-| `uwp vnc stop` «ничего не делает» | Команда только помечает сессию; процессы убивает воркер на ближайшем тике (до 5 с). |
-| noVNC открылся, но экран пустой | Смотрите `/data/vnc/<id-профиля>-<порт>.log` в контейнере. Порт — из 6000–6100, кроме 6000. |
-| `uwp: /data is not writable by uid 1000` | Каталог принадлежит другому uid. На хосте: `sudo chown -R 1000:1000 data`. |
-| `database is locked` | Не запускайте два воркера на одном томе. |
-| Профиль «занят» | Идёт прогон или висит lease: подождите `UWP_ORPHAN_THRESHOLD`, либо перезапустите воркер. |
+| The bot is silent | `$COMPOSE logs -f bot`; check `UWP_BOT_TOKEN`; `uwp doctor`. |
+| «⛔ Доступ только для администратора» in the bot | Your id is not in `UWP_ADMIN_IDS`/`admins`. The bot will not show it: get it from `@userinfobot`. |
+| The container is `Restarting` | Most likely no access to `api.telegram.org`: set `UWP_TELEGRAM_PROXY`. |
+| `fingerprint-chromium not found` | `uwp browser install` or check `UWP_BROWSER_PATH`. |
+| A run fails with `blocked` | A captcha or a region block: add a proxy, change the parser region. |
+| A run fails with `login_required` | A persistent profile and a VNC login are needed; then attach the profile to the site. |
+| No report arrived | Check the report mode (`changes` stays silent with no changes) and `uwp export <id>`. |
+| The VNC link does not open | The port is published on `127.0.0.1` only: from another machine you need an SSH tunnel or a TLS proxy, or `UWP_PUBLIC_HOST` is wrong; `uwp vnc list`. In split mode the `worker` raises the session — wait a few seconds. If the VNC log says `Address already in use`, a second stack is running on the machine. |
+| The VNC link resets | `websockify` did not take the port (usually because of a second stack). The session fails with the reason in chat; check that exactly one stack is running. |
+| `uwp vnc stop` "does nothing" | The command only marks the session; the worker kills the processes on its next tick (up to 5 s). |
+| noVNC opened but the screen is empty | Look at `/data/vnc/<profile-id>-<port>.log` in the container. The port is from 6000–6100, excluding 6000. |
+| `uwp: /data is not writable by uid 1000` | The directory belongs to another uid. On the host: `sudo chown -R 1000:1000 data`. |
+| `database is locked` | Do not run two workers on one volume. |
+| A profile is "busy" | A run is in progress or a lease is stuck: wait for `UWP_ORPHAN_THRESHOLD`, or restart the worker. |
 
-Больше деталей — в `uwp doctor` и логах (`UWP_LOG_LEVEL=DEBUG`).
+More detail — in `uwp doctor` and the logs (`UWP_LOG_LEVEL=DEBUG`).
 
 ---
 
-## Лицензия
+## License
 
-MIT — полный текст в [`LICENSE`](LICENSE). Это касается кода этого проекта.
+MIT — the full text is in [`LICENSE`](LICENSE). This covers the code of this
+project.
 
-Два вложения написаны не нами и под MIT не попадают:
-`docker/seccomp-uwp.json` — производная профиля Docker (Apache-2.0, изменён),
-фикстуры `tests/fixtures/steam_search*.html` — разметка Steam (Valve
-Corporation, без лицензии, используются как тестовые данные). Что ещё
-устанавливается при сборке и под какими лицензиями — в
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), там же полный текст
-Apache-2.0.
+Two included files are not ours and are not covered by MIT:
+`docker/seccomp-uwp.json` is a derivative of Docker's profile (Apache-2.0,
+modified), and the fixtures `tests/fixtures/steam_search*.html` are Steam
+markup (Valve Corporation, no licence granted, used as test data). What else is
+installed at build time and under which licences is in
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), along with the full Apache-2.0
+text.

@@ -1,8 +1,8 @@
 # AGENTS.md
 
 Guidance for AI coding agents working on UltimateWebParser. Human-facing docs
-(Russian) live in `README.md`; this file is about **how to change the code
-without breaking it**.
+live in `README.md` (English) with a Russian twin `README.ru.md`; this file is
+about **how to change the code without breaking it**.
 
 ## What this project is
 
@@ -105,6 +105,10 @@ several decisions there are deliberate and counter-intuitive (for example why
 - **Russian for anything a human reads**: bot texts, CLI output, `labels.py`,
   `.ods` headers, log messages. English for identifiers, docstrings and
   comments. Match the surrounding file.
+- **Every README comes in two languages.** `README.md` is English (GitHub renders
+  it), `X.ru.md` is the Russian twin. Edit both in the same commit and keep the
+  section order identical — `tests/unit/test_readme_translations.py` compares
+  section counts and cross-links, so a one-sided edit fails the suite.
 - **No `--no-sandbox`.** The sandbox works through `docker/seccomp-uwp.json`.
   `UWP_NO_SANDBOX` is an operator escape hatch, never a default.
 - **Commits** use Conventional Commit prefixes (`fix(vnc): ...`,

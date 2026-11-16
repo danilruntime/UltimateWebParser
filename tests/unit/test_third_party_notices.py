@@ -20,7 +20,7 @@ APACHE = ROOT / "docker" / "seccomp-uwp.json"
 
 # Files in ``docker/`` written by this project. Everything else there is either
 # vendored or generated from a vendored source and must be attributed.
-OURS = {"entrypoint.sh"}
+OURS = {"entrypoint.sh", "README-seccomp.md", "README-seccomp.ru.md"}
 
 
 def test_the_notices_are_linked_from_the_readme():

@@ -1,5 +1,7 @@
 # Steam deals parser (`steam_deals`)
 
+**Русская версия:** [`README.ru.md`](README.ru.md).
+
 Scrapes discounted games from the Steam store search page
 (`https://store.steampowered.com/search/?specials=1`). Works on a clean
 profile: `requires_login = False`.

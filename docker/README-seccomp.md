@@ -8,6 +8,8 @@ That file is licensed Apache-2.0 by Docker, Inc. and is a modified work; the
 attribution and the full license text are in
 [`../THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).
 
+**Русская версия:** [`README-seccomp.ru.md`](README-seccomp.ru.md).
+
 ## Why the stock profile is not enough
 
 Chromium builds its sandbox from namespaces: the zygote puts the renderer into

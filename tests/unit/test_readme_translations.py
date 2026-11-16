@@ -1,0 +1,138 @@
+"""Every README has a Russian twin, and the twins stay in step.
+
+The repository documents itself in English (GitHub renders ``README.md``) with a
+Russian copy beside it. Two translations drift the moment someone edits one side,
+and a stale translation quietly lies: it describes a setting that no longer
+exists, or omits a warning. Section counts and heading order are the cheap
+structural signal; a broken cross-link is the other.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+
+PAIRS = [
+    ("README.md", "README.ru.md"),
+    ("docker/README-seccomp.md", "docker/README-seccomp.ru.md"),
+    ("src/uwp/parsers/steam_deals/README.md", "src/uwp/parsers/steam_deals/README.ru.md"),
+]
+
+
+def _headings(path: Path) -> list[str]:
+    return [
+        line.rstrip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.startswith(("## ", "### "))
+    ]
+
+
+@pytest.mark.parametrize(("english", "russian"), PAIRS)
+def test_the_russian_twin_exists(english: str, russian: str) -> None:
+    assert (ROOT / english).is_file()
+    assert (ROOT / russian).is_file()
+
+
+@pytest.mark.parametrize(("english", "russian"), PAIRS)
+def test_both_versions_have_the_same_sections(english: str, russian: str) -> None:
+    """A section added to one side only is a translation that lies by omission."""
+    en = _headings(ROOT / english)
+    ru = _headings(ROOT / russian)
+
+    assert len(en) == len(ru), f"{english} has {len(en)} sections, {russian} has {len(ru)}"
+
+
+@pytest.mark.parametrize(("english", "russian"), PAIRS)
+def test_each_version_links_to_the_other(english: str, russian: str) -> None:
+    """Without the header link a reader lands in the wrong language for good."""
+    en_text = (ROOT / english).read_text(encoding="utf-8")
+    ru_text = (ROOT / russian).read_text(encoding="utf-8")
+    en_name = Path(english).name
+    ru_name = Path(russian).name
+
+    assert ru_name in en_text, f"{english} does not link to {ru_name}"
+    assert en_name in ru_text, f"{russian} does not link to {en_name}"
+
+
+@pytest.mark.parametrize(("english", "russian"), PAIRS)
+def test_cross_links_resolve(english: str, russian: str) -> None:
+    """A translated link is the easiest thing to get wrong and never notice."""
+    for name in (english, russian):
+        path = ROOT / name
+        text = path.read_text(encoding="utf-8")
+        for target in re.findall(r"\]\(([^)#:]+?)\)", text):
+            if target.startswith("http"):
+                continue
+            assert (path.parent / target).exists(), f"{name} links to missing {target}"
+
+
+@pytest.mark.parametrize(("english", "russian"), PAIRS)
+def test_code_fences_are_balanced(english: str, russian: str) -> None:
+    """An odd fence swallows the rest of the page on GitHub."""
+    for name in (english, russian):
+        text = (ROOT / name).read_text(encoding="utf-8")
+        assert text.count("```") % 2 == 0, f"{name} has an unbalanced code fence"
+
+
+def test_the_english_readme_carries_the_numbers_that_matter():
+    """Pinned facts: a translation is where a silent 6000→6001 edit hides."""
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    for fact in ("6000", "6100", "6001", "0700", "0600", "umask 077", "PBKDF2"):
+        assert fact in text
+
+
+def _heading_levels(path: Path) -> list[int]:
+    return [
+        len(line) - len(line.lstrip("#"))
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.startswith(("## ", "### "))
+    ]
+
+
+@pytest.mark.parametrize(("english", "russian"), PAIRS)
+def test_the_sections_appear_in_the_same_order(english: str, russian: str) -> None:
+    """Equal counts still allow a swap; the nesting has to line up too."""
+    assert _heading_levels(ROOT / english) == _heading_levels(ROOT / russian)
+
+
+@pytest.mark.parametrize(("english", "russian"), PAIRS)
+def test_both_versions_have_the_same_number_of_code_blocks(english: str, russian: str) -> None:
+    """A block that survives in one language only is usually a lost example."""
+    en = (ROOT / english).read_text(encoding="utf-8").count("```")
+    ru = (ROOT / russian).read_text(encoding="utf-8").count("```")
+
+    assert en == ru, f"{english} has {en} fences, {russian} has {ru}"
+
+
+def test_quoted_bot_labels_match_the_code():
+    """The English README quoting «🟢 Enable» would describe a bot that does not exist.
+
+    Measured: the first translation of this file translated the labels, and the
+    documented buttons no longer existed anywhere in the bot.
+    """
+    from uwp.bot.keyboards import BTN_HELP, BTN_PROFILES, BTN_PROXIES, BTN_SITES
+    from uwp.bot.texts import ADD_SITE, DELETE, RUN_NOW, SETTINGS, TOGGLE_OFF, TOGGLE_ON
+    from uwp.ods import NEW_COLUMN_TITLE
+
+    labels = [
+        BTN_SITES,
+        BTN_PROFILES,
+        BTN_PROXIES,
+        BTN_HELP,
+        ADD_SITE,
+        DELETE,
+        RUN_NOW,
+        SETTINGS,
+        TOGGLE_OFF,
+        TOGGLE_ON,
+        NEW_COLUMN_TITLE,
+    ]
+    for name in ("README.md", "README.ru.md"):
+        text = (ROOT / name).read_text(encoding="utf-8")
+        missing = [label for label in labels if label not in text]
+        assert missing == [], f"{name} does not quote {missing}"
