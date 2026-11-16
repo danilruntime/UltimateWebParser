@@ -61,13 +61,63 @@ def test_a_manual_run_can_repair_an_existing_release():
 
     runs = "\n".join(step["run"] for step in _steps() if "run" in step)
     assert "gh release edit" in runs, "an existing release would fail instead of updating"
-    assert "gh release upload" in runs
-    assert "--clobber" in runs
 
     # The checkout has to follow the requested tag, or a manual run tests `main`
     # while claiming to describe the tag.
     checkout = next(step for step in _steps() if step.get("uses", "").startswith("actions/checkout"))
     assert "ref" in checkout["with"]
+
+
+def test_the_workflow_attaches_no_archives():
+    """A release page offering a wheel promises an install path that does not exist.
+
+    Measured on the v0.1b1 wheel: its only top-level entries are `uwp/` and
+    `ultimate_web_parser-0.1b1.dist-info/`. No `compose.yaml`, no `Dockerfile`,
+    no `docker/seccomp-uwp.json`, no `docker/entrypoint.sh`, no `.env.example`.
+    Chromium runs sandboxed only through that seccomp profile, so a reader who
+    installs the wheel gets a CLI and no way to start the service — and nothing
+    in the package that says so.
+
+    The sdist added nothing either: 154 files against 153 in the tag's own
+    working tree, which GitHub already serves as the source archive.
+    """
+    runs = "\n".join(step["run"] for step in _steps() if "run" in step)
+
+    assert "gh release upload" not in runs, "archives are attached to the release"
+
+    creates = [step["run"] for step in _steps() if "gh release create" in step.get("run", "")]
+    assert creates, "the workflow no longer creates a release"
+    for run in creates:
+        assert "$RELEASE_TAG" in run
+        for line in run.splitlines():
+            if "gh release create" in line:
+                assert "dist/" not in line, f"`gh release create` is handed archives: {line.strip()}"
+
+
+def test_an_existing_release_loses_the_archives_it_already_has():
+    """`v0.1b1` was published with two assets before the decision to drop them.
+
+    Re-running the workflow has to remove them, otherwise the page keeps
+    advertising a wheel the project no longer ships — and a repair run is the
+    only mechanism that can touch an already-published page.
+    """
+    runs = "\n".join(step["run"] for step in _steps() if "run" in step)
+
+    assert "gh release delete-asset" in runs
+    assert "--yes" in runs, "the step runs without a TTY and would wait for input"
+
+
+def test_the_workflow_still_builds_the_archives_it_does_not_ship():
+    """Building is a check, not a deliverable — and it has already paid for itself.
+
+    Measured: putting `[project.urls]` above `dependencies` left the list inside
+    the URL table. Valid TOML, clean ruff, green tests, and a wheel whose
+    `Requires-Dist` held zero runtime requirements.
+    """
+    runs = "\n".join(step["run"] for step in _steps() if "run" in step)
+
+    assert "python -m build" in runs
+    assert "wheel" in runs or "--sdist" in runs
 
 
 def test_the_notes_are_read_from_the_triggering_commit():

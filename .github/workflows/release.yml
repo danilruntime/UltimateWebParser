@@ -113,10 +113,39 @@ jobs:
       - name: Test
         run: pytest
 
-      - name: Build the wheel and the sdist
+      # Building is a check, not a deliverable. Measured: putting
+      # `[project.urls]` above `dependencies` left the list inside the URL
+      # table — valid TOML, clean ruff, green suite, and a wheel whose
+      # `Requires-Dist` held zero runtime requirements. Only a built wheel
+      # shows what a resolver sees, so it is still built here — into a temp
+      # directory, because nothing is attached to the release any more.
+      - name: The wheel builds and carries its runtime dependencies
         run: |
           pip install build
-          python -m build --outdir dist
+          python -m build --wheel --outdir "$RUNNER_TEMP/dist"
+          python - <<'PY'
+          import glob
+          import os
+          import zipfile
+
+          wheel = glob.glob(os.environ["RUNNER_TEMP"] + "/dist/*.whl")[0]
+          with zipfile.ZipFile(wheel) as archive:
+              metadata = next(
+                  archive.read(name).decode()
+                  for name in archive.namelist()
+                  if name.endswith("METADATA")
+              )
+
+          runtime = [
+              line for line in metadata.splitlines()
+              if line.startswith("Requires-Dist:") and "extra ==" not in line
+          ]
+          for expected in ("playwright", "aiogram", "odfpy", "aiosqlite", "cryptography"):
+              assert any(expected in line.lower() for line in runtime), (
+                  f"{expected} is missing from Requires-Dist: {runtime}"
+              )
+          print(f"{len(runtime)} runtime requirements in the wheel")
+          PY
 
       # A 0.x beta is not "Latest": GitHub puts that badge on the newest
       # non-prerelease, and a beta wearing it reads as a stable recommendation.
@@ -125,10 +154,16 @@ jobs:
       # alone keeps the badge away today, but the explicit flag states the
       # intent instead of relying on that interaction.
       #
-      # `gh release create` has no `--clobber` (only `release upload` does), so
-      # an existing release is updated through `release edit` and its assets
-      # through `release upload --clobber`. Re-running for the same tag is then
-      # a repair, not a failure — which is what fixing a published page needs.
+      # No archives are attached. A wheel of this project holds `uwp/` and the
+      # dist-info only — no compose file, no Dockerfile, no seccomp profile —
+      # so a reader who installed it would have a CLI and no way to start the
+      # service. Publishing an artifact that reads as an install path is worse
+      # than publishing none; `git clone` plus compose is the documented one.
+      #
+      # `v0.1b1` was published with two assets before this decision. The first
+      # argument to `delete-asset` is the tag and the second the asset name, so
+      # a blanket removal cannot be written; only the names this project
+      # produced are listed, and a missing one is not an error.
       - name: Create or update the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -145,9 +180,13 @@ jobs:
               --notes-file "$RUNNER_TEMP/notes.md" \
               --latest=false \
               $prerel
-            gh release upload "$RELEASE_TAG" dist/* --clobber
+            for asset in "ultimate_web_parser-${RELEASE_TAG#v}-py3-none-any.whl" \
+                         "ultimate_web_parser-${RELEASE_TAG#v}.tar.gz"; do
+              gh release delete-asset "$RELEASE_TAG" "$asset" --yes \
+                || echo "no asset $asset to remove"
+            done
           else
-            gh release create "$RELEASE_TAG" dist/* \
+            gh release create "$RELEASE_TAG" \
               --title "$RELEASE_TAG" \
               --notes-file "$RUNNER_TEMP/notes.md" \
               --verify-tag \
