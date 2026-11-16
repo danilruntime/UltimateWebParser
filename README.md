@@ -155,7 +155,7 @@ Checking it:
 
 ```bash
 docker compose -f compose.split.yaml -f compose.split.hostnet.yaml \
-  exec bot /entrypoint.sh doctor | grep -i proxy
+  exec bot /entrypoint.sh doctor | grep -i прокси
 ```
 
 `doctor` actually opens `api.telegram.org` through the proxy and prints the
@@ -163,6 +163,9 @@ reason for failure (port, TLS timeout, wrong scheme). The password is masked in
 the output. The container healthcheck runs `doctor --offline`: it checks only
 the address format, because a third-party proxy may take 15 seconds to answer
 and must not flip a working container to `unhealthy`.
+
+The output is Russian like the rest of the operator-facing text, hence
+`grep -i прокси` in the snippet above: `grep -i proxy` would match nothing.
 
 **A proxy on the host's `127.0.0.1`.** In a bridged container `127.0.0.1` is
 the container itself. Two ways out:
