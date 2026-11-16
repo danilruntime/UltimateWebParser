@@ -49,6 +49,35 @@ jobs:
       - name: Test
         run: pytest
 
+      # `test_packaging.py` reads pyproject.toml, but only a built wheel proves
+      # what a resolver will see. Measured: placing `[project.urls]` above
+      # `dependencies` left the list inside the URL table — valid TOML, clean
+      # ruff, 620 green tests, and a wheel with zero runtime requirements.
+      - name: The wheel carries its runtime dependencies
+        run: |
+          python -m pip wheel . --no-deps -w /tmp/wheel -q
+          python - <<'PY'
+          import glob, zipfile
+
+          wheel = glob.glob("/tmp/wheel/*.whl")[0]
+          with zipfile.ZipFile(wheel) as archive:
+              metadata = next(
+                  archive.read(name).decode()
+                  for name in archive.namelist()
+                  if name.endswith("METADATA")
+              )
+
+          runtime = [
+              line for line in metadata.splitlines()
+              if line.startswith("Requires-Dist:") and "extra ==" not in line
+          ]
+          for expected in ("playwright", "aiogram", "odfpy", "aiosqlite", "cryptography"):
+              assert any(expected in line.lower() for line in runtime), (
+                  f"{expected} is missing from Requires-Dist: {runtime}"
+              )
+          print(f"{len(runtime)} runtime requirements in the wheel")
+          PY
+
       # A documentation change is not covered by pytest when it is a broken
       # relative link, so check that every tracked markdown file's local links
       # resolve. Cheaper than a link checker and needs no network.
