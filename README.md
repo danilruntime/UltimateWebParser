@@ -3,6 +3,13 @@
 [![tests](https://github.com/danilruntime/UltimateWebParser/actions/workflows/tests.yml/badge.svg)](https://github.com/danilruntime/UltimateWebParser/actions/workflows/tests.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![python: 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
+[![version: 0.1 beta](https://img.shields.io/badge/version-0.1%20beta-orange.svg)](pyproject.toml)
+
+> **Status: 0.1 beta.** The service runs end to end and has been measured
+> against a live Steam deployment, but the API and the database schema may still
+> change between beta releases. Migrations are append-only, so an upgrade never
+> loses rows; a downgrade is not supported.
+
 
 A self-hosted scraping service: Playwright drives a patched Chromium
 (`fingerprint-chromium`) against sites, a Telegram bot controls it, results are

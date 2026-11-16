@@ -3,6 +3,13 @@
 [![tests](https://github.com/danilruntime/UltimateWebParser/actions/workflows/tests.yml/badge.svg)](https://github.com/danilruntime/UltimateWebParser/actions/workflows/tests.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![python: 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
+[![version: 0.1 beta](https://img.shields.io/badge/version-0.1%20beta-orange.svg)](pyproject.toml)
+
+> **Статус: 0.1 beta.** Сервис работает целиком и проверен на живом развёртывании
+> со Steam, но API и схема базы ещё могут меняться между бета-выпусками.
+> Миграции только добавляются, поэтому обновление не теряет строк; откат
+> на предыдущую версию не поддерживается.
+
 
 Сервис для сбора данных с сайтов: Playwright + fingerprint-chromium, управление
 из Telegram, отчёты в LibreOffice Calc (`.ods`), расписание, прокси и профили
