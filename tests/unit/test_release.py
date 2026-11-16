@@ -162,6 +162,24 @@ def test_a_prerelease_is_published_as_a_prerelease():
     assert "--prerelease" in runs
 
 
+def test_a_stable_release_competes_for_the_latest_badge():
+    """A beta must not wear "Latest"; a stable release must be able to.
+
+    Measured with a stub `gh` that recorded argv: `--latest=false` was passed
+    unconditionally, so a stable release would never become "Latest" and the
+    repository would keep advertising an old beta as the current version. The
+    flag has to follow `is_prerelease`, the same condition as `--prerelease`.
+    """
+    runs = "\n".join(step["run"] for step in _steps() if "run" in step)
+
+    # Both flags live in the `if` branch that tests is_prerelease.
+    branch = runs.split("is_prerelease", 1)[1].split("fi", 1)[0]
+
+    assert "--prerelease" in branch
+    assert "--latest=false" in branch
+    assert runs.count("--latest=false") == 1, "the flag escaped the prerelease branch"
+
+
 def test_the_notes_do_not_pin_the_test_count():
     """A release page describes a commit, so a count in it cannot stay true.
 

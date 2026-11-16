@@ -149,10 +149,15 @@ jobs:
 
       # A 0.x beta is not "Latest": GitHub puts that badge on the newest
       # non-prerelease, and a beta wearing it reads as a stable recommendation.
-      # The flag follows PEP 440 rather than the tag, so `v0.2b1` and `v0.2`
-      # need no edit here. `--latest=false` is passed as well: `--prerelease`
-      # alone keeps the badge away today, but the explicit flag states the
-      # intent instead of relying on that interaction.
+      # The `--prerelease` flag already keeps it away, but a repair of a page
+      # that was *published* before the flag existed still holds the badge, so
+      # `--latest=false` is stated for that case.
+      #
+      # It is not stated for a stable release. Measured with a stub `gh`:
+      # passing it unconditionally made every stable release `--latest=false`,
+      # i.e. the badge would never appear at all, and the repository would keep
+      # advertising an old beta as the current version. The flag is bound to
+      # `is_prerelease`, which is the same condition that sets `--prerelease`.
       #
       # No archives are attached. A wheel of this project holds `uwp/` and the
       # dist-info only — no compose file, no Dockerfile, no seccomp profile —
@@ -169,8 +174,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           prerel=""
+          latest=""
           if python -c "import sys; from packaging.version import Version; sys.exit(0 if Version('$RELEASE_TAG'.removeprefix('v')).is_prerelease else 1)"; then
             prerel="--prerelease"
+            latest="--latest=false"
           fi
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
@@ -178,7 +185,7 @@ jobs:
             gh release edit "$RELEASE_TAG" \
               --title "$RELEASE_TAG" \
               --notes-file "$RUNNER_TEMP/notes.md" \
-              --latest=false \
+              $latest \
               $prerel
             for asset in "ultimate_web_parser-${RELEASE_TAG#v}-py3-none-any.whl" \
                          "ultimate_web_parser-${RELEASE_TAG#v}.tar.gz"; do
@@ -190,6 +197,6 @@ jobs:
               --title "$RELEASE_TAG" \
               --notes-file "$RUNNER_TEMP/notes.md" \
               --verify-tag \
-              --latest=false \
+              $latest \
               $prerel
           fi
