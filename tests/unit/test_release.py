@@ -59,3 +59,16 @@ def test_the_release_notes_describe_the_current_version():
     text = (ROOT / "docs" / "releases" / f"v{version}.md").read_text(encoding="utf-8")
 
     assert version in text.splitlines()[0], "the heading does not name the version"
+
+
+def test_a_prerelease_is_published_as_a_prerelease():
+    """GitHub badges the newest non-prerelease as "Latest".
+
+    A beta wearing that badge reads as a stable recommendation, so the flag has
+    to follow the version. Measured on v0.1b1: published without the flag, the
+    release page said "Latest" for a 0.x beta.
+    """
+    runs = "\n".join(step["run"] for step in _steps() if "run" in step)
+
+    assert "is_prerelease" in runs
+    assert "--prerelease" in runs
