@@ -8,15 +8,35 @@ name: release
 on:
   push:
     tags: ["v*"]
+  # A published release can be wrong in a way the tag cannot show: the notes
+  # file was edited after the tag, or the page lacks `--prerelease`. Re-running
+  # for an existing tag updates it instead of failing, so a fix to the notes
+  # does not require deleting and re-creating a tag that others may have fetched.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create or update, e.g. v0.1b1"
+        required: true
 
 permissions:
   contents: write
+
+env:
+  # One name for both triggers: a pushed tag arrives in the ref, a manual run
+  # gets it from the input. Everything below reads this and nothing else, so a
+  # manual run cannot accidentally test or package `main`.
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
+      # `ref:` is what makes a manual run honest: without it the checkout would
+      # be the default branch, and the release would test code the tag does not
+      # contain.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
 
       - uses: actions/setup-python@v5
         with:
@@ -44,7 +64,7 @@ jobs:
 
           from packaging.version import InvalidVersion, Version
 
-          tag = os.environ["GITHUB_REF_NAME"]
+          tag = os.environ["RELEASE_TAG"]
           declared = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
 
           try:
@@ -72,23 +92,38 @@ jobs:
           pip install build
           python -m build --outdir dist
 
-      # Attaching the archives makes the release self-contained: a reader can
-      # download what CI verified instead of rebuilding it from a tarball.
-      #
       # A 0.x beta is not "Latest": GitHub puts that badge on the newest
       # non-prerelease, and a beta wearing it reads as a stable recommendation.
       # The flag follows PEP 440 rather than the tag, so `v0.2b1` and `v0.2`
-      # need no edit here.
-      - name: Create the release
+      # need no edit here. `--latest=false` is passed as well: `--prerelease`
+      # alone keeps the badge away today, but the explicit flag states the
+      # intent instead of relying on that interaction.
+      #
+      # `gh release create` has no `--clobber` (only `release upload` does), so
+      # an existing release is updated through `release edit` and its assets
+      # through `release upload --clobber`. Re-running for the same tag is then
+      # a repair, not a failure — which is what fixing a published page needs.
+      - name: Create or update the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          flags=""
-          if python -c "import sys; from packaging.version import Version; sys.exit(0 if Version('$GITHUB_REF_NAME'.removeprefix('v')).is_prerelease else 1)"; then
-            flags="--prerelease"
+          prerel=""
+          if python -c "import sys; from packaging.version import Version; sys.exit(0 if Version('$RELEASE_TAG'.removeprefix('v')).is_prerelease else 1)"; then
+            prerel="--prerelease"
           fi
-          gh release create "$GITHUB_REF_NAME" dist/* \
-            --title "$GITHUB_REF_NAME" \
-            --notes-file "docs/releases/$GITHUB_REF_NAME.md" \
-            --verify-tag \
-            $flags
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "release $RELEASE_TAG exists, updating it"
+            gh release edit "$RELEASE_TAG" \
+              --title "$RELEASE_TAG" \
+              --notes-file "docs/releases/$RELEASE_TAG.md" \
+              $prerel
+            gh release upload "$RELEASE_TAG" dist/* --clobber
+          else
+            gh release create "$RELEASE_TAG" dist/* \
+              --title "$RELEASE_TAG" \
+              --notes-file "docs/releases/$RELEASE_TAG.md" \
+              --verify-tag \
+              --latest=false \
+              $prerel
+          fi

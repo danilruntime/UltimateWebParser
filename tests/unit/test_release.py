@@ -9,6 +9,7 @@ where it cannot be fixed without deleting the tag.
 
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
 
@@ -72,3 +73,19 @@ def test_a_prerelease_is_published_as_a_prerelease():
 
     assert "is_prerelease" in runs
     assert "--prerelease" in runs
+
+
+def test_the_notes_do_not_pin_the_test_count():
+    """A release page describes a commit, so a count in it cannot stay true.
+
+    Measured twice in one sitting: the notes said 626, then 631 after two tests
+    were added. The badge already reports the live number.
+    """
+    for notes in (ROOT / "docs" / "releases").glob("*.md"):
+        text = notes.read_text(encoding="utf-8")
+        for line in text.splitlines():
+            if "тест" not in line.lower() and "test" not in line.lower():
+                continue
+            assert not re.search(r"\b\d{3,}\s+(тест\w*|tests?)\b", line, re.IGNORECASE), (
+                f"{notes.name} pins a test count: {line.strip()}"
+            )
