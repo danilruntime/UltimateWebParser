@@ -520,3 +520,17 @@ ruff check src tests
 | Профиль «занят» | Идёт прогон или висит lease: подождите `UWP_ORPHAN_THRESHOLD`, либо перезапустите воркер. |
 
 Больше деталей — в `uwp doctor` и логах (`UWP_LOG_LEVEL=DEBUG`).
+
+---
+
+## Лицензия
+
+MIT — полный текст в [`LICENSE`](LICENSE). Это касается кода этого проекта.
+
+Два вложения написаны не нами и под MIT не попадают:
+`docker/seccomp-uwp.json` — производная профиля Docker (Apache-2.0, изменён),
+фикстуры `tests/fixtures/steam_search*.html` — разметка Steam (Valve
+Corporation, без лицензии, используются как тестовые данные). Что ещё
+устанавливается при сборке и под какими лицензиями — в
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), там же полный текст
+Apache-2.0.

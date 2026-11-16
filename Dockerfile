@@ -36,7 +36,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # ``UWP_NO_SANDBOX`` is deliberately *not* set: Chromium builds its own sandbox
 # from user namespaces, and ``docker/seccomp-uwp.json`` lets it. See
-# ``docker/README-seccomp.md`` for the two relaxed rules and the measurements.
+# ``docker/README-seccomp.md`` for the three relaxed rules and the measurements.
 # An operator who cannot use the profile still has the escape hatch:
 # ``UWP_NO_SANDBOX=true``.
 
@@ -69,6 +69,10 @@ ENV PATH="/opt/venv/bin:${PATH}"
 COPY --from=browser /opt/uwp/browser /opt/uwp/browser
 COPY docker/entrypoint.sh /entrypoint.sh
 COPY docker/seccomp-uwp.json docker/README-seccomp.md /opt/uwp/seccomp/
+# The image carries ``seccomp-uwp.json`` (Apache-2.0, modified), so the licence
+# text has to travel with it: Apache-2.0 §4(a) is about the recipient of the
+# work, and that recipient gets the image, not the git clone.
+COPY THIRD_PARTY_NOTICES.md /opt/uwp/seccomp/
 RUN chmod +x /entrypoint.sh /opt/uwp/browser/chrome \
     && mkdir -p /data \
     && chown -R uwp:uwp /data /opt/uwp
