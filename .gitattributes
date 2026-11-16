@@ -1,0 +1,11 @@
+# GitHub paints the language bar from the byte count of code files, and the
+# Steam page captures below are 711 KB of vendor markup — more than the entire
+# Python source. Left alone, the repository is labelled "HTML".
+tests/fixtures/*.html linguist-vendored
+
+# Keeps the `.ods` fixtures out of the diff view if one is ever added: it is a
+# zip archive, not text.
+*.ods binary
+
+# Reproducible line endings for everyone; the project is developed on Linux.
+* text=auto eol=lf
