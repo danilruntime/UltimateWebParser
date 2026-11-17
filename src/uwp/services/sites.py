@@ -52,7 +52,10 @@ class SiteService:
         parser = self.registry.get(parser_key)
         if parser is None:
             raise ValueError(t(self.lang, "error.parser.unknown", parser=parser_key))
-        title = name or parser.title
+        # The site name is data, but a default taken from the parser is a label:
+        # an English admin adding Steam should not get a Russian site name.
+        # The seeded row keeps its own literal in ``seed.py``.
+        title = name or parser.title_for(self.lang)
         site = Site(
             slug=await self._unique_slug(slugify(title) or parser_key),
             name=title,

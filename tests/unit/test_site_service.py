@@ -55,6 +55,18 @@ async def test_create_uses_parser_title_and_unique_slug(env):
     assert first.slug != second.slug
 
 
+async def test_a_default_site_name_follows_the_deployment_language(env):
+    """An English admin adding Steam should not get a Russian site name."""
+    _db, sites, jobs = env
+    english = SiteService(
+        sites, jobs, Scheduler(sites, jobs), registry=_registry(), lang=Lang.en
+    )
+
+    site = await english.create("steam_deals")
+
+    assert site.name == "Steam — deals"
+
+
 async def test_disable_cancels_queued_jobs(env):
     _db, sites, jobs = env
     svc = SiteService(sites, jobs, Scheduler(sites, jobs), registry=_registry())
