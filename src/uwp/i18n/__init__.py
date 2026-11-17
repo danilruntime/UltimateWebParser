@@ -1,12 +1,13 @@
 """Human-facing strings in Russian and English.
 
 Every string the bot, the CLI or a report shows lives here, one module per
-domain (``bot``, ``cli``, ``reports``). Code asks for a key; a missing key is a
-``KeyError`` at the call site instead of a Russian word leaking into an English
-chat.
+domain (``bot``, ``cli``, ``reports``, ``parsers``, ``errors``). Code asks for a
+key; a missing key is a ``KeyError`` at the call site instead of a Russian word
+leaking into an English chat.
 
 The catalogue is merged once and cached: the admin gate and every handler read
-it on each update, and re-importing three modules per message is pure overhead.
+it on each update, and re-importing all five modules per message is pure
+overhead.
 """
 
 from __future__ import annotations

@@ -40,7 +40,6 @@ def _help_language() -> Lang:
         return DEFAULT_LANG
 
 
-
 # --- helpers ---------------------------------------------------------------
 
 

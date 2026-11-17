@@ -102,7 +102,9 @@ class BaseParser(ABC):
 
     def description_for(self, lang: Lang | str) -> str:
         """The one-line parser blurb in ``lang``, or the author's own text."""
-        return t(lang, self.description_key) if self.description_key else self.description
+        if self.description_key:
+            return t(lang, self.description_key)
+        return self.description
 
     @classmethod
     def default_settings(cls) -> dict:

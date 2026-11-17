@@ -49,6 +49,7 @@ def new_column_title(lang: Lang | str = Lang.ru) -> str:
     """Header of the flag column that marks rows new since the previous run."""
     return t(lang, "report.new_column")
 
+
 # ``ъ`` and ``ь`` map to ``_`` so they survive as a separator instead of
 # gluing neighbouring letters together (``съезд`` → ``s_ezd``).
 _TRANSLIT = {
