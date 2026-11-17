@@ -29,6 +29,26 @@ _KDF_SALT = b"uwp.secretbox.v2"
 _KDF_ITERATIONS = 480_000
 
 
+class SecretUnreadable(ValueError):
+    """A stored token cannot be read; ``code`` says why, in the reader's language.
+
+    This module has no ``Settings``, so it cannot pick a language. It used to
+    raise a ready-made Russian sentence which ``delivery`` printed verbatim into
+    an English chat. ``str()`` stays a developer-facing English line for the
+    log; the chat renders ``code`` through the catalogue.
+
+    Still a ``ValueError``: the CLI and the worker already catch that.
+    """
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(
+            "the stored secret cannot be decrypted: UWP_SECRET_KEY is missing"
+            if code == "error.secret.missing_key"
+            else "the stored secret cannot be decrypted: UWP_SECRET_KEY is wrong"
+        )
+
+
 @functools.lru_cache(maxsize=32)
 def fernet(secret: str) -> Fernet:
     """A Fernet key derived from the settings secret (any length is fine).
@@ -61,7 +81,7 @@ def decrypt(value: str, secret: str | None) -> str:
     if not looks_encrypted(value):
         return value
     if not secret:
-        raise ValueError("секрет зашифрован, но UWP_SECRET_KEY не задан")
+        raise SecretUnreadable("error.secret.missing_key")
     try:
         return fernet(secret).decrypt(value.encode()).decode()
     except InvalidToken:
@@ -72,6 +92,4 @@ def decrypt(value: str, secret: str | None) -> str:
         return _legacy_fernet(secret).decrypt(value.encode()).decode()
     except InvalidToken:
         log.warning("cannot decrypt a stored secret: wrong UWP_SECRET_KEY")
-        raise ValueError(
-            "не удалось расшифровать секрет: проверьте UWP_SECRET_KEY"
-        ) from None
+        raise SecretUnreadable("error.secret.wrong_key") from None

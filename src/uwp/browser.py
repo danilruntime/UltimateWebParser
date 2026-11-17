@@ -24,7 +24,24 @@ class ProfileInUse(RuntimeError):
 
     Not a parser bug: the profile is blocked by a leftover VNC login browser or
     by a run that is still shutting down.
+
+    The exception carries a ``code`` and its detail (``pid``/``host``) instead of
+    a finished Russian sentence: ``runner`` copies it into ``outcome.error`` and
+    ``delivery`` prints that into a chat, where the language is the recipient's,
+    not this layer's. ``str()`` stays an English developer line for the log.
     """
+
+    def __init__(self, code: str, **detail: object) -> None:
+        self.code = code
+        self.detail = detail
+        if code == "error.profile.in_use_same_host":
+            super().__init__(
+                f"profile is held by a live browser (pid {detail['pid']})"
+            )
+        else:
+            super().__init__(
+                f"profile is held by a live browser on host {detail['host']}"
+            )
 
 
 def _lock_owner(link: Path) -> tuple[str, int] | None:
@@ -147,14 +164,8 @@ def prepare_profile(user_data_dir: Path) -> None:
         return
     host, pid = owner
     if host == socket.gethostname():
-        raise ProfileInUse(
-            f"профиль уже открыт другим браузером (pid {pid}); "
-            "закройте сессию входа или дождитесь её завершения"
-        )
-    raise ProfileInUse(
-        f"профиль уже открыт браузером на хосте {host}; "
-        "закройте сессию входа или дождитесь её завершения"
-    )
+        raise ProfileInUse("error.profile.in_use_same_host", pid=pid)
+    raise ProfileInUse("error.profile.in_use_foreign_host", host=host)
 
 
 

@@ -452,14 +452,16 @@ async def test_a_profile_held_by_a_live_browser_is_a_clear_config_error(env):
     )
 
     async def locked(*a, **kw):
-        raise ProfileInUse("профиль занят другим браузером (pid 753)")
+        raise ProfileInUse("error.profile.in_use_same_host", pid=753)
 
     runner.launcher = locked
     out = await runner.run(site, job, proxy=None)
 
     assert out.status == RunStatus.failed
     assert out.error_kind == ErrorKind.config_error
-    assert "занят" in out.error
+    # A code, not a sentence: ``delivery`` renders it per recipient.
+    assert out.error_code == "error.profile.in_use_same_host"
+    assert "753" in out.error
     assert "Traceback" not in out.error
 
 
@@ -555,6 +557,10 @@ async def test_the_report_language_comes_from_the_deployment_setting(env, tmp_pa
 
     assert out.report_path is not None
     doc = load(str(out.report_path))
-    names = {table.getAttribute("name") for table in doc.spreadsheet.getElementsByType(Table)}
+    names = {
+        table.getAttribute("name")
+        for table in doc.spreadsheet.getElementsByType(Table)
+    }
     assert "Data" in names and "Данные" not in names
     assert "Data" == data_sheet(runner.settings.report_lang)
+

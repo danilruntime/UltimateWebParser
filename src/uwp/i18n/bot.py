@@ -223,6 +223,7 @@ CATALOG: dict[Lang, dict[str, str]] = {
         "bot.delivery.run_failed": "❌ Прогон не удался: {reason}",
         "bot.delivery.run_failed_site": "❌ Прогон «{site}» не удался: {reason}",
         "bot.delivery.site_problem": "⚠️ Проблема с сайтом: {text}",
+        "bot.delivery.site_problem_repeated": "{failures} провала подряд",
         "bot.delivery.site_problem_named": (
             "⚠️ Проблема с сайтом «{site}»: {text}"
         ),
@@ -443,6 +444,7 @@ CATALOG: dict[Lang, dict[str, str]] = {
         "bot.delivery.run_failed": "❌ The run failed: {reason}",
         "bot.delivery.run_failed_site": "❌ The run of “{site}” failed: {reason}",
         "bot.delivery.site_problem": "⚠️ Problem with the site: {text}",
+        "bot.delivery.site_problem_repeated": "{failures} failures in a row",
         "bot.delivery.site_problem_named": (
             "⚠️ Problem with the site “{site}”: {text}"
         ),

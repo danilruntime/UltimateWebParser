@@ -29,15 +29,23 @@ def test_plain_value_passes_through():
 def test_encrypted_value_without_key_is_an_error():
     token = secretbox.encrypt("p@ss", SECRET)
 
-    with pytest.raises(ValueError, match="UWP_SECRET_KEY"):
+    with pytest.raises(secretbox.SecretUnreadable) as caught:
         secretbox.decrypt(token, None)
+
+    # A code, not a sentence: the reader's language is decided in delivery.
+    assert caught.value.code == "error.secret.missing_key"
+    # Still a ``ValueError``: the CLI and the worker catch that today.
+    assert isinstance(caught.value, ValueError)
 
 
 def test_wrong_key_is_an_error():
     token = secretbox.encrypt("p@ss", SECRET)
 
-    with pytest.raises(ValueError, match="UWP_SECRET_KEY"):
+    with pytest.raises(secretbox.SecretUnreadable) as caught:
         secretbox.decrypt(token, "x" * 32)
+
+    assert caught.value.code == "error.secret.wrong_key"
+    assert isinstance(caught.value, ValueError)
 
 
 def test_key_derivation_is_a_kdf_not_one_sha256():

@@ -588,3 +588,74 @@ async def test_the_failure_buttons_are_localised(env):
     }
     assert buttons[111] == ["🔁 Retry"]
     assert buttons[222] == ["🔁 Повторить"]
+
+
+async def test_our_own_failure_reason_is_rendered_in_the_readers_language(env):
+    """A sentence we wrote must never be shipped as a finished Russian string.
+
+    The worker no longer knows a language, so it sends an ``error_code``. A raw
+    detail that came from Playwright or a parser is still sent as ``text`` and
+    arrives as-is: that is honest, and it is the documented split.
+    """
+    settings, bus, _tmp_path = env
+    bot = FakeBot()
+    spoken = {111: "en", 222: "ru"}
+
+    async def language_for(admin_id):
+        return spoken[admin_id]
+
+    delivery = EventDelivery(bot, bus, settings, language_for=language_for)
+    await bus.emit(
+        "run_failed",
+        payload={
+            "text": "",
+            "error_code": "error.secret.missing_key",
+            "site": "Steam",
+            "site_id": 5,
+        },
+    )
+
+    await delivery.tick()
+
+    english = next(text for admin, text, *_ in bot.messages if admin == 111)
+    russian = next(text for admin, text, *_ in bot.messages if admin == 222)
+    assert "UWP_SECRET_KEY" in english and "зашифрован" not in english
+    assert "UWP_SECRET_KEY" in russian and "зашифрован" in russian
+
+
+async def test_an_empty_reason_falls_back_to_the_unknown_error(env):
+    settings, bus, _tmp_path = env
+    bot = FakeBot()
+
+    async def language_for(admin_id):
+        return "en"
+
+    delivery = EventDelivery(bot, bus, settings, language_for=language_for)
+    await bus.emit("run_failed", payload={"text": "", "site": "Steam", "site_id": 5})
+
+    await delivery.tick()
+
+    assert "unknown error" in bot.messages[0][1]
+
+
+async def test_the_repeated_failure_line_counts_in_the_readers_language(env):
+    settings, bus, _tmp_path = env
+    bot = FakeBot()
+    spoken = {111: "en", 222: "ru"}
+
+    async def language_for(admin_id):
+        return spoken[admin_id]
+
+    delivery = EventDelivery(bot, bus, settings, language_for=language_for)
+    await bus.emit(
+        "site_problem",
+        payload={"failures": 3, "site": "Steam", "site_id": 5},
+    )
+
+    await delivery.tick()
+
+    english = next(text for admin, text, *_ in bot.messages if admin == 111)
+    russian = next(text for admin, text, *_ in bot.messages if admin == 222)
+    assert "3" in english and "in a row" in english
+    assert "3" in russian and "подряд" in russian
+

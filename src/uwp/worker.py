@@ -93,6 +93,9 @@ class Worker:
                     status=RunStatus.failed,
                     error_kind=ErrorKind.config_error,
                     error=str(exc),
+                    # ``secretbox`` raises a coded exception: the worker has no
+                    # admin, so the sentence is rendered by ``delivery``.
+                    error_code=getattr(exc, "code", None),
                 )
                 await self._finish(job, site, outcome, now)
                 return True
@@ -106,6 +109,10 @@ class Worker:
                 status=RunStatus.failed,
                 error_kind=ErrorKind.parser_error,
                 error=f"{type(exc).__name__}: {exc}",
+                # A coded exception that escaped the runner (a profile lock, an
+                # unreadable secret) is still a sentence of ours, not the site's.
+                error_code=getattr(exc, "code", None),
+                error_detail=getattr(exc, "detail", None) or {},
             )
         finally:
             beat.cancel()
@@ -194,9 +201,16 @@ class Worker:
             elif outcome.status == RunStatus.failed:
                 payload = dict(
                     base,
-                    text=outcome.error or "неизвестная ошибка",
+                    # Empty when the reason is ours: ``error_code`` carries it
+                    # and ``delivery`` writes the sentence in the reader's
+                    # language. A raw Playwright/parser detail stays ``text``.
+                    text=outcome.error or "",
                     error_kind=str(outcome.error_kind or ""),
                 )
+                if outcome.error_code is not None:
+                    payload["error_code"] = outcome.error_code
+                    if outcome.error_detail:
+                        payload["error_detail"] = outcome.error_detail
                 if outcome.profile_id is not None:
                     payload["profile_id"] = outcome.profile_id
                 if outcome.artifacts_dir is not None:
@@ -209,7 +223,8 @@ class Worker:
                         SITE_PROBLEM,
                         site.id,
                         outcome.run_id,
-                        dict(base, text=f"{failures} провала подряд"),
+                        # The count is data; the sentence is delivery's job.
+                        dict(base, failures=failures),
                     )
         except Exception:  # a notification is never worth crashing the worker
             log.exception("queueing a notification for site %s failed", site.slug)

@@ -17,6 +17,7 @@ from uwp.parsers.base import BaseParser, ParseContext, ParseError
 from uwp.parsers.registry import ParserRegistry
 from uwp.profiles import Identity, ProfileManager, identity_from_profile
 from uwp.reports import export_report
+from uwp.secretbox import SecretUnreadable
 from uwp.timeutil import utcnow
 
 log = logging.getLogger(__name__)
@@ -34,6 +35,12 @@ class RunOutcome:
     new_count: int = 0
     error_kind: ErrorKind | None = None
     error: str | None = None
+    # A catalogue key for a sentence *we* wrote (a blocked profile, an unreadable
+    # secret). ``delivery`` renders it in the recipient's language. A detail that
+    # came from Playwright or a parser stays in ``error`` and is shown raw.
+    error_code: str | None = None
+    # Values for the code's placeholders (``{"pid": 753}``).
+    error_detail: dict = field(default_factory=dict)
     duration_ms: int = 0
     meta: dict = field(default_factory=dict)
     notes: str | None = None
@@ -179,9 +186,19 @@ class Runner:
             return outcome
         except ProfileInUse as exc:
             # A blocked profile is an environment problem, not a parser bug:
-            # the raw Playwright text here is a 7 KB call log.
+            # the raw Playwright text here is a 7 KB call log. The sentence is
+            # ours, so only the code travels; ``delivery`` picks the language.
             outcome.error_kind = ErrorKind.config_error
             outcome.error = str(exc)
+            outcome.error_code = exc.code
+            outcome.error_detail = dict(exc.detail)
+            outcome.status = RunStatus.failed
+            return outcome
+        except SecretUnreadable as exc:
+            # ``secretbox`` has no ``Settings`` and cannot choose a language.
+            outcome.error_kind = ErrorKind.config_error
+            outcome.error = str(exc)
+            outcome.error_code = exc.code
             outcome.status = RunStatus.failed
             return outcome
         except _ConfigError as exc:

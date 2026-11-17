@@ -30,6 +30,21 @@ CATALOG: dict[Lang, dict[str, str]] = {
         "error.profile.duplicate": "профиль с именем «{name}» уже есть",
         "error.profile.not_found": "профиль {id} не найден",
         "error.profile.locked": "профиль {id} занят прогоном: сначала остановите его",
+        "error.profile.in_use_same_host": (
+            "профиль уже открыт другим браузером (pid {pid}); "
+            "закройте сессию входа или дождитесь её завершения"
+        ),
+        "error.profile.in_use_foreign_host": (
+            "профиль уже открыт браузером на хосте {host}; "
+            "закройте сессию входа или дождитесь её завершения"
+        ),
+        # --- stored secrets ------------------------------------------------
+        "error.secret.missing_key": (
+            "секрет зашифрован, но UWP_SECRET_KEY не задан"
+        ),
+        "error.secret.wrong_key": (
+            "не удалось расшифровать секрет: проверьте UWP_SECRET_KEY"
+        ),
         # --- VNC ----------------------------------------------------------
         "error.vnc.session_not_found": "сессия {id} не найдена",
         # --- sites --------------------------------------------------------
@@ -50,6 +65,20 @@ CATALOG: dict[Lang, dict[str, str]] = {
         "error.profile.duplicate": "a profile named “{name}” already exists",
         "error.profile.not_found": "profile {id} not found",
         "error.profile.locked": "profile {id} is in use by a run: stop it first",
+        "error.profile.in_use_same_host": (
+            "the profile is already open in another browser (pid {pid}); "
+            "finish the login session or wait for it"
+        ),
+        "error.profile.in_use_foreign_host": (
+            "the profile is already open in a browser on host {host}; "
+            "finish the login session or wait for it"
+        ),
+        "error.secret.missing_key": (
+            "the secret is encrypted but UWP_SECRET_KEY is not set"
+        ),
+        "error.secret.wrong_key": (
+            "cannot decrypt the stored secret: check UWP_SECRET_KEY"
+        ),
         "error.vnc.session_not_found": "session {id} not found",
         "error.site.not_found": "site {id} not found",
         "error.parser.unknown": "unknown parser: {parser}",

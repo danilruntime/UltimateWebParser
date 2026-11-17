@@ -484,3 +484,120 @@ async def test_a_skipped_export_in_changes_mode_is_silent(env):
     await worker.process_one(NOW)
 
     assert await bus.pending(111, NOW) == []
+
+
+async def test_an_unknown_failure_leaves_the_sentence_to_delivery(env):
+    """The worker has no admin in front of it, so it must not write one.
+
+    ``delivery`` renders ``bot.delivery.unknown_error`` in the recipient's
+    language; the worker only says "the run failed and produced no reason".
+    """
+    db, sites, jobs, sid = env
+    settings = Settings()
+    bus = EventBus(EventsRepo(db), AdminsRepo(db), settings)
+    outcome = RunOutcome(status=RunStatus.failed, error_kind=ErrorKind.parser_error)
+    worker = _worker(settings, db, jobs, sites, FakeRunner(outcome))
+    worker.bus = bus
+    await jobs.create(sid, "scheduled")
+
+    await worker.process_one(NOW)
+
+    (event,) = await bus.pending(111, NOW)
+    assert event.payload["text"] == ""
+    assert "error_code" not in event.payload
+
+
+async def test_a_repeated_failure_carries_the_count_not_a_sentence(env):
+    """``site_problem`` used to embed «{failures} провала подряд» in Russian."""
+    db, sites, jobs, sid = env
+    settings = Settings()
+    bus = EventBus(EventsRepo(db), AdminsRepo(db), settings)
+    outcome = RunOutcome(
+        status=RunStatus.failed, error_kind=ErrorKind.login_required, error="login"
+    )
+    worker = _worker(settings, db, jobs, sites, FakeRunner(outcome))
+    worker.bus = bus
+    await sites.update(sid, consecutive_failures=2)
+    await jobs.create(sid, "scheduled")
+
+    await worker.process_one(NOW)
+
+    events = await bus.pending(111, NOW)
+    problem = next(event for event in events if event.kind == "site_problem")
+    assert problem.payload["failures"] == 3
+    assert "text" not in problem.payload
+
+
+async def test_a_coded_failure_carries_the_code_into_the_event(env):
+    """The worker passes ``error_code`` through untouched; it renders nothing."""
+    db, sites, jobs, sid = env
+    settings = Settings()
+    bus = EventBus(EventsRepo(db), AdminsRepo(db), settings)
+    outcome = RunOutcome(
+        status=RunStatus.failed,
+        error_kind=ErrorKind.config_error,
+        error_code="error.secret.missing_key",
+    )
+    worker = _worker(settings, db, jobs, sites, FakeRunner(outcome))
+    worker.bus = bus
+    await jobs.create(sid, "scheduled")
+
+    await worker.process_one(NOW)
+
+    (event,) = await bus.pending(111, NOW)
+    assert event.payload["error_code"] == "error.secret.missing_key"
+    assert event.payload["text"] == ""
+
+
+async def test_an_unreadable_proxy_secret_becomes_a_code_not_a_sentence(env):
+    """``secretbox`` has no ``Settings`` and cannot pick a language.
+
+    It raises a coded exception; the worker records the code and ``delivery``
+    renders the sentence per recipient. A detail that came from Playwright or a
+    parser stays raw — a sentence *we* wrote must never be.
+    """
+    from uwp import secretbox
+
+    db, sites, jobs, sid = env
+    settings = Settings(secret_key="k" * 32)
+    service = ProxyService(ProxiesRepo(db), settings)
+    proxy = await service.add("broken", "http://user:pw@127.0.0.1:8080")
+    # A token under a different key models a rotated UWP_SECRET_KEY.
+    await service.repo.update(
+        proxy.id, password=secretbox.encrypt("pw", "s" * 32)
+    )
+    await sites.update(sid, proxy_id=proxy.id)
+    bus = EventBus(EventsRepo(db), AdminsRepo(db), settings)
+    worker = _worker(settings, db, jobs, sites, FakeRunner())
+    worker.bus = bus
+    await jobs.create(sid, "scheduled")
+
+    await worker.process_one(NOW)
+
+    (event,) = await bus.pending(111, NOW)
+    assert event.payload["error_code"] == "error.secret.wrong_key"
+    assert event.payload["error_kind"] == "config_error"
+
+
+async def test_the_profile_detail_travels_to_delivery(env):
+    """The code says "another browser"; the pid says which one."""
+    from uwp.browser import ProfileInUse
+
+    db, sites, jobs, sid = env
+    settings = Settings()
+    bus = EventBus(EventsRepo(db), AdminsRepo(db), settings)
+    await sites.update(sid, proxy_id=None)
+
+    class _Runner(FakeRunner):
+        async def run(self, site, job, proxy, cancel=None):
+            raise ProfileInUse("error.profile.in_use_same_host", pid=753)
+
+    worker = _worker(settings, db, jobs, sites, _Runner())
+    worker.bus = bus
+    await jobs.create(sid, "scheduled")
+
+    await worker.process_one(NOW)
+
+    (event,) = await bus.pending(111, NOW)
+    assert event.payload["error_code"] == "error.profile.in_use_same_host"
+    assert event.payload["error_detail"] == {"pid": 753}

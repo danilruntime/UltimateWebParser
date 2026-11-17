@@ -289,6 +289,29 @@ def _site_name(payload: dict, lang: Lang) -> str:
     )
 
 
+def _reason_for(payload: dict, lang: Lang) -> str:
+    """The failure reason in the reader's language.
+
+    The rule: **a sentence we wrote must never be shipped as a finished
+    string.** The layer that knows what happened (the worker, ``secretbox``,
+    the browser) has no admin in front of it, so it sends a catalogue key in
+    ``error_code``; only delivery knows the recipient's language. A raw detail
+    that came from Playwright or a parser is kept as ``text`` and shown
+    verbatim — it is the site's own words, and inventing a translation would be
+    worse than showing them.
+    """
+    code = payload.get("error_code")
+    if code:
+        # ``detail`` can be a log tail or an OS error; the message is sent with
+        # HTML parsing on, so it is escaped like any other free-form text.
+        detail = {
+            key: _esc(str(value))
+            for key, value in (payload.get("error_detail") or {}).items()
+        }
+        return t(lang, code, **detail)
+    return _esc(payload.get("text") or payload.get("error") or _unknown_error(lang))
+
+
 def _caption_for(event: Event, lang: Lang = DEFAULT_LANG) -> str:
     payload = event.payload or {}
     site = _esc(_site_name(payload, lang))
@@ -314,9 +337,7 @@ def _caption_for(event: Event, lang: Lang = DEFAULT_LANG) -> str:
             text += "\n" + t(lang, "bot.delivery.report_missing")
         return _limit(text, CAPTION_LENGTH)
     if event.kind == RUN_FAILED:
-        reason = _esc(
-            payload.get("text") or payload.get("error") or _unknown_error(lang)
-        )
+        reason = _reason_for(payload, lang)
         return _limit(
             t(lang, "bot.delivery.caption_failed", site=site, reason=reason)
         )
@@ -344,9 +365,7 @@ def _text_for(event: Event, lang: Lang = DEFAULT_LANG) -> str:
     payload = event.payload or {}
     site = payload.get("site") or payload.get("site_name")
     if event.kind == RUN_FAILED:
-        reason = _esc(
-            payload.get("text") or payload.get("error") or _unknown_error(lang)
-        )
+        reason = _reason_for(payload, lang)
         if site:
             return _limit(
                 t(
@@ -360,7 +379,13 @@ def _text_for(event: Event, lang: Lang = DEFAULT_LANG) -> str:
             t(lang, "bot.delivery.run_failed", reason=reason)
         )
     if event.kind == SITE_PROBLEM:
-        detail = _esc(payload.get("text") or payload.get("error") or "—")
+        failures = payload.get("failures")
+        if failures is not None:
+            detail = _esc(
+                t(lang, "bot.delivery.site_problem_repeated", failures=failures)
+            )
+        else:
+            detail = _esc(payload.get("text") or payload.get("error") or "—")
         if site:
             return _limit(
                 t(
@@ -389,7 +414,7 @@ def _text_for(event: Event, lang: Lang = DEFAULT_LANG) -> str:
             t(
                 lang,
                 "bot.delivery.vnc_failed",
-                error=_esc(payload.get("error") or "—"),
+                error=_reason_for(payload, lang),
             )
         )
     return t(lang, "bot.delivery.unknown_event", kind=_esc(event.kind))
