@@ -9,6 +9,7 @@ from typing import Any, ClassVar
 from pydantic import BaseModel
 
 from uwp.domain import ErrorKind
+from uwp.i18n import Lang, t
 
 
 @dataclass
@@ -25,6 +26,16 @@ class Column:
     # Steam site: review counts moved in 10-13 of 49 rows every 4 minutes,
     # turning ``changes`` into ``always``.
     volatile: bool = False
+    # ``title`` is the fallback for a parser written before the catalogue
+    # existed: ``title`` stays required, so removing the key later never breaks
+    # a third-party parser, and a report written from one keeps its header.
+    title_key: str | None = None
+
+    def title_for(self, lang: Lang | str) -> str:
+        """The header in ``lang``, or the author's own ``title`` when unkeyed."""
+        if self.title_key is None:
+            return self.title
+        return t(lang, self.title_key)
 
 
 class ParseError(Exception):
@@ -80,6 +91,18 @@ class BaseParser(ABC):
     requires_login: bool = False
     settings_model: type[BaseModel] = _EmptySettings
     columns: ClassVar[list[Column]] = []
+    # Empty means "no catalogue entry": ``title``/``description`` are then shown
+    # as written, which is what a parser outside this repository relies on.
+    title_key: ClassVar[str] = ""
+    description_key: ClassVar[str] = ""
+
+    def title_for(self, lang: Lang | str) -> str:
+        """The parser name in ``lang``, or the author's own ``title``."""
+        return t(lang, self.title_key) if self.title_key else self.title
+
+    def description_for(self, lang: Lang | str) -> str:
+        """The one-line parser blurb in ``lang``, or the author's own text."""
+        return t(lang, self.description_key) if self.description_key else self.description
 
     @classmethod
     def default_settings(cls) -> dict:

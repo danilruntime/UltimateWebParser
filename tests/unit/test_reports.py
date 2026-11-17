@@ -4,9 +4,14 @@ from pathlib import Path
 from typing import ClassVar
 
 import pytest
+from odf.opendocument import load
+from odf.table import Table, TableCell, TableRow
+from odf.text import P
 
 from uwp.config import load_settings
 from uwp.domain import ExportMode, Profile, ProfileKind, Proxy, ProxyScheme, Site
+from uwp.i18n import Lang
+from uwp.ods import data_sheet, meta_sheet
 from uwp.parsers.base import BaseParser, Column, _EmptySettings
 from uwp.reports import export_report, report_meta, should_export
 
@@ -29,9 +34,32 @@ class FakeParser(BaseParser):
         raise NotImplementedError
 
 
+class KeyedParser(FakeParser):
+    """A parser wired to the catalogue: its title and headers have keys."""
+
+    key = "keyed"
+    title_key = "parser.steam_deals.title"
+    columns: ClassVar[list[Column]] = [
+        Column("title", "Title", title_key="parser.steam_deals.column.title"),
+        Column("url", "URL", title_key="parser.steam_deals.column.url"),
+    ]
+
+
 @pytest.fixture
 def settings(tmp_path):
     return load_settings({"UWP_DATA_DIR": str(tmp_path), "UWP_TZ": "Europe/Moscow"})
+
+
+def _sheet(doc, name):
+    for table in doc.spreadsheet.getElementsByType(Table):
+        if table.getAttribute("name") == name:
+            return table
+    raise AssertionError(f"sheet {name!r} not found")
+
+
+def _text(cell) -> str:
+    """The visible text of a cell (``odfpy`` keeps it in ``text:p`` children)."""
+    return "".join(str(p) for p in cell.getElementsByType(P))
 
 
 def _site(**fields) -> Site:
@@ -81,6 +109,74 @@ def test_report_lands_in_a_per_site_directory(settings):
     assert path.name == "fake_parser_steam_skidki_2026-11-13_15-30.ods"
 
 
+def test_an_english_report_translates_sheets_headers_and_meta(tmp_path):
+    """The report language is a deployment setting, not the admin's chat language."""
+    settings = load_settings(
+        {
+            "UWP_DATA_DIR": str(tmp_path),
+            "UWP_TZ": "Europe/Moscow",
+            "UWP_DEFAULT_LANGUAGE": "en",
+        }
+    )
+    path = export_report(
+        settings,
+        site=_site(),
+        parser=KeyedParser(),
+        rows=ROWS,
+        profile=None,
+        proxy=None,
+        when=WHEN,
+        duration_ms=1500,
+        new_keys={"1"},
+        changed_keys=set(),
+    )
+
+    assert path is not None
+    # The file name carries the localised parser title, so an English
+    # deployment gets ``steam_deals`` rather than the transliterated Russian.
+    assert path.name == "steam_deals_steam_skidki_2026-11-13_15-30.ods"
+    doc = load(str(path))
+    data = _sheet(doc, data_sheet(Lang.en))
+    header = [
+        _text(cell)
+        for cell in data.getElementsByType(TableRow)[0].getElementsByType(TableCell)
+    ]
+    assert "Link" in header and "New" in header
+    meta = _sheet(doc, meta_sheet(Lang.en))
+    meta_labels = [
+        _text(row.getElementsByType(TableCell)[0])
+        for row in meta.getElementsByType(TableRow)
+    ]
+    assert "Site" in meta_labels
+
+
+def test_report_language_overrides_the_default(tmp_path):
+    settings = load_settings(
+        {
+            "UWP_DATA_DIR": str(tmp_path),
+            "UWP_TZ": "Europe/Moscow",
+            "UWP_DEFAULT_LANGUAGE": "ru",
+            "UWP_REPORT_LANGUAGE": "en",
+        }
+    )
+    path = export_report(
+        settings,
+        site=_site(),
+        parser=FakeParser(),
+        rows=ROWS,
+        profile=None,
+        proxy=None,
+        when=WHEN,
+        duration_ms=1,
+        new_keys=set(),
+        changed_keys=set(),
+    )
+
+    assert path is not None
+    doc = load(str(path))
+    assert _sheet(doc, data_sheet(Lang.en))
+
+
 def test_always_mode_still_marks_new_rows(settings):
     path = export_report(
         settings,
@@ -96,26 +192,14 @@ def test_always_mode_still_marks_new_rows(settings):
     )
 
     assert path is not None
-    from odf.opendocument import load
-    from odf.table import Table, TableCell, TableRow
-    from odf.text import P
-
     doc = load(str(path))
-    data = next(
-        t for t in doc.spreadsheet.getElementsByType(Table) if t.getAttribute("name") == "Данные"
-    )
+    data = _sheet(doc, data_sheet(Lang.ru))
     rows = data.getElementsByType(TableRow)
-    header = [
-        "".join(str(p) for p in c.getElementsByType(P))
-        for c in rows[0].getElementsByType(TableCell)
-    ]
+    header = [_text(cell) for cell in rows[0].getElementsByType(TableCell)]
     # «Новое» describes the data, not the mode: an ``always`` site that has a
     # new game today must say so in today's full snapshot.
     assert header[-1] == "Новое"
-    flags = [
-        "".join(str(p) for p in row.getElementsByType(TableCell)[-1].getElementsByType(P))
-        for row in rows[1:]
-    ]
+    flags = [_text(row.getElementsByType(TableCell)[-1]) for row in rows[1:]]
     assert flags == ["нет", "да"]
 
 
@@ -237,17 +321,10 @@ def test_changes_mode_marks_new_rows(settings):
     )
 
     assert path is not None
-    from odf.opendocument import load
-    from odf.table import Table, TableCell, TableRow
-    from odf.text import P
-
     doc = load(str(path))
-    data = next(t for t in doc.spreadsheet.getElementsByType(Table) if t.getAttribute("name") == "Данные")
+    data = _sheet(doc, data_sheet(Lang.ru))
     rows = data.getElementsByType(TableRow)
-    header = ["".join(str(p) for p in c.getElementsByType(P)) for c in rows[0].getElementsByType(TableCell)]
+    header = [_text(cell) for cell in rows[0].getElementsByType(TableCell)]
     assert header[-1] == "Новое"
-    flags = [
-        "".join(str(p) for p in row.getElementsByType(TableCell)[-1].getElementsByType(P))
-        for row in rows[1:]
-    ]
+    flags = [_text(row.getElementsByType(TableCell)[-1]) for row in rows[1:]]
     assert flags == ["нет", "да"]

@@ -8,7 +8,16 @@ from odf.style import Style, TableColumnProperties
 from odf.table import DatabaseRange, Table, TableCell, TableColumn, TableRow
 from odf.text import A, P
 
-from uwp.ods import prune_reports, report_filename, slugify, write_report
+from uwp.i18n import Lang
+from uwp.ods import (
+    data_sheet,
+    meta_sheet,
+    new_column_title,
+    prune_reports,
+    report_filename,
+    slugify,
+    write_report,
+)
 from uwp.parsers.base import Column
 
 
@@ -75,6 +84,15 @@ def test_filename_cannot_escape_the_exports_directory():
     assert report_filename("/abs/{site_name}", "P", "S", when) == "abs_s.ods"
 
 
+def test_the_sheet_names_and_new_header_follow_the_report_language():
+    assert data_sheet(Lang.ru) == "Данные"
+    assert meta_sheet(Lang.ru) == "Метаданные"
+    assert new_column_title(Lang.ru) == "Новое"
+    assert data_sheet(Lang.en) == "Data"
+    assert meta_sheet(Lang.en) == "Metadata"
+    assert new_column_title(Lang.en) == "New"
+
+
 def test_report_contents(tmp_path):
     cols = [Column("title", "Title", 30), Column("url", "URL", 40), Column("price", "Price", 10)]
     rows = [
@@ -89,6 +107,36 @@ def test_report_contents(tmp_path):
     assert data[2][0] == "B" and data[2][3] == "да"
     meta = _rows(_sheet(doc, "Метаданные"))
     assert meta[0][:2] == ["site", "S"]
+
+
+def test_an_english_report_names_its_sheets_and_flags_in_english(tmp_path):
+    """The sheet name reaches the admin's UI, so it is translated like a header."""
+    cols = [Column("title", "Title", 30)]
+    rows = [{"external_key": "1", "title": "A"}]
+    path = write_report(
+        tmp_path / "t.ods", rows, cols, {"site": "S"}, new_keys={"1"}, lang=Lang.en
+    )
+    doc = load(str(path))
+
+    data = _rows(_sheet(doc, "Data"))
+    assert data[0] == ["Title", "New"]
+    assert data[1][-1] == "yes"
+    assert _rows(_sheet(doc, "Metadata"))[0][:2] == ["site", "S"]
+
+
+def test_the_column_header_uses_the_parser_translation(tmp_path):
+    cols = [Column("url", "Ссылка", 40, title_key="parser.steam_deals.column.url")]
+    path = write_report(tmp_path / "t.ods", [{"external_key": "1", "url": "https://x/1"}], cols, {})
+    assert _rows(_sheet(load(str(path)), "Данные"))[0] == ["Ссылка"]
+
+    path = write_report(
+        tmp_path / "t.ods",
+        [{"external_key": "1", "url": "https://x/1"}],
+        cols,
+        {},
+        lang=Lang.en,
+    )
+    assert _rows(_sheet(load(str(path)), "Data"))[0] == ["Link"]
 
 
 def test_report_hyperlinks_and_widths(tmp_path):
@@ -268,7 +316,11 @@ def test_report_autofilter_and_number_format(tmp_path):
     assert len(ranges) == 1
     assert ranges[0].getAttribute("name") == "Autofilter"
     assert ranges[0].getAttribute("displayfilterbuttons") == "true"
-    assert ranges[0].getAttribute("targetrangeaddress") == "$Данные.A1:$Данные.C2"
+    # The range is built from the sheet name in the *same* language as the
+    # sheet; hardcoding «Данные» here would pass while an English report pointed
+    # its autofilter at a sheet that does not exist.
+    sheet = data_sheet(Lang.ru)
+    assert ranges[0].getAttribute("targetrangeaddress") == f"${sheet}.A1:${sheet}.C2"
 
     # database-ranges must follow every sheet in document order.
     tags = [child.tagName for child in doc.spreadsheet.childNodes]
@@ -283,6 +335,20 @@ def test_report_autofilter_and_number_format(tmp_path):
         if s.getAttribute("datastylename")
     }
     assert data_styles["value3"] == "num3"
+
+
+def test_an_english_report_points_its_autofilter_at_the_english_sheet(tmp_path):
+    cols = [Column("title", "Title"), Column("url", "URL")]
+    rows = [{"external_key": "1", "title": "A", "url": "https://x/1"}]
+    path = write_report(tmp_path / "t.ods", rows, cols, {}, lang=Lang.en)
+    doc = load(str(path))
+
+    sheet = data_sheet(Lang.en)
+    address = doc.spreadsheet.getElementsByType(DatabaseRange)[0].getAttribute(
+        "targetrangeaddress"
+    )
+    assert address == f"${sheet}.A1:${sheet}.B2"
+    assert _rows(_sheet(doc, sheet))
 
 
 def test_prune_keeps_newest(tmp_path):

@@ -137,7 +137,7 @@ def test_quoted_bot_labels_match_the_code():
     """
     from uwp.bot import keyboards, texts
     from uwp.i18n import Lang
-    from uwp.ods import NEW_COLUMN_TITLE
+    from uwp.ods import new_column_title
 
     labels = [
         keyboards.BTN_SITES[Lang.ru],
@@ -150,7 +150,7 @@ def test_quoted_bot_labels_match_the_code():
         texts.settings(Lang.ru),
         texts.toggle_off(Lang.ru),
         texts.toggle_on(Lang.ru),
-        NEW_COLUMN_TITLE,
+        new_column_title(Lang.ru),
     ]
     for name in ("README.md", "README.ru.md"):
         text = (ROOT / name).read_text(encoding="utf-8")

@@ -29,12 +29,25 @@ from odf.table import (
 )
 from odf.text import A, P
 
+from uwp.i18n import Lang, t
 from uwp.parsers.base import Column
 
-DATA_SHEET = "Данные"
-META_SHEET = "Метаданные"
-NEW_COLUMN_TITLE = "Новое"
 TIMESTAMP_FORMAT = "%Y-%m-%d_%H-%M"
+
+
+def data_sheet(lang: Lang | str = Lang.ru) -> str:
+    """Name of the sheet holding the scraped rows."""
+    return t(lang, "report.data_sheet")
+
+
+def meta_sheet(lang: Lang | str = Lang.ru) -> str:
+    """Name of the sheet holding the run metadata."""
+    return t(lang, "report.meta_sheet")
+
+
+def new_column_title(lang: Lang | str = Lang.ru) -> str:
+    """Header of the flag column that marks rows new since the previous run."""
+    return t(lang, "report.new_column")
 
 # ``ъ`` and ``ь`` map to ``_`` so they survive as a separator instead of
 # gluing neighbouring letters together (``съезд`` → ``s_ezd``).
@@ -281,6 +294,8 @@ def write_report(
     columns: list[Column],
     meta: dict[str, str],
     new_keys: set[str] | None = None,
+    *,
+    lang: Lang = Lang.ru,
 ) -> Path:
     """Write ``rows`` to an ``.ods`` file and return its path."""
     path = Path(path)
@@ -293,11 +308,14 @@ def write_report(
     changed_style = _cell_style(doc, "changed", background=_CHANGED_BACKGROUND)
     changed_link_style = _cell_style(doc, "changed-link", link=True, background=_CHANGED_BACKGROUND)
 
-    headers = [col.title for col in columns]
+    # ``title_for`` is the only header path: a parser with a catalogue key gets
+    # the report's language, and one without keeps the author's own title.
+    headers = [col.title_for(lang) for col in columns]
     if new_keys is not None:
-        headers.append(NEW_COLUMN_TITLE)
+        headers.append(new_column_title(lang))
 
-    table = Table(name=DATA_SHEET)
+    sheet = data_sheet(lang)
+    table = Table(name=sheet)
     table_columns = TableColumns()
     for index, col in enumerate(columns, start=1):
         table_columns.addElement(
@@ -337,13 +355,14 @@ def write_report(
                     )
                 )
         if new_keys is not None:
-            flag = "да" if str(row.get("external_key")) in new_keys else "нет"
+            new_flag = str(row.get("external_key")) in new_keys
+            flag = t(lang, "report.new_flag_yes" if new_flag else "report.new_flag_no")
             table_row.addElement(_text_cell(doc, flag, changed_style if is_changed else None))
         table.addElement(table_row)
 
     doc.spreadsheet.addElement(table)
 
-    meta_table = Table(name=META_SHEET)
+    meta_table = Table(name=meta_sheet(lang))
     for key, value in meta.items():
         if key == "changed_keys":
             continue
@@ -354,7 +373,7 @@ def write_report(
     doc.spreadsheet.addElement(meta_table)
 
     # All sheets must be attached before the database range is added.
-    _add_autofilter(doc, DATA_SHEET, len(headers), len(rows) + 1)
+    _add_autofilter(doc, sheet, len(headers), len(rows) + 1)
 
     doc.save(str(path))
     return path

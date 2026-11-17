@@ -27,7 +27,7 @@ SUPPORTED: tuple[str, ...] = ("ru", "en")
 
 # One module per area of the interface. Separate files keep two people from
 # editing the same catalogue; ``_catalog`` refuses duplicate keys between them.
-_DOMAINS: tuple[str, ...] = ("bot", "cli", "reports")
+_DOMAINS: tuple[str, ...] = ("bot", "cli", "reports", "parsers")
 
 
 def normalize(code: str | None) -> Lang | None:

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from html import escape
 
+from uwp import labels
 from uwp.i18n import Lang, has_key, t
 
 
@@ -223,17 +224,17 @@ def status_mark(value) -> str:
 
 
 def status_label(lang, value) -> str:
-    """Localised name of a run status; unknown values stay as they are."""
-    return t(lang, f"bot.status.{value}") if _known("bot.status", value) else str(value)
+    """Localised name of a run status; the words live in :mod:`uwp.labels`.
+
+    The metadata sheet and the run line read the same keys, so this stays a
+    passthrough instead of a second copy of the word table.
+    """
+    return labels.status(value, lang)
 
 
 def export_label(lang, mode) -> str:
-    """Localised name of an export mode."""
-    return (
-        t(lang, f"bot.export.{mode}")
-        if _known("bot.export", mode)
-        else str(mode)
-    )
+    """Localised name of an export mode, from the shared catalogue."""
+    return labels.export(mode, lang)
 
 
 def _known(prefix: str, value) -> bool:

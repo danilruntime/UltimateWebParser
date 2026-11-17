@@ -234,16 +234,6 @@ CATALOG: dict[Lang, dict[str, str]] = {
             "🖥 Не удалось запустить сессию входа: {error}"
         ),
         "bot.delivery.unknown_event": "Уведомление: {kind}",
-        # --- run status, profile kind, export mode -------------------------
-        "bot.status.ok": "успешно",
-        "bot.status.partial": "частично",
-        "bot.status.failed": "ошибка",
-        "bot.status.canceled": "отменён",
-        "bot.status.retrying": "повтор",
-        "bot.status.running": "идёт",
-        "bot.export.always": "всегда",
-        "bot.export.changes": "только изменения",
-        "bot.export.never": "никогда",
     },
     Lang.en: {
         # --- shared words -------------------------------------------------
@@ -462,15 +452,5 @@ CATALOG: dict[Lang, dict[str, str]] = {
             "🖥 Could not start the login session: {error}"
         ),
         "bot.delivery.unknown_event": "Notification: {kind}",
-        # --- run status, profile kind, export mode -------------------------
-        "bot.status.ok": "ok",
-        "bot.status.partial": "partial",
-        "bot.status.failed": "failed",
-        "bot.status.canceled": "canceled",
-        "bot.status.retrying": "retrying",
-        "bot.status.running": "running",
-        "bot.export.always": "always",
-        "bot.export.changes": "changes only",
-        "bot.export.never": "never",
     },
 }

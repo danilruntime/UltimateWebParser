@@ -1,57 +1,45 @@
-"""Russian labels for domain enums.
+"""Enum words shared by the bot and the ``.ods`` metadata sheet.
 
-Lives outside the bot package because the ``.ods`` metadata sheet needs the
-same words as the chat UI; neither side should own the mapping.
+This module holds no words of its own: every label is looked up in the
+catalogue, so the run line in the chat and the metadata row in the report
+cannot drift apart. A value outside the enum is returned unchanged, which is
+what a row written by an older version needs.
 """
 
-RUN_STATUS = {
-    "ok": "успешно",
-    "partial": "частично",
-    "failed": "ошибка",
-    "canceled": "отменён",
-    "retrying": "повтор",
-    "running": "идёт",
-}
+from __future__ import annotations
 
-PROFILE_KIND = {
-    "persistent": "постоянный",
-    "clean": "чистый",
-}
+from uwp.i18n import has_key, t
 
-ERROR_KIND = {
-    "login_required": "нужен вход",
-    "blocked": "блокировка",
-    "transient": "временная ошибка",
-    "parser_error": "ошибка парсера",
-    "config_error": "ошибка настроек",
-}
-
-EXPORT_MODE = {
-    "always": "всегда",
-    "changes": "только изменения",
-    "never": "никогда",
-}
+_STATUS = "report.status"
+_KIND = "report.kind"
+_ERROR = "report.error"
+_EXPORT = "report.export"
 
 
-def status(value) -> str:
-    """Russian name of a run status; unknown values stay as they are."""
+def _word(prefix: str, value, lang: Lang | str) -> str:
+    """The translated value, or ``value`` itself when the catalogue has no key."""
     text = str(value)
-    return RUN_STATUS.get(text, text)
+    key = f"{prefix}.{text}"
+    # An unknown value is data, not a typo: a run stored by an older version
+    # must still render in the report instead of raising in ``t``.
+    return t(lang, key) if has_key(lang, key) else text
 
 
-def kind(value) -> str:
-    """Russian name of a profile kind."""
-    text = str(value)
-    return PROFILE_KIND.get(text, text)
+def status(value, lang: Lang | str) -> str:
+    """Localised name of a run status; unknown values stay as they are."""
+    return _word(_STATUS, value, lang)
 
 
-def error(value) -> str:
-    """Russian name of an error kind."""
-    text = str(value)
-    return ERROR_KIND.get(text, text)
+def kind(value, lang: Lang | str) -> str:
+    """Localised name of a profile kind."""
+    return _word(_KIND, value, lang)
 
 
-def export(value) -> str:
-    """Russian name of an export mode."""
-    text = str(value)
-    return EXPORT_MODE.get(text, text)
+def error(value, lang: Lang | str) -> str:
+    """Localised name of an error kind."""
+    return _word(_ERROR, value, lang)
+
+
+def export(value, lang: Lang | str) -> str:
+    """Localised name of an export mode."""
+    return _word(_EXPORT, value, lang)
