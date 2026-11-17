@@ -504,10 +504,12 @@ def proxy_check(lang, check) -> str:
 
     The service returns a structured :class:`~uwp.services.proxies.ProxyCheck`;
     the sentence, and the check mark, are built here so an English chat never
-    shows a Russian reason.
+    shows a Russian reason. This string goes to ``callback.answer(show_alert=True)``,
+    where Telegram has no parse mode: escaping would show ``&amp;`` for an
+    ``OSError`` detail that contained ``&``.
     """
     key = "bot.proxies.check_ok" if check.ok else "bot.proxies.check_failed"
-    return t(lang, key, text=esc(check.text(lang)))
+    return t(lang, key, text=check.text(lang))
 
 
 def proxy_card(lang, proxy) -> str:

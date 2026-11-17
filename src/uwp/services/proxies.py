@@ -28,6 +28,14 @@ TEST_TIMEOUT_SECONDS = 10
 
 CheckReason = Literal["ok", "not_found", "timeout", "connection_error"]
 
+# Every reason has a sentence; the render function below exhausts this set.
+_CHECK_KEYS = {
+    "ok": "check.proxy.reachable",
+    "not_found": "error.proxy.not_found",
+    "timeout": "error.proxy.timeout",
+    "connection_error": "error.proxy.connection",
+}
+
 
 @dataclass(frozen=True)
 class ProxyCheck:
@@ -41,14 +49,25 @@ class ProxyCheck:
     ms: int | None = None
 
     def text(self, lang: Lang | str) -> str:
-        """The one-line verdict for a chat or a terminal, in ``lang``."""
+        """The one-line verdict for a chat or a terminal, in ``lang``.
+
+        A new reason without a key raises here, as ``Column.title_for`` does: a
+        catch-all would render "connection error: None" and look like a real
+        failure.
+        """
+        try:
+            key = _CHECK_KEYS[self.reason]
+        except KeyError:
+            raise ValueError(
+                f"no sentence for a proxy check reason: {self.reason}"
+            ) from None
         if self.reason == "ok":
-            return t(lang, "error.proxy.reachable", ms=self.ms)
-        if self.reason == "not_found":
-            return t(lang, "error.proxy.not_found")
+            return t(lang, key, ms=self.ms)
         if self.reason == "timeout":
-            return t(lang, "error.proxy.timeout", seconds=self.detail)
-        return t(lang, "error.proxy.connection", detail=self.detail)
+            return t(lang, key, seconds=self.detail)
+        if self.reason == "connection_error":
+            return t(lang, key, detail=self.detail)
+        return t(lang, key)
 
 
 def parse_proxy_url(url: str, lang: Lang | str = Lang.ru) -> Proxy:

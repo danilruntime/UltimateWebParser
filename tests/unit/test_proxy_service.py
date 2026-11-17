@@ -151,3 +151,16 @@ def test_the_check_renders_in_both_languages():
     timed_out = ProxyCheck(ok=False, reason="timeout", detail="10")
 
     assert timed_out.text(Lang.ru) == "таймаут 10 с"
+
+
+def test_an_unknown_check_reason_raises_instead_of_rendering_none():
+    """A new ``CheckReason`` must be translated, not fall into a catch-all.
+
+    The last branch used to be "anything else is a connection error", so a
+    future reason rendered "connection error: None" and looked like a real
+    failure.
+    """
+    check = ProxyCheck(ok=False, reason="tls_error")
+
+    with pytest.raises(ValueError, match="tls_error"):
+        check.text(Lang.en)

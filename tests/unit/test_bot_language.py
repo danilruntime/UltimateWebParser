@@ -779,3 +779,58 @@ async def test_adding_a_site_stores_the_name_in_the_admins_language():
     finally:
         await db.close()
 
+
+async def test_the_proxy_check_alert_speaks_the_admins_language():
+    """The handler is where the language is known; nothing pinned that line.
+
+    It used to print the service's Russian prose and drop its ``lang`` argument,
+    which is invisible to a service-level test. ``connection_error`` carries an
+    OS detail with an ``&``: an alert has no parse mode, so escaping it would
+    show the admin ``&amp;``.
+    """
+    from uwp.bot.handlers import profiles as profiles_handlers
+    from uwp.services.proxies import ProxyCheck
+
+    class _Proxies:
+        def __init__(self, check):
+            self.check = check
+
+        async def test(self, proxy_id):
+            return self.check
+
+    class _Vnc:
+        pass
+
+    async def alert(check, lang):
+        class _Deps:
+            pass
+
+        deps = _Deps()
+        deps.proxies = _Proxies(check)
+        deps.profiles = _Deps()
+        deps.vnc = _Vnc()
+        deps.runs = _Deps()
+
+        class _Settings:
+            tz = "UTC"
+
+        router = profiles_handlers.build_router(_Settings(), deps)
+        handler = _callback_handler(router, "test_proxy")
+        callback = _Callback("proxy:test:3")
+
+        await handler(callback, lang=lang)
+        (text, kwargs), = callback.answers
+        assert kwargs["show_alert"] is True
+        return text
+
+    ok = ProxyCheck(ok=True, reason="ok", ms=42)
+    assert await alert(ok, Lang.en) == "✅ reachable, 42 ms"
+    assert await alert(ok, Lang.ru) == "✅ доступен, 42 мс"
+
+    timed_out = ProxyCheck(ok=False, reason="timeout", detail="10")
+    assert await alert(timed_out, Lang.en) == "❌ timeout 10 s"
+
+    refused = ProxyCheck(
+        ok=False, reason="connection_error", detail="no route & host down"
+    )
+    assert await alert(refused, Lang.en) == "❌ connection error: no route & host down"

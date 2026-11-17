@@ -19,8 +19,10 @@ CATALOG: dict[Lang, dict[str, str]] = {
         "error.proxy.no_port": "в адресе прокси нет порта",
         "error.proxy.duplicate": "прокси с именем «{name}» уже есть",
         # --- proxy reachability check ------------------------------------
+        # ``check.*``, not ``error.*``: a reachable proxy is a success verdict,
+        # and filing it under ``error.`` misleads anyone grepping the catalogue.
+        "check.proxy.reachable": "доступен, {ms} мс",
         "error.proxy.not_found": "прокси не найден",
-        "error.proxy.reachable": "доступен, {ms} мс",
         "error.proxy.timeout": "таймаут {seconds} с",
         "error.proxy.connection": "ошибка соединения: {detail}",
         # --- profile ------------------------------------------------------
@@ -40,8 +42,8 @@ CATALOG: dict[Lang, dict[str, str]] = {
         "error.proxy.bad_port": "invalid proxy port",
         "error.proxy.no_port": "the proxy address has no port",
         "error.proxy.duplicate": "a proxy named “{name}” already exists",
+        "check.proxy.reachable": "reachable, {ms} ms",
         "error.proxy.not_found": "proxy not found",
-        "error.proxy.reachable": "reachable, {ms} ms",
         "error.proxy.timeout": "timeout {seconds} s",
         "error.proxy.connection": "connection error: {detail}",
         "error.profile.name_empty": "the profile name cannot be empty",
