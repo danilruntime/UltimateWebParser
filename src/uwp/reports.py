@@ -80,7 +80,9 @@ def report_meta(
         t(lang, "report.meta.profile"): profile_text,
         t(lang, "report.meta.proxy"): proxy_text,
         t(lang, "report.meta.when"): when.astimezone(ZoneInfo(tz)).strftime(
-            "%d.%m.%Y %H:%M"
+            # A language's date shape travels with its words: ``13.11.2026`` in
+            # an English sheet reads as an ambiguous month/day to most readers.
+            "%Y-%m-%d %H:%M" if Lang(lang) is Lang.en else "%d.%m.%Y %H:%M"
         ),
         t(lang, "report.meta.duration"): t(
             lang, "report.meta.duration_value", seconds=duration_ms / 1000

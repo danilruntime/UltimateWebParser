@@ -143,11 +143,18 @@ def test_an_english_report_translates_sheets_headers_and_meta(tmp_path):
     ]
     assert "Link" in header and "New" in header
     meta = _sheet(doc, meta_sheet(Lang.en))
-    meta_labels = [
-        _text(row.getElementsByType(TableCell)[0])
-        for row in meta.getElementsByType(TableRow)
-    ]
+    rows = meta.getElementsByType(TableRow)
+    meta_labels = [_text(row.getElementsByType(TableCell)[0]) for row in rows]
     assert "Site" in meta_labels
+    # The time in an English report is ISO-shaped, not the Russian dotted one.
+    values = {
+        _text(row.getElementsByType(TableCell)[0]): _text(
+            row.getElementsByType(TableCell)[1]
+        )
+        for row in rows
+    }
+    assert values["Time"] == "2026-11-13 15:30"
+    assert "Ср" not in values["Time"]
 
 
 def test_report_language_overrides_the_default(tmp_path):
