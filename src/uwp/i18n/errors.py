@@ -47,6 +47,20 @@ CATALOG: dict[Lang, dict[str, str]] = {
         ),
         # --- VNC ----------------------------------------------------------
         "error.vnc.session_not_found": "сессия {id} не найдена",
+        # The stack's own failures: ``vnc.py`` emits a code, delivery renders it.
+        "error.vnc.port_taken": (
+            "порт {port} уже занят: похоже, запущен второй стек UWP"
+        ),
+        "error.vnc.xvfb_failed": (
+            "Xvfb не поднял дисплей :{display}: {detail}"
+        ),
+        "error.vnc.browser_failed": "браузер не запустился: {detail}",
+        "error.vnc.websockify_failed": (
+            "websockify не занял порт {port}: {detail}"
+        ),
+        "error.vnc.x11vnc_failed": (
+            "x11vnc не слушает порт {port}: {detail}"
+        ),
         # --- sites --------------------------------------------------------
         "error.site.not_found": "сайт {id} не найден",
         "error.parser.unknown": "неизвестный парсер: {parser}",
@@ -80,6 +94,19 @@ CATALOG: dict[Lang, dict[str, str]] = {
             "cannot decrypt the stored secret: check UWP_SECRET_KEY"
         ),
         "error.vnc.session_not_found": "session {id} not found",
+        "error.vnc.port_taken": (
+            "port {port} is already taken: a second UWP stack looks alive"
+        ),
+        "error.vnc.xvfb_failed": (
+            "Xvfb did not bring up display :{display}: {detail}"
+        ),
+        "error.vnc.browser_failed": "the login browser did not start: {detail}",
+        "error.vnc.websockify_failed": (
+            "websockify did not take port {port}: {detail}"
+        ),
+        "error.vnc.x11vnc_failed": (
+            "x11vnc is not listening on port {port}: {detail}"
+        ),
         "error.site.not_found": "site {id} not found",
         "error.parser.unknown": "unknown parser: {parser}",
     },

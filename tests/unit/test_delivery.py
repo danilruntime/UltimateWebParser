@@ -659,3 +659,55 @@ async def test_the_repeated_failure_line_counts_in_the_readers_language(env):
     assert "3" in english and "in a row" in english
     assert "3" in russian and "подряд" in russian
 
+
+async def test_a_vnc_start_failure_renders_its_code_in_the_readers_language(env):
+    """The Xvfb/websockify sentences are ours, and they reach the chat verbatim."""
+    settings, bus, _tmp_path = env
+    bot = FakeBot()
+    spoken = {111: "en", 222: "ru"}
+
+    async def language_for(admin_id):
+        return spoken[admin_id]
+
+    delivery = EventDelivery(bot, bus, settings, language_for=language_for)
+    await bus.emit(
+        "vnc_failed",
+        payload={
+            "error": "VncStartError: websockify did not take port 6100",
+            "error_code": "error.vnc.websockify_failed",
+            "error_detail": {"port": 6100, "detail": "log tail"},
+        },
+    )
+
+    await delivery.tick()
+
+    english = next(text for admin, text, *_ in bot.messages if admin == 111)
+    russian = next(text for admin, text, *_ in bot.messages if admin == 222)
+    assert "websockify did not take port 6100" in english
+    assert "websockify не занял порт 6100" in russian
+    assert "log tail" in english and "log tail" in russian
+
+
+async def test_a_coded_reason_can_carry_its_detail(env):
+    """``error.profile.in_use_same_host`` needs the pid; a key alone is incomplete."""
+    settings, bus, _tmp_path = env
+    bot = FakeBot()
+
+    async def language_for(admin_id):
+        return "en"
+
+    delivery = EventDelivery(bot, bus, settings, language_for=language_for)
+    await bus.emit(
+        "run_failed",
+        payload={
+            "text": "",
+            "error_code": "error.profile.in_use_same_host",
+            "error_detail": {"pid": 753},
+            "site": "Steam",
+            "site_id": 5,
+        },
+    )
+
+    await delivery.tick()
+
+    assert "pid 753" in bot.messages[0][1]

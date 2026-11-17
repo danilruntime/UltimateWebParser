@@ -38,6 +38,20 @@ DISPLAY_BASE = 100
 RFB_PORT_BASE = 4900
 # How long Xvfb/x11vnc may take to become ready before the login fails.
 READY_TIMEOUT = 15.0
+
+
+class VncStartError(RuntimeError):
+    """The VNC stack could not start; ``code`` names the reason for the chat.
+
+    This module knows what happened but not who will read it — the message goes
+    into a ``vnc_failed`` event and ``delivery`` renders it per recipient.
+    ``str()`` stays an English developer line for the log.
+    """
+
+    def __init__(self, message: str, code: str, **detail: object) -> None:
+        self.code = code
+        self.detail = detail
+        super().__init__(message)
 # Chromium refuses to navigate to its "unsafe" ports, and the default VNC band
 # starts at 6000 — the X11 port. A link on 6000 opens with ERR_UNSAFE_PORT in
 # the admin's own browser, so those ports are never handed out.
@@ -380,8 +394,10 @@ def _default_process_factory(
         # the loser's websockify would die and leave a link that resets the
         # connection. Refuse before spending time on Xvfb and Chromium.
         if not _port_is_free(settings.vnc_listen_host, port):
-            raise RuntimeError(
-                f"порт {port} уже занят: похоже, запущен второй стек UWP"
+            raise VncStartError(
+                f"port {port} is already taken: a second UWP stack looks alive",
+                "error.vnc.port_taken",
+                port=port,
             )
         store = await _spawn(
             ["x11vnc", "-storepasswd", password, str(password_file)], env=base_env
@@ -470,8 +486,11 @@ def _default_process_factory(
             if not await _wait_for_path(
                 Path(f"/tmp/.X11-unix/X{display}"), READY_TIMEOUT
             ):
-                raise RuntimeError(
-                    f"Xvfb не поднял дисплей :{display}: {_log_tail(log_name)}"
+                raise VncStartError(
+                    f"Xvfb did not bring up display :{display}",
+                    "error.vnc.xvfb_failed",
+                    display=display,
+                    detail=_log_tail(log_name),
                 )
             for command in commands[1:]:
                 if command[0] == executable:
@@ -492,8 +511,10 @@ def _default_process_factory(
             if not await _wait_for_browser(
                 browser_process, Path(profile.user_data_dir), READY_TIMEOUT
             ):
-                raise RuntimeError(
-                    f"браузер не запустился: {_log_tail(log_name, 2000)}"
+                raise VncStartError(
+                    "the login browser did not start",
+                    "error.vnc.browser_failed",
+                    detail=_log_tail(log_name, 2000),
                 )
             # A taken noVNC port kills websockify but leaves the X stack up, so
             # the published link would reset the connection with no explanation.
@@ -501,12 +522,18 @@ def _default_process_factory(
             if not await _wait_for_websockify(
                 websockify_process, port, READY_TIMEOUT
             ):
-                raise RuntimeError(
-                    f"websockify не занял порт {port}: {_log_tail(log_name, 2000)}"
+                raise VncStartError(
+                    f"websockify did not take port {port}",
+                    "error.vnc.websockify_failed",
+                    port=port,
+                    detail=_log_tail(log_name, 2000),
                 )
             if not await _wait_for_port(vnc_port, READY_TIMEOUT):
-                raise RuntimeError(
-                    f"x11vnc не слушает порт {vnc_port}: {_log_tail(log_name)}"
+                raise VncStartError(
+                    f"x11vnc is not listening on port {vnc_port}",
+                    "error.vnc.x11vnc_failed",
+                    port=vnc_port,
+                    detail=_log_tail(log_name),
                 )
         except BaseException:
             # Do not leak a half-started stack: kill whatever did start.
@@ -716,6 +743,9 @@ class VncManager:
                 profile_id=profile.id,
                 session_id=session.id,
                 error=f"{type(exc).__name__}: {exc}",
+                # A sentence we wrote travels as a code, never as Russian text.
+                error_code=getattr(exc, "code", None),
+                error_detail=getattr(exc, "detail", None) or {},
             )
             raise
         if bridge is not None:

@@ -446,7 +446,9 @@ async def test_default_factory_reports_a_browser_that_died(tmp_path, monkeypatch
     monkeypatch.setattr(vnc, "_wait_for_port", ready)
     monkeypatch.setattr(vnc, "_port_is_free", lambda *_args: True)
 
-    with pytest.raises(RuntimeError, match="браузер не запустился"):
+    # The sentence moved to the catalogue; ``str()`` is now an English line for
+    # the log and the code tells the chat what happened.
+    with pytest.raises(vnc.VncStartError, match="login browser") as caught:
         await vnc._default_process_factory(settings)(
             display=100,
             port=6100,
@@ -455,6 +457,9 @@ async def test_default_factory_reports_a_browser_that_died(tmp_path, monkeypatch
             url="https://example.com",
             proxy_url=None,
         )
+
+    assert caught.value.code == "error.vnc.browser_failed"
+    assert "detail" in caught.value.detail
 
     # The stack that was still running is stopped, so no X server leaks. The
     # first entry is the short-lived ``-storepasswd`` helper.
@@ -519,7 +524,7 @@ async def test_default_factory_fails_when_websockify_cannot_bind(tmp_path, monke
     # The host may publish 6100 for real; only the noVNC readiness matters here.
     monkeypatch.setattr(vnc, "_port_is_free", lambda *_args: True)
 
-    with pytest.raises(RuntimeError, match="websockify"):
+    with pytest.raises(vnc.VncStartError) as caught:
         await vnc._default_process_factory(settings)(
             display=100,
             port=6100,
@@ -529,6 +534,8 @@ async def test_default_factory_fails_when_websockify_cannot_bind(tmp_path, monke
             proxy_url=None,
         )
 
+    assert caught.value.code == "error.vnc.websockify_failed"
+    assert caught.value.detail["port"] == 6100
     assert all(p.terminated for p in spawned[1:] if p.returncode is None)
 
 
@@ -557,7 +564,7 @@ async def test_default_factory_refuses_a_taken_port_before_spawning(
     holder.listen(1)
     port = holder.getsockname()[1]
     try:
-        with pytest.raises(RuntimeError, match=str(port)):
+        with pytest.raises(vnc.VncStartError, match=str(port)) as caught:
             await vnc._default_process_factory(settings)(
                 display=100,
                 port=port,
@@ -569,6 +576,7 @@ async def test_default_factory_refuses_a_taken_port_before_spawning(
     finally:
         holder.close()
 
+    assert caught.value.code == "error.vnc.port_taken"
     assert spawned == []
 
 
