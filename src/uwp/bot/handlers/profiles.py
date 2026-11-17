@@ -275,8 +275,8 @@ def build_router(settings, deps) -> Router:
 
     @router.callback_query(F.data.regexp(r"^proxy:test:\d+$"))
     async def test_proxy(callback: CallbackQuery, lang: Lang) -> None:
-        ok, message = await proxies.test(int(callback.data.rsplit(":", 1)[1]))
-        await callback.answer(("✅ " if ok else "❌ ") + message, show_alert=True)
+        check = await proxies.test(int(callback.data.rsplit(":", 1)[1]))
+        await callback.answer(texts.proxy_check(lang, check), show_alert=True)
 
     @router.callback_query(F.data.regexp(r"^proxy:del:\d+$"))
     async def delete_proxy(callback: CallbackQuery, lang: Lang) -> None:

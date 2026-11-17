@@ -250,6 +250,9 @@ class Runner:
         parser = self.registry.get(site.parser_key)
         if parser is None or not outcome.rows:
             return
+        # ``settings.report_lang`` is a deployment setting: the worker has no
+        # admin in front of it, so the report cannot follow a chat language.
+        lang = self.settings.report_lang
         try:
             outcome.report_path = export_report(
                 self.settings,
@@ -263,6 +266,7 @@ class Runner:
                 new_keys=new_keys,
                 changed_keys=changed_keys,
                 vanished=vanished,
+                lang=lang,
             )
             outcome.report_status = "written" if outcome.report_path else "skipped"
         except Exception as exc:  # a broken report must not fail an otherwise good run

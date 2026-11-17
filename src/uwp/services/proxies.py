@@ -1,37 +1,73 @@
-"""Proxy management: parse URLs, store credentials, check reachability."""
+"""Proxy management: parse URLs, store credentials, check reachability.
+
+The reachability check returns a :class:`ProxyCheck`, not a sentence: the CLI
+and the bot's "Check" button both show it, and each renders it in the language
+of its own reader. A Russian string built here used to reach an English chat
+verbatim (the handler ignored its ``lang``).
+"""
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import sqlite3
 import time
+from dataclasses import dataclass
+from typing import Literal
 from urllib.parse import unquote, urlsplit
 
 from uwp import secretbox
 from uwp.config import Settings
 from uwp.db.repo.proxies import ProxiesRepo
 from uwp.domain import Proxy, ProxyScheme
+from uwp.i18n import Lang, t
 
 log = logging.getLogger(__name__)
 
 TEST_TIMEOUT_SECONDS = 10
 
+CheckReason = Literal["ok", "not_found", "timeout", "connection_error"]
 
-def parse_proxy_url(url: str) -> Proxy:
+
+@dataclass(frozen=True)
+class ProxyCheck:
+    """The outcome of opening a TCP connection to a stored proxy."""
+
+    ok: bool
+    reason: CheckReason
+    # Free-form text for a human: the OS error, or the timeout in seconds.
+    # ``None`` for ``ok`` and ``not_found``: their sentence needs no extra data.
+    detail: str | None = None
+    ms: int | None = None
+
+    def text(self, lang: Lang | str) -> str:
+        """The one-line verdict for a chat or a terminal, in ``lang``."""
+        if self.reason == "ok":
+            return t(lang, "error.proxy.reachable", ms=self.ms)
+        if self.reason == "not_found":
+            return t(lang, "error.proxy.not_found")
+        if self.reason == "timeout":
+            return t(lang, "error.proxy.timeout", seconds=self.detail)
+        return t(lang, "error.proxy.connection", detail=self.detail)
+
+
+def parse_proxy_url(url: str, lang: Lang | str = Lang.ru) -> Proxy:
     """Parse ``scheme://[user:pass@]host:port`` into a :class:`Proxy`."""
     parts = urlsplit((url or "").strip())
     try:
         scheme = ProxyScheme(parts.scheme.lower())
     except ValueError:
-        raise ValueError(f"неподдерживаемая схема прокси: {parts.scheme or '—'}") from None
+        raise ValueError(
+            t(lang, "error.proxy.bad_scheme", scheme=parts.scheme or "—")
+        ) from None
     if not parts.hostname:
-        raise ValueError("в адресе прокси нет хоста")
+        raise ValueError(t(lang, "error.proxy.no_host"))
     try:
         port = parts.port
     except ValueError:
-        raise ValueError("некорректный порт прокси") from None
+        raise ValueError(t(lang, "error.proxy.bad_port")) from None
     if port is None:
-        raise ValueError("в адресе прокси нет порта")
+        raise ValueError(t(lang, "error.proxy.no_port"))
     return Proxy(
         name=parts.hostname,
         scheme=scheme,
@@ -49,6 +85,11 @@ class ProxyService:
         self.repo = repo
         self.settings = settings
 
+    @property
+    def lang(self) -> Lang:
+        """The deployment language for the service's own ``ValueError`` text."""
+        return Lang(self.settings.default_language)
+
     async def resolved(self, proxy_id: int) -> Proxy | None:
         """The proxy ready for use: password decrypted, or ``None`` if gone."""
         proxy = await self.repo.get(proxy_id)
@@ -60,7 +101,7 @@ class ProxyService:
 
     async def add(self, name: str, url: str) -> Proxy:
         """Store a proxy from a URL, encrypting the password when a key is set."""
-        proxy = parse_proxy_url(url)
+        proxy = parse_proxy_url(url, self.lang)
         proxy.name = name.strip() or proxy.host
         if proxy.password and self.settings.secret_key:
             proxy.password = secretbox.encrypt(proxy.password, self.settings.secret_key)
@@ -69,7 +110,9 @@ class ProxyService:
         except sqlite3.IntegrityError:
             # ``proxies.name`` is UNIQUE; an admin reusing a name deserves a
             # sentence, not a traceback in the log.
-            raise ValueError(f"прокси с именем «{proxy.name}» уже есть") from None
+            raise ValueError(
+                t(self.lang, "error.proxy.duplicate", name=proxy.name)
+            ) from None
         return proxy
 
     async def list(self) -> list[Proxy]:
@@ -88,11 +131,11 @@ class ProxyService:
             return None
         return self._decrypt(proxy.password)
 
-    async def test(self, proxy_id: int) -> tuple[bool, str]:
+    async def test(self, proxy_id: int) -> ProxyCheck:
         """Open a TCP connection to the proxy and report latency or the error."""
         proxy = await self.repo.get(proxy_id)
         if proxy is None:
-            return False, "прокси не найден"
+            return ProxyCheck(ok=False, reason="not_found")
         started = time.monotonic()
         try:
             reader, writer = await asyncio.wait_for(
@@ -100,9 +143,15 @@ class ProxyService:
                 timeout=TEST_TIMEOUT_SECONDS,
             )
         except TimeoutError:
-            return False, f"таймаут {TEST_TIMEOUT_SECONDS} с"
+            return ProxyCheck(
+                ok=False, reason="timeout", detail=str(TEST_TIMEOUT_SECONDS)
+            )
         except OSError as exc:
-            return False, f"ошибка соединения: {exc.strerror or exc}"
+            return ProxyCheck(
+                ok=False,
+                reason="connection_error",
+                detail=exc.strerror or str(exc),
+            )
         else:
             writer.close()
             try:
@@ -110,7 +159,8 @@ class ProxyService:
             except OSError:
                 pass
             del reader
-            return True, f"доступен, {int((time.monotonic() - started) * 1000)} мс"
+            elapsed = int((time.monotonic() - started) * 1000)
+            return ProxyCheck(ok=True, reason="ok", ms=elapsed)
 
     def _decrypt(self, value: str) -> str:
         return secretbox.decrypt(value, self.settings.secret_key)

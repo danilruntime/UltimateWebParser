@@ -10,6 +10,7 @@ from uwp.db.repo.profiles import ProfilesRepo
 from uwp.db.repo.sites import SitesRepo
 from uwp.db.repo.vnc import VncRepo
 from uwp.domain import VncSession
+from uwp.i18n import t
 from uwp.timeutil import utcnow
 from uwp.vnc import VncInfo, VncManager
 
@@ -51,7 +52,13 @@ class VncService:
         """Open a login session for a persistent profile."""
         profile = await self.profiles.get(profile_id)
         if profile is None:
-            raise ValueError(f"профиль {profile_id} не найден")
+            raise ValueError(
+                t(
+                    self.settings.default_language,
+                    "error.profile.not_found",
+                    id=profile_id,
+                )
+            )
         url = FALLBACK_URL
         proxy_id = profile.proxy_id
         if site_id is not None:
@@ -89,7 +96,13 @@ class VncService:
         """Push a session's hard TTL further so the admin can keep working."""
         session = await self.sessions.get(session_id)
         if session is None:
-            raise ValueError(f"сессия {session_id} не найдена")
+            raise ValueError(
+                t(
+                    self.settings.default_language,
+                    "error.vnc.session_not_found",
+                    id=session_id,
+                )
+            )
         expires = max(session.expires_at, utcnow()) + timedelta(minutes=minutes)
         await self.sessions.update(session_id, expires_at=expires)
         session.expires_at = expires
@@ -109,14 +122,3 @@ class VncService:
         if session is None:
             return
         await self.manager.request_stop(session_id)
-
-
-def session_text(info: VncInfo, remaining: int) -> str:
-    """Russian card shown right after a VNC session starts."""
-    return (
-        "🖥 <b>Вход на сайт</b>\n\n"
-        f"Ссылка: {info.url}\n"
-        f"Пароль: <code>{info.password}</code>\n"
-        f"Осталось: {remaining} мин.\n\n"
-        "Откройте ссылку, войдите на сайт и нажмите «Готово»."
-    )

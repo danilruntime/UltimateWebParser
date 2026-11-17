@@ -14,7 +14,9 @@ def healthy_driver(monkeypatch):
     measured in ``python:3.12-slim``. Tests that *are* about the driver run it
     for real (see ``test_doctor_reports_a_broken_playwright_driver``).
     """
-    monkeypatch.setattr("uwp.cli._check_playwright_driver", lambda: (True, "v22.0.0"))
+    monkeypatch.setattr(
+        "uwp.cli._check_playwright_driver", lambda *_a, **_kw: (True, "v22.0.0")
+    )
 
 
 def test_parsers_list(capsys, monkeypatch, tmp_path):
@@ -168,7 +170,9 @@ def test_doctor_checks_the_playwright_driver(capsys, monkeypatch, tmp_path):
     monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("UWP_BOT_TOKEN", "1:fake")
     monkeypatch.setenv("UWP_ADMIN_IDS", "1")
-    monkeypatch.setattr("uwp.cli._check_playwright_driver", lambda: (True, "v22.0.0"))
+    monkeypatch.setattr(
+        "uwp.cli._check_playwright_driver", lambda *_a, **_kw: (True, "v22.0.0")
+    )
 
     main(["doctor"])
 
@@ -183,7 +187,7 @@ def test_doctor_reports_a_broken_driver(monkeypatch, tmp_path):
 
     from uwp import cli
 
-    def broken():
+    def broken(*_a, **_kw):
         return False, "error while loading shared libraries: libatomic.so.1"
 
     monkeypatch.setattr("uwp.cli._check_playwright_driver", broken)
@@ -233,7 +237,7 @@ def test_doctor_probes_the_telegram_proxy(capsys, monkeypatch, tmp_path):
 
     probed: list[str] = []
 
-    def fake_probe(proxy, timeout=8.0):
+    def fake_probe(proxy, timeout=8.0, **_kw):
         probed.append(proxy)
 
     monkeypatch.setattr(cli, "_probe_telegram_proxy", fake_probe)
@@ -255,7 +259,9 @@ def test_a_dead_telegram_proxy_fails_the_doctor(capsys, monkeypatch, tmp_path):
     from uwp import cli
 
     monkeypatch.setattr(
-        cli, "_probe_telegram_proxy", lambda proxy, timeout=8.0: "прокси недоступен"
+        cli,
+        "_probe_telegram_proxy",
+        lambda proxy, timeout=8.0, **_kw: "прокси недоступен",
     )
 
     assert cli.main(["doctor"]) == 1
@@ -270,7 +276,9 @@ def test_the_proxy_password_never_reaches_the_doctor_row(capsys, monkeypatch, tm
 
     from uwp import cli
 
-    monkeypatch.setattr(cli, "_probe_telegram_proxy", lambda proxy, timeout=8.0: None)
+    monkeypatch.setattr(
+        cli, "_probe_telegram_proxy", lambda proxy, timeout=8.0, **_kw: None
+    )
 
     cli.main(["doctor"])
     out = capsys.readouterr().out
@@ -316,3 +324,66 @@ def test_doctor_offline_still_rejects_a_broken_proxy_url(capsys, monkeypatch, tm
     from uwp import cli
 
     assert cli.main(["doctor", "--offline"]) == 1
+
+
+# --- the CLI speaks the deployment language -------------------------------
+
+
+def test_the_cli_prints_in_the_configured_language(capsys, monkeypatch, tmp_path):
+    """One deployment, one operator: ``UWP_DEFAULT_LANGUAGE`` decides, no ``--lang``."""
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("UWP_DEFAULT_LANGUAGE", "en")
+    monkeypatch.setenv("UWP_BROWSER_PATH", "/bin/true")
+    monkeypatch.delenv("UWP_BOT_TOKEN", raising=False)
+    monkeypatch.setenv("UWP_ADMIN_IDS", "1")
+    monkeypatch.setenv("UWP_SECRET_KEY", "k" * 32)
+    monkeypatch.delenv("UWP_TELEGRAM_PROXY", raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "uwp.cli._check_playwright_driver", lambda *_a, **_kw: (True, "v22.0.0")
+    )
+
+    assert main(["init"]) == 0
+    out = capsys.readouterr().out
+    assert "Created the site" in out
+    assert "Создан" not in out
+
+
+def test_the_cli_site_list_uses_the_language(capsys, monkeypatch, tmp_path):
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("UWP_DEFAULT_LANGUAGE", "en")
+    main(["init"])
+
+    assert main(["site", "list"]) == 0
+    out = capsys.readouterr().out
+    assert "enabled" in out or "disabled" in out
+    assert "включён" not in out and "выключен" not in out
+
+
+def test_the_cli_help_is_localised(capsys, monkeypatch, tmp_path):
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("UWP_DEFAULT_LANGUAGE", "en")
+
+    with pytest.raises(SystemExit):
+        main(["site", "--help"])
+
+    out = capsys.readouterr().out
+    assert "list sites" in out
+    assert "список сайтов" not in out
+
+
+def test_help_does_not_create_the_data_directory(capsys, monkeypatch, tmp_path):
+    """``uwp --help`` must work in a read-only directory; it is not a command.
+
+    ``load_settings`` creates ``./data`` and chmods it, so building the help
+    from it would make a bare ``--help`` write to the current directory — and
+    fail outright where it cannot.
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("UWP_DATA_DIR", raising=False)
+
+    with pytest.raises(SystemExit):
+        main(["--help"])
+
+    assert not (tmp_path / "data").exists()
+    assert "usage: uwp" in capsys.readouterr().out

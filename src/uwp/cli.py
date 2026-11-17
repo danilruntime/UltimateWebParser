@@ -15,9 +15,30 @@ from pathlib import Path
 
 from uwp.config import Settings, load_settings
 from uwp.env import hide_process_environment
-from uwp.seed import SEED_SITE_NAME
+from uwp.i18n import DEFAULT_LANG, Lang, t
 
 log = logging.getLogger(__name__)
+
+
+def _lang(settings: Settings) -> Lang:
+    """The deployment language: one operator, one language, no ``--lang`` flag."""
+    return Lang(settings.default_language)
+
+
+def _help_language() -> Lang:
+    """The language of ``--help``, resolved without touching the filesystem.
+
+    ``main`` must build the parser before it parses anything, but
+    :func:`load_settings` creates ``./data``. ``uwp --help`` worked in a
+    read-only directory before and must keep working there, so only the plain
+    ``Settings`` is read here; a broken value falls back to the default and the
+    real ``load_settings`` still reports it for every actual command.
+    """
+    try:
+        return Lang(Settings().default_language)
+    except Exception:  # noqa: BLE001 - help must never be the thing that fails
+        return DEFAULT_LANG
+
 
 
 # --- helpers ---------------------------------------------------------------
@@ -55,15 +76,17 @@ def _find_site(sites, slug: str):
 
 
 def cmd_init(settings: Settings) -> int:
-    from uwp.seed import seed
+    from uwp.seed import SEED_SITE_NAME, seed
+
+    lang = _lang(settings)
 
     async def action(db) -> int:
         created = await seed(db, settings)
         if created:
-            _print(f"Создан сайт «{SEED_SITE_NAME}» (выключен).")
+            _print(t(lang, "cli.init.site_created", name=SEED_SITE_NAME))
         else:
-            _print("Сайты уже есть, сид пропущен.")
-        _print(f"База данных: {settings.db_path}")
+            _print(t(lang, "cli.init.skipped"))
+        _print(t(lang, "cli.init.db_path", path=settings.db_path))
         return 0
 
     return _settle(_with_db(settings, action))
@@ -88,25 +111,29 @@ def _loopback_in_container(host: str) -> bool:
     return host in {"127.0.0.1", "::1", "localhost"} and Path("/.dockerenv").exists()
 
 
-def _proxy_url_problem(proxy: str) -> str | None:
+def _proxy_url_problem(proxy: str, lang: Lang = DEFAULT_LANG) -> str | None:
     """Validate the URL shape without touching the network."""
     from urllib.parse import urlsplit
 
     parts = urlsplit(proxy)
     scheme = (parts.scheme or "").lower()
     if scheme not in {"http", "https", "socks5", "socks4"}:
-        return f"неподдерживаемая схема «{scheme or '—'}» (нужно http, https или socks5)"
+        return t(lang, "cli.proxy.bad_scheme", scheme=scheme or "—")
     if not parts.hostname or parts.port is None:
-        return "в адресе прокси нет хоста или порта"
+        return t(lang, "cli.proxy.no_host_port")
     return None
 
 
-def _probe_telegram_proxy(proxy: str, timeout: float = 10.0) -> str | None:
+def _probe_telegram_proxy(
+    proxy: str,
+    timeout: float = 10.0,
+    lang: Lang = DEFAULT_LANG,
+) -> str | None:
     """Return ``None`` when Bot API answers through the proxy, else the reason."""
     import asyncio
     from urllib.parse import urlsplit
 
-    if (problem := _proxy_url_problem(proxy)) is not None:
+    if (problem := _proxy_url_problem(proxy, lang)) is not None:
         return problem
     parts = urlsplit(proxy)
     scheme = (parts.scheme or "").lower()
@@ -121,7 +148,7 @@ def _probe_telegram_proxy(proxy: str, timeout: float = 10.0) -> str | None:
                 asyncio.open_connection(host, port), timeout=min(timeout, 5)
             )
         except (OSError, TimeoutError) as exc:
-            return f"прокси {host}:{port} недоступен: {exc}"
+            return t(lang, "cli.proxy.unreachable", host=host, port=port, error=exc)
         writer.close()
         try:
             await writer.wait_closed()
@@ -132,7 +159,7 @@ def _probe_telegram_proxy(proxy: str, timeout: float = 10.0) -> str | None:
             try:
                 from aiohttp_socks import ProxyConnector
             except ImportError:
-                return "для socks-прокси нужен пакет aiohttp-socks"
+                return t(lang, "cli.proxy.socks_missing")
             # ``rdns=True`` matters: resolving locally picks the AAAA record
             # first, and an unreachable IPv6 route turns a 0.5 s call into a
             # 60 s timeout. aiogram uses the same setting.
@@ -149,10 +176,14 @@ def _probe_telegram_proxy(proxy: str, timeout: float = 10.0) -> str | None:
                 ) as response,
             ):
                 if response.status >= 500:
-                    return f"api.telegram.org вернул {response.status}"
+                    return t(lang, "cli.proxy.http_status", status=response.status)
                 return None
         except Exception as exc:  # noqa: BLE001 - any failure is a failed check
-            return f"запрос через прокси не прошёл: {type(exc).__name__}: {exc}"
+            return t(
+                lang,
+                "cli.proxy.request_failed",
+                error=f"{type(exc).__name__}: {exc}",
+            )
 
     async def guarded() -> str | None:
         # A hard wall around the whole probe: the SOCKS handshake inside
@@ -161,33 +192,32 @@ def _probe_telegram_proxy(proxy: str, timeout: float = 10.0) -> str | None:
         try:
             return await asyncio.wait_for(probe(), timeout=timeout + 2)
         except TimeoutError:
-            return f"прокси не ответил за {timeout:.0f} с"
+            return t(lang, "cli.proxy.timeout", seconds=timeout)
 
     reason = asyncio.run(guarded())
     if reason and _loopback_in_container(host):
-        reason += (
-            "; внутри контейнера 127.0.0.1 — это сам контейнер, "
-            "запустите его с network_mode: host или укажите адрес хоста"
-        )
+        reason += t(lang, "cli.proxy.loopback_hint")
     return reason
 
 
-def _check_telegram_proxy(proxy: str, online: bool = True) -> tuple[str, bool, str]:
+def _check_telegram_proxy(
+    proxy: str, online: bool = True, lang: Lang = DEFAULT_LANG
+) -> tuple[str, bool, str]:
     """``doctor`` row for UWP_TELEGRAM_PROXY.
 
     ``online=False`` (the container healthcheck) only validates the URL: the
     probe crosses a third-party proxy, and its slowness must not mark a working
     container unhealthy.
     """
-    label = f"прокси Telegram ({_mask_proxy(proxy)})"
+    label = t(lang, "cli.doctor.proxy_label", url=_mask_proxy(proxy))
     if not online:
-        problem = _proxy_url_problem(proxy)
+        problem = _proxy_url_problem(proxy, lang)
         return (label, problem is None, problem or "")
-    reason = _probe_telegram_proxy(proxy)
+    reason = _probe_telegram_proxy(proxy, lang=lang)
     return (label, reason is None, reason or "")
 
 
-def _check_playwright_driver() -> tuple[bool, str]:
+def _check_playwright_driver(lang: Lang = DEFAULT_LANG) -> tuple[bool, str]:
     """Run the driver's bundled ``node --version``; returns ``(ok, detail)``.
 
     Playwright talks to its own Node build, not the system one. A missing shared
@@ -205,7 +235,7 @@ def _check_playwright_driver() -> tuple[bool, str]:
         driver = compute_driver_executable()
         node = str(driver[0] if isinstance(driver, tuple) else driver)
     except Exception as exc:  # noqa: BLE001 - an import failure is a failed check
-        return False, f"не найден: {exc}"
+        return False, t(lang, "cli.doctor.driver_missing", error=exc)
 
     try:
         completed = subprocess.run(
@@ -216,7 +246,7 @@ def _check_playwright_driver() -> tuple[bool, str]:
             check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:
-        return False, f"не запускается: {exc}"
+        return False, t(lang, "cli.doctor.driver_broken", error=exc)
 
     output = (completed.stderr or completed.stdout).strip()
     return completed.returncode == 0, output.splitlines()[0] if output else ""
@@ -227,6 +257,7 @@ def cmd_doctor(
 ) -> int:
     from uwp.browser import BrowserUnavailable, resolve_browser
 
+    lang = _lang(settings)
     checks: list[tuple[str, bool, bool]] = []  # (text, ok, is_warning)
 
     def check(name: str, ok: bool, detail: str = "", warning: bool = False) -> None:
@@ -241,12 +272,13 @@ def cmd_doctor(
             writable = os.access(directory, os.W_OK)
         except OSError:
             writable = False
-        check(f"каталог {directory}", writable)
+        check(t(lang, "cli.doctor.dir", path=directory), writable)
 
+    browser_label = t(lang, "cli.doctor.browser")
     try:
         executable = resolve_browser(settings)
     except BrowserUnavailable as exc:
-        check("браузер fingerprint-chromium", False, str(exc))
+        check(browser_label, False, str(exc))
     else:
         try:
             completed = subprocess.run(
@@ -257,50 +289,64 @@ def cmd_doctor(
                 check=False,
             )
         except (OSError, subprocess.SubprocessError) as exc:
-            check("браузер fingerprint-chromium", False, f"не запускается: {exc}")
+            detail = t(lang, "cli.doctor.browser_no_version", error=exc)
+            check(browser_label, False, detail)
         else:
             if completed.returncode == 0:
-                check(
-                    "браузер fingerprint-chromium",
-                    True,
-                    completed.stdout.strip() or str(executable),
-                )
+                check(browser_label, True, completed.stdout.strip() or str(executable))
             else:
                 check(
-                    "браузер fingerprint-chromium",
+                    browser_label,
                     False,
-                    f"--version вернул {completed.returncode}",
+                    t(lang, "cli.doctor.browser_returncode", code=completed.returncode),
                 )
 
     for tool in ("Xvfb", "x11vnc", "websockify"):
         found = shutil.which(tool)
-        check(tool, found is not None, found or "не найден (нужен только для VNC)", warning=True)
+        check(
+            tool,
+            found is not None,
+            found or t(lang, "cli.doctor.tool_missing"),
+            warning=True,
+        )
 
     # Playwright talks to its own bundled Node build, not the system one.  A
     # missing shared library (``libatomic.so.1`` in a slim Debian image) makes
     # every run fail with "Connection closed while reading from the driver"
     # while the browser check above still passes.
-    ok, detail = _check_playwright_driver()
-    check("драйвер playwright", ok, detail)
+    ok, detail = _check_playwright_driver(lang)
+    check(t(lang, "cli.doctor.playwright"), ok, detail)
 
     # The split worker never polls Telegram, so a deployment that keeps the
     # token out of its environment is correct, not broken.
     if not worker:
-        check("UWP_BOT_TOKEN", bool(settings.bot_token), "не задан")
-    check("UWP_ADMIN_IDS", bool(settings.admin_ids), "пусто")
+        check(
+            "UWP_BOT_TOKEN",
+            bool(settings.bot_token),
+            t(lang, "cli.doctor.token_missing"),
+        )
+    check(
+        "UWP_ADMIN_IDS",
+        bool(settings.admin_ids),
+        t(lang, "cli.doctor.admins_missing"),
+    )
     if settings.telegram_proxy:
-        check(*_check_telegram_proxy(settings.telegram_proxy, online=not offline))
+        check(
+            *_check_telegram_proxy(
+                settings.telegram_proxy, online=not offline, lang=lang
+            )
+        )
     else:
         check(
-            "прокси Telegram",
+            t(lang, "cli.doctor.proxy_none"),
             True,
-            "не задан (UWP_TELEGRAM_PROXY): нужен там, где api.telegram.org недоступен",
+            t(lang, "cli.doctor.proxy_missing"),
         )
     if not settings.secret_key:
         check(
             "UWP_SECRET_KEY",
             False,
-            "не задан: пароли прокси хранятся открыто",
+            t(lang, "cli.doctor.secret_missing"),
             warning=True,
         )
     elif len(settings.secret_key) < 16:
@@ -309,8 +355,7 @@ def cmd_doctor(
         check(
             "UWP_SECRET_KEY",
             False,
-            f"всего {len(settings.secret_key)} символов: нужен длинный "
-            "случайный ключ (32+ символа)",
+            t(lang, "cli.doctor.secret_short", length=len(settings.secret_key)),
             warning=True,
         )
     else:
@@ -321,16 +366,16 @@ def cmd_doctor(
             return 0
 
         _settle(_with_db(settings, action))
-        check("база данных", True, str(settings.db_path))
+        check(t(lang, "cli.doctor.db"), True, str(settings.db_path))
     except Exception as exc:  # noqa: BLE001 - any migration failure fails the check
-        check("база данных", False, str(exc))
+        check(t(lang, "cli.doctor.db"), False, str(exc))
 
     failed = [text for text, ok, warning in checks if not ok and not warning]
     if not quiet:
         for text, _ok, _warning in checks:
             _print(text)
         if not failed:
-            _print("Всё в порядке.")
+            _print(t(lang, "cli.doctor.all_ok"))
     return 1 if failed else 0
 
 
@@ -345,24 +390,25 @@ def browser_url_for(version: str) -> str:
 def cmd_browser_install(
     settings: Settings, version: str, url: str, dest: Path | None, sha256: str
 ) -> int:
+    lang = _lang(settings)
     target = dest or settings.data_dir / "browser"
     target.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(suffix=".tar.xz", delete=False) as handle:
         archive = Path(handle.name)
     try:
-        _print(f"Скачиваю {url}")
+        _print(t(lang, "cli.browser.downloading", url=url))
         urllib.request.urlretrieve(url, archive)
         digest = _sha256(archive)
         if digest != sha256:
-            _print(f"❌ sha256 не совпал: {digest}")
+            _print(t(lang, "cli.browser.sha_mismatch", digest=digest))
             return 1
-        _print("sha256 совпал, распаковываю.")
-        _safe_extract(archive, target)
+        _print(t(lang, "cli.browser.sha_ok"))
+        _safe_extract(archive, target, lang)
     finally:
         archive.unlink(missing_ok=True)
     executable = target / "chrome"
-    _print(f"Браузер установлен: {executable}")
-    _print("Добавьте в окружение UWP_BROWSER_PATH=" + str(executable))
+    _print(t(lang, "cli.browser.installed", path=executable))
+    _print(t(lang, "cli.browser.export_hint", path=executable))
     return 0
 
 
@@ -374,23 +420,24 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _safe_extract(archive: Path, target: Path) -> None:
+def _safe_extract(archive: Path, target: Path, lang: Lang = DEFAULT_LANG) -> None:
     """Extract a tar archive, refusing absolute paths and ``..`` escapes."""
     with tarfile.open(archive) as tar:
         for member in tar.getmembers():
             member_path = Path(member.name)
             if member_path.is_absolute() or ".." in member_path.parts:
-                raise ValueError(f"небезопасный путь в архиве: {member.name}")
+                raise ValueError(t(lang, "cli.browser.unsafe_path", path=member.name))
         tar.extractall(target, filter="data")
 
 
-def cmd_parsers_list() -> int:
+def cmd_parsers_list(settings: Settings) -> int:
     from uwp.parsers.registry import ParserRegistry
 
+    lang = _lang(settings)
     registry = ParserRegistry.discover()
     for parser in registry.all():
-        login = " (нужен вход)" if parser.requires_login else ""
-        _print(f"{parser.key:<20} {parser.title}{login}")
+        login = t(lang, "cli.parsers.login_required") if parser.requires_login else ""
+        _print(f"{parser.key:<20} {parser.title_for(lang)}{login}")
     for name, reason in registry.broken().items():
         _print(f"⚠️ {name}: {reason}")
     return 0
@@ -400,14 +447,30 @@ def cmd_site_list(settings: Settings) -> int:
     from uwp.db.repo.sites import SitesRepo
     from uwp.timeutil import format_local
 
+    lang = _lang(settings)
+
     async def action(db) -> int:
         sites = await SitesRepo(db).list()
         if not sites:
-            _print("Сайтов нет. Запустите `uwp init`.")
+            _print(t(lang, "cli.site.empty"))
             return 0
-        _print(f"{'slug':<20} {'состояние':<10} {'интервал':<12} {'следующий':<18} парсер")
+        _print(
+            t(
+                lang,
+                "cli.site.list_header",
+                slug=t(lang, "cli.site.col_slug"),
+                state=t(lang, "cli.site.col_state"),
+                interval=t(lang, "cli.site.col_interval"),
+                next=t(lang, "cli.site.col_next"),
+                parser=t(lang, "cli.site.col_parser"),
+            )
+        )
         for site in sites:
-            state = "включён" if site.enabled else "выключен"
+            state = (
+                t(lang, "cli.site.state_on")
+                if site.enabled
+                else t(lang, "cli.site.state_off")
+            )
             interval = f"{site.interval_min_min}–{site.interval_max_min}"
             next_run = (
                 format_local(site.next_run_at, settings.tz) if site.next_run_at else "—"
@@ -427,15 +490,19 @@ def cmd_site_add(settings: Settings, parser_key: str, name: str | None) -> int:
     from uwp.scheduler import Scheduler
     from uwp.services.sites import SiteService
 
+    lang = _lang(settings)
+
     async def action(db) -> int:
         sites, jobs = SitesRepo(db), JobsRepo(db)
-        svc = SiteService(sites, jobs, Scheduler(sites, jobs), ParserRegistry.discover())
+        svc = SiteService(
+            sites, jobs, Scheduler(sites, jobs), ParserRegistry.discover(), lang=lang
+        )
         try:
             site = await svc.create(parser_key, name=name)
         except ValueError as exc:
             _print(f"❌ {exc}")
             return 1
-        _print(f"Создан сайт {site.slug} ({site.name}), пока выключен.")
+        _print(t(lang, "cli.site.created", slug=site.slug, name=site.name))
         return 0
 
     return _settle(_with_db(settings, action))
@@ -447,11 +514,13 @@ def cmd_site_toggle(settings: Settings, slug: str, enabled: bool) -> int:
     from uwp.scheduler import Scheduler
     from uwp.timeutil import utcnow
 
+    lang = _lang(settings)
+
     async def action(db) -> int:
         sites, jobs = SitesRepo(db), JobsRepo(db)
         site = _find_site(await sites.list(), slug)
         if site is None:
-            _print(f"❌ Сайт «{slug}» не найден.")
+            _print(t(lang, "cli.site.not_found", slug=slug))
             return 1
         svc_scheduler = Scheduler(sites, jobs)
         await sites.update(site.id, enabled=enabled)
@@ -459,7 +528,8 @@ def cmd_site_toggle(settings: Settings, slug: str, enabled: bool) -> int:
             await svc_scheduler.on_enabled(site.id, utcnow())
         else:
             await svc_scheduler.on_disabled(site.id)
-        _print(f"Сайт «{site.name}» {'включён' if enabled else 'выключен'}.")
+        state = t(lang, "cli.site.state_on" if enabled else "cli.site.state_off")
+        _print(t(lang, "cli.site.toggled", name=site.name, state=state))
         return 0
 
     return _settle(_with_db(settings, action))
@@ -469,29 +539,31 @@ def cmd_site_set(settings: Settings, slug: str, interval: str | None, name: str 
     from uwp.bot.handlers.settings import parse_interval
     from uwp.db.repo.sites import SitesRepo
 
+    lang = _lang(settings)
+
     fields: dict[str, object] = {}
     if interval is not None:
         try:
-            low, high = parse_interval(interval)
+            low, high = parse_interval(interval, lang)
         except ValueError as exc:
-            _print(f"❌ Интервал: {exc}")
+            _print(t(lang, "cli.site.bad_interval", error=exc))
             return 1
         fields["interval_min_min"] = low
         fields["interval_max_min"] = high
     if name is not None:
         fields["name"] = name
     if not fields:
-        _print("Нечего менять: укажите --interval и/или --name.")
+        _print(t(lang, "cli.site.nothing_to_change"))
         return 1
 
     async def action(db) -> int:
         repo = SitesRepo(db)
         site = _find_site(await repo.list(), slug)
         if site is None:
-            _print(f"❌ Сайт «{slug}» не найден.")
+            _print(t(lang, "cli.site.not_found", slug=slug))
             return 1
         await repo.update(site.id, **fields)
-        _print(f"Сайт «{site.name}» обновлён.")
+        _print(t(lang, "cli.site.updated", name=site.name))
         return 0
 
     return _settle(_with_db(settings, action))
@@ -501,17 +573,19 @@ def cmd_site_run(settings: Settings, slug: str) -> int:
     from uwp.db.repo.jobs import JobsRepo
     from uwp.db.repo.sites import SitesRepo
 
+    lang = _lang(settings)
+
     async def action(db) -> int:
         sites, jobs = SitesRepo(db), JobsRepo(db)
         site = _find_site(await sites.list(), slug)
         if site is None:
-            _print(f"❌ Сайт «{slug}» не найден.")
+            _print(t(lang, "cli.site.not_found", slug=slug))
             return 1
         job_id = await jobs.create(site.id, "manual", priority=10)
         if job_id is None:
-            _print("Прогон уже идёт или стоит в очереди.")
+            _print(t(lang, "cli.site.already_running"))
             return 1
-        _print(f"Прогон поставлен в очередь (job {job_id}).")
+        _print(t(lang, "cli.site.queued", job=job_id))
         return 0
 
     return _settle(_with_db(settings, action))
@@ -520,10 +594,12 @@ def cmd_site_run(settings: Settings, slug: str) -> int:
 def cmd_profile_list(settings: Settings) -> int:
     from uwp.db.repo.profiles import ProfilesRepo
 
+    lang = _lang(settings)
+
     async def action(db) -> int:
         profiles = [p for p in await ProfilesRepo(db).list() if p.kind == "persistent"]
         if not profiles:
-            _print("Постоянных профилей нет.")
+            _print(t(lang, "cli.profile.empty"))
             return 0
         for profile in profiles:
             _print(f"{profile.id:<4} {profile.name:<20} {profile.status:<8} {profile.user_data_dir}")
@@ -536,10 +612,12 @@ def cmd_profile_create(settings: Settings, name: str) -> int:
     from uwp.db.repo.profiles import ProfilesRepo
     from uwp.profiles import ProfileManager
 
+    lang = _lang(settings)
+
     async def action(db) -> int:
         repo = ProfilesRepo(db)
         profile = await ProfileManager(settings, repo).create_persistent(name)
-        _print(f"Создан профиль {profile.id} «{profile.name}».")
+        _print(t(lang, "cli.profile.created", id=profile.id, name=profile.name))
         return 0
 
     return _settle(_with_db(settings, action))
@@ -549,6 +627,8 @@ def cmd_profile_delete(settings: Settings, profile_id: int) -> int:
     from uwp.db.repo.profiles import ProfilesRepo
     from uwp.profiles import ProfileManager
 
+    lang = _lang(settings)
+
     async def action(db) -> int:
         repo = ProfilesRepo(db)
         try:
@@ -556,7 +636,7 @@ def cmd_profile_delete(settings: Settings, profile_id: int) -> int:
         except ValueError as exc:
             _print(f"❌ {exc}")
             return 1
-        _print(f"Профиль {profile_id} удалён.")
+        _print(t(lang, "cli.profile.deleted", id=profile_id))
         return 0
 
     return _settle(_with_db(settings, action))
@@ -572,13 +652,15 @@ def cmd_profile_login(settings: Settings, profile_id: int) -> int:
     from uwp.timeutil import utcnow
     from uwp.vnc import VncManager
 
+    lang = _lang(settings)
+
     async def action(db) -> int:
         from uwp.domain import VncStatus
 
         repo = ProfilesRepo(db)
         profile = await repo.get(profile_id)
         if profile is None:
-            _print(f"❌ Профиль {profile_id} не найден.")
+            _print(t(lang, "cli.profile.not_found", id=profile_id))
             return 1
         sessions = VncRepo(db)
         manager = VncManager(
@@ -586,9 +668,9 @@ def cmd_profile_login(settings: Settings, profile_id: int) -> int:
         )
         svc = VncService(manager, repo, SitesRepo(db), settings, sessions)
         info = await svc.request(profile_id)
-        _print(f"Ссылка: {info.url}")
-        _print(f"Пароль: {info.password}")
-        _print("Нажмите Ctrl+C, чтобы завершить сессию.")
+        _print(t(lang, "cli.profile.vnc_link", url=info.url))
+        _print(t(lang, "cli.profile.vnc_password", password=info.password))
+        _print(t(lang, "cli.profile.vnc_hint"))
         try:
             while True:
                 await asyncio.sleep(2)
@@ -601,11 +683,11 @@ def cmd_profile_login(settings: Settings, profile_id: int) -> int:
                     VncStatus.stopped,
                     VncStatus.failed,
                 ):
-                    _print("Сессия завершена.")
+                    _print(t(lang, "cli.profile.session_finished"))
                     break
         except (KeyboardInterrupt, asyncio.CancelledError):
             await svc.stop(info.session_id)
-            _print("Сессия завершена.")
+            _print(t(lang, "cli.profile.session_finished"))
         return 0
 
     return _settle(_with_db(settings, action))
@@ -614,10 +696,12 @@ def cmd_profile_login(settings: Settings, profile_id: int) -> int:
 def cmd_proxy_list(settings: Settings) -> int:
     from uwp.db.repo.proxies import ProxiesRepo
 
+    lang = _lang(settings)
+
     async def action(db) -> int:
         proxies = await ProxiesRepo(db).list()
         if not proxies:
-            _print("Прокси нет.")
+            _print(t(lang, "cli.proxy.empty"))
             return 0
         for proxy in proxies:
             _print(f"{proxy.id:<4} {proxy.name:<20} {proxy.scheme}://{proxy.host}:{proxy.port}")
@@ -630,13 +714,15 @@ def cmd_proxy_add(settings: Settings, name: str, url: str) -> int:
     from uwp.db.repo.proxies import ProxiesRepo
     from uwp.services.proxies import ProxyService
 
+    lang = _lang(settings)
+
     async def action(db) -> int:
         try:
             proxy = await ProxyService(ProxiesRepo(db), settings).add(name, url)
         except ValueError as exc:
             _print(f"❌ {exc}")
             return 1
-        _print(f"Добавлен прокси {proxy.id} «{proxy.name}».")
+        _print(t(lang, "cli.proxy.added", id=proxy.id, name=proxy.name))
         return 0
 
     return _settle(_with_db(settings, action))
@@ -646,10 +732,13 @@ def cmd_proxy_test(settings: Settings, proxy_id: int) -> int:
     from uwp.db.repo.proxies import ProxiesRepo
     from uwp.services.proxies import ProxyService
 
+    lang = _lang(settings)
+
     async def action(db) -> int:
-        ok, message = await ProxyService(ProxiesRepo(db), settings).test(proxy_id)
-        _print(("✅ " if ok else "❌ ") + message)
-        return 0 if ok else 1
+        check = await ProxyService(ProxiesRepo(db), settings).test(proxy_id)
+        key = "cli.proxy.check_ok" if check.ok else "cli.proxy.check_failed"
+        _print(t(lang, key, text=check.text(lang)))
+        return 0 if check.ok else 1
 
     return _settle(_with_db(settings, action))
 
@@ -657,13 +746,23 @@ def cmd_proxy_test(settings: Settings, proxy_id: int) -> int:
 def cmd_vnc_list(settings: Settings) -> int:
     from uwp.db.repo.vnc import VncRepo
 
+    lang = _lang(settings)
+
     async def action(db) -> int:
         sessions = await VncRepo(db).active()
         if not sessions:
-            _print("Активных сессий нет.")
+            _print(t(lang, "cli.vnc.empty"))
             return 0
         for session in sessions:
-            _print(f"{session.id:<4} профиль {session.profile_id} порт {session.port}")
+            _print(
+                t(
+                    lang,
+                    "cli.vnc.line",
+                    id=session.id,
+                    profile=session.profile_id,
+                    port=session.port,
+                )
+            )
         return 0
 
     return _settle(_with_db(settings, action))
@@ -674,19 +773,21 @@ def cmd_vnc_stop(settings: Settings, session_id: int) -> int:
     from uwp.db.repo.vnc import VncRepo
     from uwp.vnc import VncManager
 
+    lang = _lang(settings)
+
     async def action(db) -> int:
         sessions = VncRepo(db)
         session = await sessions.get(session_id)
         if session is None:
-            _print(f"❌ Сессия {session_id} не найдена.")
+            _print(t(lang, "cli.vnc.not_found", id=session_id))
             return 1
         if session.status.value in ("stopped", "failed"):
-            _print(f"Сессия {session_id} уже завершена.")
+            _print(t(lang, "cli.vnc.already_stopped", id=session_id))
             return 0
         # This process does not own the browser stack, so it can only ask:
         # the worker's tick kills the processes and frees the profile.
         await VncManager(settings, ProfilesRepo(db), sessions).request_stop(session_id)
-        _print(f"Сессия {session_id} помечена на остановку; процесс остановит воркер.")
+        _print(t(lang, "cli.vnc.stop_queued", id=session_id))
         return 0
 
     return _settle(_with_db(settings, action))
@@ -695,6 +796,8 @@ def cmd_vnc_stop(settings: Settings, session_id: int) -> int:
 def cmd_export(settings: Settings, target: str, output: Path | None) -> int:
     from uwp.db.repo.runs import RunsRepo
     from uwp.db.repo.sites import SitesRepo
+
+    lang = _lang(settings)
 
     async def action(db) -> int:
         runs, sites = RunsRepo(db), SitesRepo(db)
@@ -707,15 +810,15 @@ def cmd_export(settings: Settings, target: str, output: Path | None) -> int:
                 recent = await runs.list_for_site(site.id, limit=1)
                 run = recent[0] if recent else None
         if run is None:
-            _print(f"❌ Прогон или сайт «{target}» не найден.")
+            _print(t(lang, "cli.export.not_found", target=target))
             return 1
         if not run.report_path or not Path(run.report_path).is_file():
-            _print("❌ У прогона нет файла отчёта.")
+            _print(t(lang, "cli.export.no_report"))
             return 1
         destination = output or Path(run.report_path).with_name(Path(run.report_path).name)
         if destination.resolve() != Path(run.report_path).resolve():
             shutil.copyfile(run.report_path, destination)
-        _print(f"Отчёт: {destination}")
+        _print(t(lang, "cli.export.written", path=destination))
         return 0
 
     return _settle(_with_db(settings, action))
@@ -724,10 +827,12 @@ def cmd_export(settings: Settings, target: str, output: Path | None) -> int:
 def cmd_run(settings: Settings, once: bool) -> int:
     from uwp import app
 
+    lang = _lang(settings)
+
     async def action() -> int:
         if once:
             await app.run_once(settings)
-            _print("Один цикл воркера выполнен.")
+            _print(t(lang, "cli.run.once_done"))
         else:
             await app.run_combined(settings)
         return 0
@@ -748,8 +853,10 @@ def cmd_worker(settings: Settings) -> int:
 
 
 def cmd_db_upgrade(settings: Settings) -> int:
+    lang = _lang(settings)
+
     async def action(db) -> int:
-        _print(f"Схема обновлена: {settings.db_path}")
+        _print(t(lang, "cli.db.upgraded", path=settings.db_path))
         return 0
 
     return _settle(_with_db(settings, action))
@@ -758,91 +865,100 @@ def cmd_db_upgrade(settings: Settings) -> int:
 # --- argparse --------------------------------------------------------------
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(lang: Lang = DEFAULT_LANG) -> argparse.ArgumentParser:
+    def tr(key: str) -> str:
+        return t(lang, key)
+
     parser = argparse.ArgumentParser(prog="uwp", description="UltimateWebParser")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("init", help="создать базу, админов и тестовый сайт")
+    sub.add_parser("init", help=tr("cli.help.init"))
 
-    doctor = sub.add_parser("doctor", help="проверить окружение")
-    doctor.add_argument("--quiet", action="store_true", help="молчать при успехе")
+    doctor = sub.add_parser("doctor", help=tr("cli.help.doctor"))
+    doctor.add_argument(
+        "--quiet", action="store_true", help=tr("cli.help.doctor_quiet")
+    )
     doctor.add_argument(
         "--offline",
         action="store_true",
-        help="не ходить в сеть (так его зовёт healthcheck контейнера)",
+        help=tr("cli.help.doctor_offline"),
     )
     doctor.add_argument(
         "--worker",
         action="store_true",
-        help="процесс без Telegram: UWP_BOT_TOKEN не требуется",
+        help=tr("cli.help.doctor_worker"),
     )
 
-    browser = sub.add_parser("browser", help="управление браузером")
+    browser = sub.add_parser("browser", help=tr("cli.help.browser"))
     browser_sub = browser.add_subparsers(dest="browser_command", required=True)
-    install = browser_sub.add_parser("install", help="скачать fingerprint-chromium")
-    install.add_argument("--version", default=None, help="версия (по умолчанию из настроек)")
-    install.add_argument("--url", default=None, help="URL архива; проверяется sha256")
-    install.add_argument("--dest", type=Path, default=None, help="каталог установки")
+    install = browser_sub.add_parser("install", help=tr("cli.help.browser_install"))
+    install.add_argument(
+        "--version", default=None, help=tr("cli.help.browser_version")
+    )
+    install.add_argument("--url", default=None, help=tr("cli.help.browser_url"))
+    install.add_argument(
+        "--dest", type=Path, default=None, help=tr("cli.help.browser_dest")
+    )
 
-    parsers = sub.add_parser("parsers", help="парсеры")
+    parsers = sub.add_parser("parsers", help=tr("cli.help.parsers"))
     parsers_sub = parsers.add_subparsers(dest="parsers_command", required=True)
-    parsers_sub.add_parser("list", help="список парсеров")
+    parsers_sub.add_parser("list", help=tr("cli.help.parsers_list"))
 
-    site = sub.add_parser("site", help="сайты")
+    site = sub.add_parser("site", help=tr("cli.help.site"))
     site_sub = site.add_subparsers(dest="site_command", required=True)
-    site_sub.add_parser("list", help="список сайтов")
-    add = site_sub.add_parser("add", help="добавить сайт")
+    site_sub.add_parser("list", help=tr("cli.help.site_list"))
+    add = site_sub.add_parser("add", help=tr("cli.help.site_add"))
     add.add_argument("parser_key")
     add.add_argument("--name", default=None)
-    enable = site_sub.add_parser("enable", help="включить сайт")
+    enable = site_sub.add_parser("enable", help=tr("cli.help.site_enable"))
     enable.add_argument("slug")
-    disable = site_sub.add_parser("disable", help="выключить сайт")
+    disable = site_sub.add_parser("disable", help=tr("cli.help.site_disable"))
     disable.add_argument("slug")
-    run = site_sub.add_parser("run", help="запустить сейчас")
+    run = site_sub.add_parser("run", help=tr("cli.help.site_run"))
     run.add_argument("slug")
-    setter = site_sub.add_parser("set", help="изменить настройки")
+    setter = site_sub.add_parser("set", help=tr("cli.help.site_set"))
     setter.add_argument("slug")
     setter.add_argument("--interval", default=None)
     setter.add_argument("--name", default=None)
 
-    profile = sub.add_parser("profile", help="профили")
+    profile = sub.add_parser("profile", help=tr("cli.help.profile"))
     profile_sub = profile.add_subparsers(dest="profile_command", required=True)
-    profile_sub.add_parser("list", help="список профилей")
-    create = profile_sub.add_parser("create", help="создать профиль")
+    profile_sub.add_parser("list", help=tr("cli.help.profile_list"))
+    create = profile_sub.add_parser("create", help=tr("cli.help.profile_create"))
     create.add_argument("name")
-    gain = profile_sub.add_parser("login", help="войти через VNC")
+    gain = profile_sub.add_parser("login", help=tr("cli.help.profile_login"))
     gain.add_argument("profile_id", type=int)
-    drop = profile_sub.add_parser("delete", help="удалить профиль")
+    drop = profile_sub.add_parser("delete", help=tr("cli.help.profile_delete"))
     drop.add_argument("profile_id", type=int)
 
-    proxy = sub.add_parser("proxy", help="прокси")
+    proxy = sub.add_parser("proxy", help=tr("cli.help.proxy"))
     proxy_sub = proxy.add_subparsers(dest="proxy_command", required=True)
-    proxy_sub.add_parser("list", help="список прокси")
-    proxy_add = proxy_sub.add_parser("add", help="добавить прокси")
+    proxy_sub.add_parser("list", help=tr("cli.help.proxy_list"))
+    proxy_add = proxy_sub.add_parser("add", help=tr("cli.help.proxy_add"))
     proxy_add.add_argument("name")
     proxy_add.add_argument("url")
-    proxy_test = proxy_sub.add_parser("test", help="проверить прокси")
+    proxy_test = proxy_sub.add_parser("test", help=tr("cli.help.proxy_test"))
     proxy_test.add_argument("proxy_id", type=int)
 
-    vnc = sub.add_parser("vnc", help="сессии входа")
+    vnc = sub.add_parser("vnc", help=tr("cli.help.vnc"))
     vnc_sub = vnc.add_subparsers(dest="vnc_command", required=True)
-    vnc_sub.add_parser("list", help="активные сессии")
-    vnc_stop = vnc_sub.add_parser("stop", help="остановить сессию")
+    vnc_sub.add_parser("list", help=tr("cli.help.vnc_list"))
+    vnc_stop = vnc_sub.add_parser("stop", help=tr("cli.help.vnc_stop"))
     vnc_stop.add_argument("session_id", type=int)
 
-    export = sub.add_parser("export", help="сохранить отчёт прогона")
-    export.add_argument("target", help="id прогона или slug сайта")
+    export = sub.add_parser("export", help=tr("cli.help.export"))
+    export.add_argument("target", help=tr("cli.help.export_target"))
     export.add_argument("-o", "--output", type=Path, default=None)
 
-    run_cmd = sub.add_parser("run", help="запустить бота и воркер вместе")
-    run_cmd.add_argument("--once", action="store_true", help="один цикл воркера")
+    run_cmd = sub.add_parser("run", help=tr("cli.help.run"))
+    run_cmd.add_argument("--once", action="store_true", help=tr("cli.help.run_once"))
 
-    sub.add_parser("bot", help="только бот")
-    sub.add_parser("worker", help="только воркер")
+    sub.add_parser("bot", help=tr("cli.help.bot"))
+    sub.add_parser("worker", help=tr("cli.help.worker"))
 
-    db = sub.add_parser("db", help="база данных")
+    db = sub.add_parser("db", help=tr("cli.help.db"))
     db_sub = db.add_subparsers(dest="db_command", required=True)
-    db_sub.add_parser("upgrade", help="применить миграции")
+    db_sub.add_parser("upgrade", help=tr("cli.help.db_upgrade"))
 
     return parser
 
@@ -861,7 +977,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         level=os.environ.get("UWP_LOG_LEVEL", "WARNING"),
         format="%(levelname)s %(name)s: %(message)s",
     )
-    args = build_parser().parse_args(argv)
+    # ``argparse`` builds the help text before any command runs, so the
+    # language must be known first. ``_help_language`` reads the environment
+    # only; ``load_settings`` below creates ``./data`` and must not run for
+    # ``uwp --help``.
+    args = build_parser(_help_language()).parse_args(argv)
     settings = load_settings()
 
     if args.command == "init":
@@ -886,7 +1006,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             sha256=settings.browser_sha256,
         )
     if args.command == "parsers":
-        return cmd_parsers_list()
+        return cmd_parsers_list(settings)
     if args.command == "site":
         return _dispatch_site(settings, args)
     if args.command == "profile":

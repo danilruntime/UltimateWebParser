@@ -152,6 +152,29 @@ async def test_request_rejects_a_missing_profile(env):
         await svc.request(999)
 
 
+async def test_the_missing_profile_error_follows_the_deployment_language(env):
+    """The bot shows this text in the admin's own chat, so it must be translated."""
+    _db, profiles, sites, sessions, tmp_path = env
+    settings = load_settings(
+        {"UWP_DATA_DIR": str(tmp_path), "UWP_DEFAULT_LANGUAGE": "en"}
+    )
+    svc = VncService(FakeManager(), profiles, sites, settings, sessions)
+
+    with pytest.raises(ValueError, match="profile 999 not found"):
+        await svc.request(999)
+
+
+async def test_the_missing_session_error_follows_the_deployment_language(env):
+    _db, profiles, sites, sessions, tmp_path = env
+    settings = load_settings(
+        {"UWP_DATA_DIR": str(tmp_path), "UWP_DEFAULT_LANGUAGE": "en"}
+    )
+    svc = VncService(FakeManager(), profiles, sites, settings, sessions)
+
+    with pytest.raises(ValueError, match="session 5 not found"):
+        await svc.extend(5)
+
+
 async def test_stop_delegates_to_the_manager(env):
     _db, profiles, sites, sessions, tmp_path = env
     settings = load_settings({"UWP_DATA_DIR": str(tmp_path)})

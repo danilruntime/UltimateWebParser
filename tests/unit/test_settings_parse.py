@@ -69,6 +69,30 @@ def test_params_kb_shows_current_values_and_field_callbacks():
     assert any(b.text.startswith("⬅️") for b in buttons)
 
 
+def test_field_labels_follow_the_interface_language():
+    """A Russian field label in an English settings screen is a leak, not data."""
+    parser = SteamDealsParser()
+
+    russian = {
+        b.callback_data: b.text
+        for row in params_kb(parser, _site(), Lang.ru).inline_keyboard
+        for b in row
+        if b.callback_data
+    }
+    english = {
+        b.callback_data: b.text
+        for row in params_kb(parser, _site(), Lang.en).inline_keyboard
+        for b in row
+        if b.callback_data
+    }
+
+    assert russian["param:3:filter"].startswith("Подборка")
+    assert english["param:3:filter"].startswith("Selection")
+    assert english["param:3:max_pages"].startswith("Pages")
+    assert english["param:3:max_price"].startswith("Max price")
+    assert not any("Подборка" in text for text in english.values())
+
+
 def test_next_literal_cycles_values():
     from uwp.parsers.steam_deals.parser import SteamSettings
 

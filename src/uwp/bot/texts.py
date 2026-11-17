@@ -499,6 +499,17 @@ def proxy_deleted(lang) -> str:
     return t(lang, "bot.proxies.deleted")
 
 
+def proxy_check(lang, check) -> str:
+    """The verdict of a proxy reachability check, in the admin's language.
+
+    The service returns a structured :class:`~uwp.services.proxies.ProxyCheck`;
+    the sentence, and the check mark, are built here so an English chat never
+    shows a Russian reason.
+    """
+    key = "bot.proxies.check_ok" if check.ok else "bot.proxies.check_failed"
+    return t(lang, key, text=esc(check.text(lang)))
+
+
 def proxy_card(lang, proxy) -> str:
     auth = (
         ", " + t(lang, "bot.proxies.card.user", name=esc(proxy.username))

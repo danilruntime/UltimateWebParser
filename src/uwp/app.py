@@ -26,6 +26,7 @@ from uwp.db.repo.runs import RunsRepo
 from uwp.db.repo.sites import SitesRepo
 from uwp.db.repo.vnc import VncRepo
 from uwp.events import EventBus
+from uwp.i18n import Lang
 from uwp.parsers.registry import ParserRegistry
 from uwp.profiles import ProfileManager
 from uwp.runner import Runner
@@ -199,7 +200,9 @@ async def build_runtime(
     scheduler = Scheduler(sites, jobs)
     runner = Runner(settings, profiles_manager, registry, runs, items)
     bus = EventBus(events, admins, settings)
-    site_service = SiteService(sites, jobs, scheduler, registry)
+    site_service = SiteService(
+        sites, jobs, scheduler, registry, lang=Lang(settings.default_language)
+    )
     proxy_service = ProxyService(proxies, settings)
     # The worker must hand the runner a *decrypted* password: the row holds a
     # Fernet token when UWP_SECRET_KEY is set, and Chromium cannot authenticate

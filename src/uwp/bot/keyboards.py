@@ -134,7 +134,7 @@ def parsers_kb(parsers, lang) -> InlineKeyboardMarkup:
     rows = [
         [
             InlineKeyboardButton(
-                text=parser.title, callback_data=f"site:add:{parser.key}"
+                text=parser.title_for(lang), callback_data=f"site:add:{parser.key}"
             )
         ]
         for parser in parsers

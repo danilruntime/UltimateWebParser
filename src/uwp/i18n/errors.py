@@ -1,0 +1,55 @@
+"""Messages raised by a service and shown by both the CLI and the bot.
+
+A service returns data, not prose: ``ProxyService.test`` returns a
+:class:`~uwp.services.proxies.ProxyCheck` and the caller renders it. The few
+``ValueError`` texts a service does raise still need a language, and the
+deployment's ``default_language`` is the only one available to a worker. These
+keys therefore live outside both ``bot.*`` and ``cli.*``: either side may read
+one, and a shared key keeps the two sentences from drifting.
+"""
+
+from uwp.i18n import Lang
+
+CATALOG: dict[Lang, dict[str, str]] = {
+    Lang.ru: {
+        # --- proxy URL parsing -------------------------------------------
+        "error.proxy.bad_scheme": "неподдерживаемая схема прокси: {scheme}",
+        "error.proxy.no_host": "в адресе прокси нет хоста",
+        "error.proxy.bad_port": "некорректный порт прокси",
+        "error.proxy.no_port": "в адресе прокси нет порта",
+        "error.proxy.duplicate": "прокси с именем «{name}» уже есть",
+        # --- proxy reachability check ------------------------------------
+        "error.proxy.not_found": "прокси не найден",
+        "error.proxy.reachable": "доступен, {ms} мс",
+        "error.proxy.timeout": "таймаут {seconds} с",
+        "error.proxy.connection": "ошибка соединения: {detail}",
+        # --- profile ------------------------------------------------------
+        "error.profile.name_empty": "имя профиля не может быть пустым",
+        "error.profile.duplicate": "профиль с именем «{name}» уже есть",
+        "error.profile.not_found": "профиль {id} не найден",
+        "error.profile.locked": "профиль {id} занят прогоном: сначала остановите его",
+        # --- VNC ----------------------------------------------------------
+        "error.vnc.session_not_found": "сессия {id} не найдена",
+        # --- sites --------------------------------------------------------
+        "error.site.not_found": "сайт {id} не найден",
+        "error.parser.unknown": "неизвестный парсер: {parser}",
+    },
+    Lang.en: {
+        "error.proxy.bad_scheme": "unsupported proxy scheme: {scheme}",
+        "error.proxy.no_host": "the proxy address has no host",
+        "error.proxy.bad_port": "invalid proxy port",
+        "error.proxy.no_port": "the proxy address has no port",
+        "error.proxy.duplicate": "a proxy named “{name}” already exists",
+        "error.proxy.not_found": "proxy not found",
+        "error.proxy.reachable": "reachable, {ms} ms",
+        "error.proxy.timeout": "timeout {seconds} s",
+        "error.proxy.connection": "connection error: {detail}",
+        "error.profile.name_empty": "the profile name cannot be empty",
+        "error.profile.duplicate": "a profile named “{name}” already exists",
+        "error.profile.not_found": "profile {id} not found",
+        "error.profile.locked": "profile {id} is in use by a run: stop it first",
+        "error.vnc.session_not_found": "session {id} not found",
+        "error.site.not_found": "site {id} not found",
+        "error.parser.unknown": "unknown parser: {parser}",
+    },
+}

@@ -169,6 +169,8 @@ CATALOG: dict[Lang, dict[str, str]] = {
         ),
         "bot.proxies.added": "✅ Прокси добавлен.",
         "bot.proxies.deleted": "🗑 Прокси удалён.",
+        "bot.proxies.check_ok": "✅ {text}",
+        "bot.proxies.check_failed": "❌ {text}",
         "bot.proxies.card.user": "пользователь {name}",
         "bot.proxies.card.country": "Страна: {country}",
         # --- run history --------------------------------------------------
@@ -388,6 +390,8 @@ CATALOG: dict[Lang, dict[str, str]] = {
         ),
         "bot.proxies.added": "✅ Proxy added.",
         "bot.proxies.deleted": "🗑 Proxy deleted.",
+        "bot.proxies.check_ok": "✅ {text}",
+        "bot.proxies.check_failed": "❌ {text}",
         "bot.proxies.card.user": "user {name}",
         "bot.proxies.card.country": "Country: {country}",
         # --- run history --------------------------------------------------

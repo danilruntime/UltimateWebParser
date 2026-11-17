@@ -17,7 +17,8 @@ async def env(tmp_path):
     await db.migrate()
     settings = load_settings({"UWP_DATA_DIR": str(tmp_path)})
     repo = ProfilesRepo(db)
-    yield repo, ProfilesService(ProfileManager(settings, repo), repo, settings), tmp_path
+    svc = ProfilesService(ProfileManager(settings, repo), repo, settings)
+    yield repo, svc, tmp_path
     await db.close()
 
 
@@ -26,6 +27,38 @@ async def test_create_requires_a_name(env):
 
     with pytest.raises(ValueError):
         await svc.create("   ")
+
+
+async def test_the_empty_name_error_follows_the_deployment_language(tmp_path):
+    """The bot prints it with a ❌; the handler's ``lang`` used to disagree."""
+    db = await Database.in_memory()
+    await db.migrate()
+    settings = load_settings(
+        {"UWP_DATA_DIR": str(tmp_path), "UWP_DEFAULT_LANGUAGE": "en"}
+    )
+    repos = ProfilesRepo(db)
+    svc = ProfilesService(ProfileManager(settings, repos), repos, settings)
+
+    with pytest.raises(ValueError, match="cannot be empty"):
+        await svc.create("   ")
+
+    await db.close()
+
+
+async def test_the_duplicate_name_error_follows_the_deployment_language(tmp_path):
+    db = await Database.in_memory()
+    await db.migrate()
+    settings = load_settings(
+        {"UWP_DATA_DIR": str(tmp_path), "UWP_DEFAULT_LANGUAGE": "en"}
+    )
+    repos = ProfilesRepo(db)
+    svc = ProfilesService(ProfileManager(settings, repos), repos, settings)
+    await svc.create("P")
+
+    with pytest.raises(ValueError, match="already exists"):
+        await svc.create("P")
+
+    await db.close()
 
 
 async def test_list_hides_clean_profiles(env):

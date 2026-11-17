@@ -339,6 +339,41 @@ def test_parser_metadata_and_columns():
     ]
 
 
+def test_the_parser_renders_its_name_in_the_report_language():
+    """``title`` stays Russian for the seeded row; the screens ask ``title_for``."""
+    from uwp.i18n import Lang
+
+    parser = SteamDealsParser()
+
+    assert parser.title_for(Lang.ru) == "Steam — скидки"
+    assert parser.title_for(Lang.en) == "Steam — deals"
+    assert parser.description_for(Lang.en).startswith("Discounted games")
+
+
+def test_every_column_has_a_catalogue_key():
+    """A new column added without a key would show Russian in an English report."""
+    assert [column.key for column in SteamDealsParser.columns] == [
+        column.title_key.removeprefix("parser.steam_deals.column.")
+        for column in SteamDealsParser.columns
+    ]
+
+
+def test_column_headers_are_translated():
+    from uwp.i18n import Lang
+
+    by_key = {column.key: column for column in SteamDealsParser.columns}
+
+    assert by_key["title"].title_for(Lang.ru) == "Название"
+    assert by_key["title"].title_for(Lang.en) == "Title"
+    assert by_key["price_final"].title_for(Lang.en) == "Final price"
+
+
+def test_every_settings_field_has_a_short_label_key():
+    for name, field in SteamSettings.model_fields.items():
+        extra = field.json_schema_extra or {}
+        assert extra.get("title_key") == f"parser.steam_deals.field.{name}"
+
+
 def test_settings_have_russian_descriptions():
     for name, field in SteamSettings.model_fields.items():
         assert field.description, f"{name} has no description"

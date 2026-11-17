@@ -16,7 +16,7 @@ from pydantic import ValidationError
 
 from uwp.bot import keyboards, texts
 from uwp.domain import ExportMode, ProfileKind, Site
-from uwp.i18n import DEFAULT_LANG, Lang
+from uwp.i18n import DEFAULT_LANG, Lang, t
 from uwp.parsers.base import BaseParser
 
 log = logging.getLogger(__name__)
@@ -198,7 +198,16 @@ def _bounds(field: Any, lang: Lang) -> str:
 
 
 def _field_title(field: Any, lang: Lang) -> str:
-    """A short label from the field description, without the hints."""
+    """A short label for a settings field, in the admin's language.
+
+    ``json_schema_extra["title_key"]`` is what a parser-published field carries
+    when the catalogue has a translation; the Russian ``description`` stays the
+    fallback for a parser that ships without keys. The description is cut at the
+    first hint so a long sentence does not wrap a phone button.
+    """
+    key = (field.json_schema_extra or {}).get("title_key")
+    if key:
+        return t(lang, key)
     text = field.description or field.title or ""
     for separator in (" (", ";", ":"):
         text = text.split(separator)[0]

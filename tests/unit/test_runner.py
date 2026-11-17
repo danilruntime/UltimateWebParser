@@ -531,3 +531,30 @@ async def _broken_session(sessions):
     session = FakeSession(FakePage(fail=True))
     sessions.append(session)
     return session
+
+
+async def test_the_report_language_comes_from_the_deployment_setting(env, tmp_path):
+    """The worker has no admin, so the report follows ``UWP_REPORT_LANGUAGE``."""
+    from odf.opendocument import load
+    from odf.table import Table
+
+    from uwp.ods import data_sheet
+
+    runner, site, job, *_ = env
+    runner.settings = load_settings(
+        {
+            "UWP_DATA_DIR": str(tmp_path),
+            "UWP_RUN_TIMEOUT": "1",
+            "UWP_DEFAULT_LANGUAGE": "ru",
+            "UWP_REPORT_LANGUAGE": "en",
+        }
+    )
+    site.export_mode = "always"
+
+    out = await runner.run(site, job, proxy=None)
+
+    assert out.report_path is not None
+    doc = load(str(out.report_path))
+    names = {table.getAttribute("name") for table in doc.spreadsheet.getElementsByType(Table)}
+    assert "Data" in names and "Данные" not in names
+    assert "Data" == data_sheet(runner.settings.report_lang)

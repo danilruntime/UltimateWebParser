@@ -6,6 +6,7 @@ import pytest
 from uwp.db.database import Database
 from uwp.db.repo.jobs import JobsRepo
 from uwp.db.repo.sites import SitesRepo
+from uwp.i18n import Lang
 from uwp.parsers.registry import ParserRegistry
 from uwp.scheduler import Scheduler
 from uwp.services.sites import SiteService
@@ -101,3 +102,19 @@ async def test_run_now_on_a_missing_site_raises(env):
 
     with pytest.raises(ValueError):
         await svc.run_now(999)
+
+
+async def test_the_unknown_parser_error_follows_the_deployment_language(env):
+    """The CLI and the bot print this text verbatim; English used to see Russian."""
+    _db, sites, jobs = env
+    russian = SiteService(
+        sites, jobs, Scheduler(sites, jobs), registry=_registry(), lang=Lang.ru
+    )
+    english = SiteService(
+        sites, jobs, Scheduler(sites, jobs), registry=_registry(), lang=Lang.en
+    )
+
+    with pytest.raises(ValueError, match="неизвестный парсер: nope"):
+        await russian.create("nope")
+    with pytest.raises(ValueError, match="unknown parser: nope"):
+        await english.create("nope")

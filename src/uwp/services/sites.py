@@ -8,6 +8,7 @@ from datetime import datetime
 from uwp.db.repo.jobs import JobsRepo
 from uwp.db.repo.sites import SitesRepo
 from uwp.domain import Site
+from uwp.i18n import DEFAULT_LANG, Lang, t
 from uwp.parsers.registry import ParserRegistry
 from uwp.scheduler import Scheduler
 
@@ -30,11 +31,15 @@ class SiteService:
         jobs: JobsRepo,
         scheduler: Scheduler,
         registry: ParserRegistry,
+        lang: Lang = DEFAULT_LANG,
     ) -> None:
         self.sites = sites
         self.jobs = jobs
         self.scheduler = scheduler
         self.registry = registry
+        # No admin is in context when a service raises: the deployment's
+        # language is the only one available to both the CLI and the bot.
+        self.lang = lang
 
     async def list(self) -> list[Site]:
         return await self.sites.list()
@@ -46,7 +51,7 @@ class SiteService:
         """Create a disabled site; ``next_run_at`` stays unset until enabled."""
         parser = self.registry.get(parser_key)
         if parser is None:
-            raise ValueError(f"unknown parser: {parser_key}")
+            raise ValueError(t(self.lang, "error.parser.unknown", parser=parser_key))
         title = name or parser.title
         site = Site(
             slug=await self._unique_slug(slugify(title) or parser_key),
@@ -80,7 +85,7 @@ class SiteService:
     async def _require(self, site_id: int) -> Site:
         site = await self.sites.get(site_id)
         if site is None:
-            raise ValueError(f"site {site_id} not found")
+            raise ValueError(t(self.lang, "error.site.not_found", id=site_id))
         return site
 
     async def delete(self, site_id: int) -> None:

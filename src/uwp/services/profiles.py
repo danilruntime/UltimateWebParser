@@ -6,6 +6,7 @@ import logging
 from uwp.config import Settings
 from uwp.db.repo.profiles import ProfilesRepo
 from uwp.domain import Profile, ProfileKind
+from uwp.i18n import t
 from uwp.profiles import ProfileManager
 
 log = logging.getLogger(__name__)
@@ -31,7 +32,9 @@ class ProfilesService:
     async def create(self, name: str, proxy_id: int | None = None) -> Profile:
         name = name.strip()
         if not name:
-            raise ValueError("имя профиля не может быть пустым")
+            raise ValueError(
+                t(self.settings.default_language, "error.profile.name_empty")
+            )
         return await self.manager.create_persistent(name, proxy_id=proxy_id)
 
     async def delete(self, profile_id: int) -> None:

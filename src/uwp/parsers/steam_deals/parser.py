@@ -79,21 +79,47 @@ _NUMBER_RE = re.compile(r"-?\d[\d,.\s]*")
 class SteamSettings(BaseModel):
     """User-facing settings for the Steam deals parser."""
 
-    region: str = Field("us", description="Регион магазина Steam (код страны: us, ru, de, …)")
-    language: str = Field("english", description="Язык страницы магазина (english, russian, …)")
+    region: str = Field(
+        "us",
+        description="Регион магазина Steam (код страны: us, ru, de, …)",
+        json_schema_extra={"title_key": "parser.steam_deals.field.region"},
+    )
+    language: str = Field(
+        "english",
+        description="Язык страницы магазина (english, russian, …)",
+        json_schema_extra={"title_key": "parser.steam_deals.field.language"},
+    )
     filter: Literal["topsellers", "newreleases", "specials"] = Field(
-        "topsellers", description="Подборка Steam: topsellers, newreleases или specials"
+        "topsellers",
+        description="Подборка Steam: topsellers, newreleases или specials",
+        json_schema_extra={"title_key": "parser.steam_deals.field.filter"},
     )
     max_pages: int = Field(
-        2, ge=1, le=10, description="Сколько страниц результатов просматривать (1–10)"
+        2,
+        ge=1,
+        le=10,
+        description="Сколько страниц результатов просматривать (1–10)",
+        json_schema_extra={"title_key": "parser.steam_deals.field.max_pages"},
     )
-    max_price: float = Field(0, ge=0, description="Максимальная итоговая цена; 0 — без ограничения")
+    max_price: float = Field(
+        0,
+        ge=0,
+        description="Максимальная итоговая цена; 0 — без ограничения",
+        json_schema_extra={"title_key": "parser.steam_deals.field.max_price"},
+    )
     min_discount_percent: int = Field(
-        0, ge=0, le=100, description="Минимальная скидка в процентах (0 — любая)"
+        0,
+        ge=0,
+        le=100,
+        description="Минимальная скидка в процентах (0 — любая)",
+        json_schema_extra={
+            "title_key": "parser.steam_deals.field.min_discount_percent"
+        },
     )
     sort: Literal["relevance", "discount", "price"] = Field(
         "relevance",
         description="Сортировка: relevance — как в Steam, discount — по скидке, price — по цене",
+        json_schema_extra={"title_key": "parser.steam_deals.field.sort"},
     )
 
 
@@ -311,23 +337,76 @@ class SteamDealsParser(BaseParser):
     key = "steam_deals"
     title = "Steam — скидки"
     description = "Скидки в магазине Steam: цены, размер скидки, отзывы и платформы."
+    title_key = "parser.steam_deals.title"
+    description_key = "parser.steam_deals.description"
     url = SEARCH_URL
     requires_login = False
     settings_model = SteamSettings
+    # ``title`` stays the Russian fallback; ``title_key`` is what a screen or a
+    # report renders in the deployment's language.
     columns: ClassVar[list[Column]] = [
-        Column("app_id", "App ID", 12),
-        Column("title", "Название", 40),
-        Column("url", "Ссылка", 45),
-        Column("discount_percent", "Скидка, %", 10),
-        Column("price_original", "Цена без скидки", 14, "0.00"),
-        Column("price_final", "Цена со скидкой", 14, "0.00"),
-        Column("currency", "Валюта", 8),
-        Column("review_summary", "Отзывы", 24),
-        Column("review_percent", "Положительных, %", 12, volatile=True),
-        Column("review_count", "Отзывов, шт", 12, volatile=True),
-        Column("release_date", "Дата выхода", 14),
-        Column("platforms", "Платформы", 24),
-        Column("image_url", "Обложка", 45),
+        Column("app_id", "App ID", 12, title_key="parser.steam_deals.column.app_id"),
+        Column("title", "Название", 40, title_key="parser.steam_deals.column.title"),
+        Column("url", "Ссылка", 45, title_key="parser.steam_deals.column.url"),
+        Column(
+            "discount_percent",
+            "Скидка, %",
+            10,
+            title_key="parser.steam_deals.column.discount_percent",
+        ),
+        Column(
+            "price_original",
+            "Цена без скидки",
+            14,
+            "0.00",
+            title_key="parser.steam_deals.column.price_original",
+        ),
+        Column(
+            "price_final",
+            "Цена со скидкой",
+            14,
+            "0.00",
+            title_key="parser.steam_deals.column.price_final",
+        ),
+        Column("currency", "Валюта", 8, title_key="parser.steam_deals.column.currency"),
+        Column(
+            "review_summary",
+            "Отзывы",
+            24,
+            title_key="parser.steam_deals.column.review_summary",
+        ),
+        Column(
+            "review_percent",
+            "Положительных, %",
+            12,
+            volatile=True,
+            title_key="parser.steam_deals.column.review_percent",
+        ),
+        Column(
+            "review_count",
+            "Отзывов, шт",
+            12,
+            volatile=True,
+            title_key="parser.steam_deals.column.review_count",
+        ),
+        Column(
+            "release_date",
+            "Дата выхода",
+            14,
+            title_key="parser.steam_deals.column.release_date",
+        ),
+        Column(
+            "platforms",
+            "Платформы",
+            24,
+            title_key="parser.steam_deals.column.platforms",
+        ),
+        Column(
+            "image_url",
+            "Обложка",
+            45,
+            title_key="parser.steam_deals.column.image_url",
+        ),
     ]
 
     async def run(self, ctx: ParseContext) -> ParseResult:

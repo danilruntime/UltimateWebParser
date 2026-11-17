@@ -176,3 +176,22 @@ def test_each_handler_matches_only_its_own_button(lang, name):
     if name == "menu_language":
         expected = set(keyboards.BTN_LANGUAGE.values())
     assert matched == expected
+
+
+# --- parser picker --------------------------------------------------------
+
+
+def test_the_parser_picker_uses_the_interface_language():
+    """The picker is a screen, not the seeded site row: its label is translated."""
+    from uwp.i18n import Lang
+    from uwp.parsers.steam_deals.parser import SteamDealsParser
+
+    parser = SteamDealsParser()
+
+    russian = keyboards.parsers_kb([parser], Lang.ru).inline_keyboard
+    english = keyboards.parsers_kb([parser], Lang.en).inline_keyboard
+
+    assert russian[0][0].text == "Steam — скидки"
+    assert english[0][0].text == "Steam — deals"
+    # The button still adds that parser, not a neighbour.
+    assert english[0][0].callback_data == "site:add:steam_deals"

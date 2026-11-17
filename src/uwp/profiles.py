@@ -15,6 +15,7 @@ from pathlib import Path
 from uwp.config import Settings
 from uwp.db.repo.profiles import ProfilesRepo
 from uwp.domain import Profile, ProfileKind, ProfileStatus
+from uwp.i18n import t
 from uwp.timeutil import utcnow
 
 CLEAN_TTL = timedelta(hours=24)
@@ -272,7 +273,9 @@ class ProfileManager:
             # ``profiles.name`` is UNIQUE; a duplicate is an admin mistake, not
             # a crash, and the bot must say so in the wizard.
             shutil.rmtree(user_data_dir, ignore_errors=True)
-            raise ValueError(f"профиль с именем «{name}» уже есть") from None
+            raise ValueError(
+                t(self.settings.default_language, "error.profile.duplicate", name=name)
+            ) from None
         except BaseException:
             shutil.rmtree(user_data_dir, ignore_errors=True)
             raise
@@ -337,6 +340,8 @@ class ProfileManager:
         if profile is None:
             return
         if profile.kind == ProfileKind.persistent and profile.status == ProfileStatus.locked:
-            raise ValueError(f"profile {profile_id} is locked")
+            raise ValueError(
+                t(self.settings.default_language, "error.profile.locked", id=profile_id)
+            )
         shutil.rmtree(profile.user_data_dir, ignore_errors=True)
         await self.repo.delete(profile_id)

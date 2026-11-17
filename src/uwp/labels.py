@@ -8,7 +8,7 @@ what a row written by an older version needs.
 
 from __future__ import annotations
 
-from uwp.i18n import has_key, t
+from uwp.i18n import Lang, has_key, t
 
 _STATUS = "report.status"
 _KIND = "report.kind"
