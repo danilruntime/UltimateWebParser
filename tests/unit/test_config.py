@@ -132,6 +132,28 @@ def test_language_defaults(tmp_path):
     assert s.drop_pending_updates is True
 
 
+def test_a_regional_language_code_is_normalized_at_startup(tmp_path):
+    """``UWP_DEFAULT_LANGUAGE=en-US`` is a plausible copy of a Telegram locale.
+
+    Stored raw it would raise ``ValueError`` inside the worker at the first
+    report write, long after the typo; the two-letter code is what the
+    catalogue is keyed by.
+    """
+    s = load_settings({"UWP_DATA_DIR": str(tmp_path), "UWP_DEFAULT_LANGUAGE": "en-GB"})
+    assert s.default_language == "en"
+    assert s.report_lang is Lang.en
+
+    s = load_settings({"UWP_DATA_DIR": str(tmp_path), "UWP_REPORT_LANGUAGE": "ru-RU"})
+    assert s.report_language == "ru"
+
+
+def test_an_unsupported_language_fails_at_startup(tmp_path):
+    with pytest.raises(ValidationError, match="UWP_DEFAULT_LANGUAGE"):
+        load_settings({"UWP_DATA_DIR": str(tmp_path), "UWP_DEFAULT_LANGUAGE": "de"})
+    with pytest.raises(ValidationError, match="UWP_REPORT_LANGUAGE"):
+        load_settings({"UWP_DATA_DIR": str(tmp_path), "UWP_REPORT_LANGUAGE": "uk"})
+
+
 def test_a_blank_report_language_means_the_default_language(tmp_path):
     """``.env.example`` ships ``UWP_REPORT_LANGUAGE=``: copying it must work."""
     s = load_settings({"UWP_DATA_DIR": str(tmp_path), "UWP_REPORT_LANGUAGE": ""})

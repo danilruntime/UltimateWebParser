@@ -1,4 +1,4 @@
-"""CLI strings. Filled in by the CLI localisation task; the seed key proves the wiring."""
+"""CLI strings. Filled in by the CLI localisation task; one seed key proves wiring."""
 
 from uwp.i18n import Lang
 

@@ -574,6 +574,39 @@ async def test_migration_006_adds_language_to_a_database_with_admins(monkeypatch
         await db.close()
 
 
+async def test_set_language_creates_a_row_for_an_environment_only_admin(db):
+    """An id in ``UWP_ADMIN_IDS`` has no ``admins`` row; its choice must stick."""
+    repo = AdminsRepo(db)
+
+    await repo.set_language(777, "en")
+
+    assert await repo.language(777) == "en"
+    assert await repo.with_settings() == [(777, True, "en")]
+
+
+async def test_set_language_updates_an_existing_admin(db):
+    repo = AdminsRepo(db)
+    await repo.add(10)
+    await repo.set_notify(10, False)
+
+    await repo.set_language(10, "en")
+
+    # The upsert must not reset the other columns of an existing row.
+    assert await repo.with_settings() == [(10, False, "en")]
+
+
+async def test_language_ignores_a_hand_edited_unsupported_value(db):
+    """A hand-edited ``de``/``en-US`` must not reach ``Lang(...)`` at message time."""
+    repo = AdminsRepo(db)
+    await repo.add(10)
+    await repo.add(20)
+    await db.execute("UPDATE admins SET language = 'de' WHERE telegram_id = 10")
+    await db.execute("UPDATE admins SET language = 'en-US' WHERE telegram_id = 20")
+
+    assert await repo.language(10) is None
+    assert await repo.language(20) == "en"
+
+
 async def test_with_settings_carries_notify_and_language(db):
     repo = AdminsRepo(db)
     await repo.add(10)

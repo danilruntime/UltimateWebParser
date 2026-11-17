@@ -41,18 +41,33 @@ def normalize(code: str | None) -> Lang | None:
 @functools.lru_cache(maxsize=1)
 def _catalog() -> dict[Lang, dict[str, str]]:
     merged: dict[Lang, dict[str, str]] = {lang: {} for lang in Lang}
+    # Key → the domain that first defined it. Tracking the owner across both
+    # languages is what catches a key that one domain has in ru and another in
+    # en: comparing ru to ru alone would let that pair through.
+    owners: dict[str, str] = {}
     for name in _DOMAINS:
         module: ModuleType = importlib.import_module(f"{__name__}.{name}")
+        domains: dict[Lang, dict[str, str]] = {}
         for lang in Lang:
-            domain = module.CATALOG[lang]
+            try:
+                domain = module.CATALOG[lang]
+            except KeyError:
+                raise RuntimeError(
+                    f"{name} has no {lang.value!r} CATALOG entry"
+                ) from None
+            if not domain:
+                raise RuntimeError(f"{name} has no {lang.value} strings")
+            domains[lang] = domain
+        for key in set().union(*domains.values()):
+            owner = owners.get(key)
             # Two domains defining one key is invisible at runtime: the later
             # module simply wins and the screen shows a word from another area.
-            overlap = merged[lang].keys() & domain.keys()
-            if overlap:
+            if owner is not None:
                 raise RuntimeError(
-                    f"{name} redefines {min(overlap)!r}, already owned by "
-                    "another domain"
+                    f"{name} redefines {key!r}, already owned by {owner}"
                 )
+            owners[key] = name
+        for lang, domain in domains.items():
             merged[lang].update(domain)
     return merged
 

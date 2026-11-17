@@ -13,7 +13,7 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
-from uwp.i18n import Lang
+from uwp.i18n import Lang, normalize
 
 BROWSER_VERSION = "150.0.7871.186"
 BROWSER_SHA256 = "48eff860053efd9ad498d51370f0a1f59f983df39c02a72ad2a8682cdead4055"
@@ -119,11 +119,31 @@ class Settings(BaseSettings):
 
     @field_validator("report_language", mode="before")
     @classmethod
-    def _blank_report_language_is_none(cls, value: object) -> object:
-        """``UWP_REPORT_LANGUAGE=`` in .env means "use the default language"."""
+    def _normalize_report_language(cls, value: object) -> object:
+        """``UWP_REPORT_LANGUAGE=`` means the default language; a code is normalized."""
         if isinstance(value, str):
             value = value.strip()
-            return value or None
+            if not value:
+                return None
+            lang = normalize(value)
+            if lang is None:
+                raise ValueError(
+                    f"UWP_REPORT_LANGUAGE={value!r} is not supported (ru, en)"
+                )
+            return lang.value
+        return value
+
+    @field_validator("default_language", mode="before")
+    @classmethod
+    def _normalize_default_language(cls, value: object) -> object:
+        """A locale copied from a client (``en-US``) is not a typo; ``de`` is."""
+        if isinstance(value, str):
+            lang = normalize(value)
+            if lang is None:
+                raise ValueError(
+                    f"UWP_DEFAULT_LANGUAGE={value!r} is not supported (ru, en)"
+                )
+            return lang.value
         return value
 
     @classmethod

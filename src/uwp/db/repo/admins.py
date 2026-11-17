@@ -3,7 +3,19 @@
 from __future__ import annotations
 
 from uwp.db.database import Database
+from uwp.i18n import normalize
 from uwp.timeutil import to_db, utcnow
+
+
+def _known_language(stored: str | None) -> str | None:
+    """Two-letter code for a stored value, or None when we cannot translate it.
+
+    The column is plain text, so a hand-edited ``de`` or a pasted ``en-US`` must
+    read as "no opinion" here rather than raise inside ``Lang()`` at message
+    time: the repository is where untrusted rows become typed values.
+    """
+    lang = normalize(stored)
+    return None if lang is None else lang.value
 
 
 class AdminsRepo:
@@ -22,7 +34,11 @@ class AdminsRepo:
             "SELECT telegram_id, notify, language FROM admins ORDER BY telegram_id"
         )
         return [
-            (int(row["telegram_id"]), bool(row["notify"]), row["language"])
+            (
+                int(row["telegram_id"]),
+                bool(row["notify"]),
+                _known_language(row["language"]),
+            )
             for row in rows
         ]
 
@@ -31,12 +47,19 @@ class AdminsRepo:
         row = await self.db.fetchone(
             "SELECT language FROM admins WHERE telegram_id = ?", (telegram_id,)
         )
-        return None if row is None else row["language"]
+        return None if row is None else _known_language(row["language"])
 
     async def set_language(self, telegram_id: int, language: str) -> None:
+        """Store the choice even for an id that only exists in ``UWP_ADMIN_IDS``.
+
+        Such an admin passes the gate but has no row; an UPDATE-only statement
+        would accept the button press and discard the result silently.
+        """
         await self.db.execute(
-            "UPDATE admins SET language = ? WHERE telegram_id = ?",
-            (language, telegram_id),
+            """INSERT INTO admins (telegram_id, notify, language, added_at)
+               VALUES (?, 1, ?, ?)
+               ON CONFLICT(telegram_id) DO UPDATE SET language = excluded.language""",
+            (telegram_id, language, to_db(utcnow())),
         )
 
     async def set_notify(self, telegram_id: int, notify: bool) -> None:

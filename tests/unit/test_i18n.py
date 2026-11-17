@@ -100,6 +100,49 @@ def test_several_domains_may_not_define_the_same_key(monkeypatch):
         catalog_keys()
 
 
+def test_a_duplicate_key_is_refused_across_languages_too(monkeypatch):
+    """Comparing ru to ru would let ``dup.key`` in ``_dup_b``'s en side through."""
+    monkeypatch.setattr(i18n, "_DOMAINS", ("_dup_a", "_dup_b"))
+    module_a = types.ModuleType("uwp.i18n._dup_a")
+    module_a.CATALOG = {
+        Lang.ru: {"dup.key": "A"},
+        Lang.en: {"other.key": "A"},
+    }
+    module_b = types.ModuleType("uwp.i18n._dup_b")
+    module_b.CATALOG = {
+        Lang.ru: {"own.key": "B"},
+        Lang.en: {"dup.key": "B"},
+    }
+    monkeypatch.setitem(sys.modules, "uwp.i18n._dup_a", module_a)
+    monkeypatch.setitem(sys.modules, "uwp.i18n._dup_b", module_b)
+
+    with pytest.raises(RuntimeError, match="_dup_a.*_dup_b|_dup_b.*_dup_a") as exc:
+        catalog_keys()
+    assert "dup.key" in str(exc.value)
+
+
+def test_a_domain_missing_a_language_is_refused_clearly(monkeypatch):
+    """A bare ``KeyError: <Lang.en: 'en'>`` from import time does not say which file."""
+    monkeypatch.setattr(i18n, "_DOMAINS", ("_half",))
+    module = types.ModuleType("uwp.i18n._half")
+    module.CATALOG = {Lang.ru: {"some.key": "x"}}
+    monkeypatch.setitem(sys.modules, "uwp.i18n._half", module)
+
+    with pytest.raises(RuntimeError, match="_half.*en"):
+        catalog_keys()
+
+
+def test_a_domain_with_an_empty_language_is_refused(monkeypatch):
+    """Both languages must actually be translated; an empty en is a half-done job."""
+    monkeypatch.setattr(i18n, "_DOMAINS", ("_hollow",))
+    module = types.ModuleType("uwp.i18n._hollow")
+    module.CATALOG = {Lang.ru: {"some.key": "x"}, Lang.en: {}}
+    monkeypatch.setitem(sys.modules, "uwp.i18n._hollow", module)
+
+    with pytest.raises(RuntimeError, match="_hollow.*en"):
+        catalog_keys()
+
+
 def test_an_empty_catalogue_is_refused(monkeypatch):
     monkeypatch.setattr(i18n, "_DOMAINS", ())
 

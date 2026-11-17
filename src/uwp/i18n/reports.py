@@ -1,4 +1,4 @@
-"""Report strings: sheet names and headers. Filled in by the report localisation task."""
+"""Report strings: sheet names and headers. Filled in by the report task."""
 
 from uwp.i18n import Lang
 

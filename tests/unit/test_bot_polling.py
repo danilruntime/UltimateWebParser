@@ -16,10 +16,15 @@ class _Bot:
         self.order = order
         self.session = _Session()
 
-    async def delete_webhook(self, **kwargs):
-        self.calls.append(("delete_webhook", kwargs))
+    async def delete_webhook(
+        self, drop_pending_updates: bool | None = None, **kwargs
+    ):
+        # Any unexpected keyword is recorded too, so a misspelling in production
+        # cannot slip through the fake's ``**kwargs``.
+        call = {"drop_pending_updates": drop_pending_updates, **kwargs}
+        self.calls.append(("delete_webhook", call))
         if self.order is not None:
-            self.order.append(("delete_webhook", kwargs))
+            self.order.append(("delete_webhook", call))
         return True
 
 
@@ -72,9 +77,6 @@ class _Runtime:
 
 async def _record_from_run_bot(monkeypatch, tmp_path) -> list:
     order: list = []
-
-    async def build(settings, **kwargs):
-        return _Runtime(_Bot(order))
 
     import uwp.bot.app as bot_module
 

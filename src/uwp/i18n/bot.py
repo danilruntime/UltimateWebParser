@@ -1,4 +1,4 @@
-"""Bot strings. Filled in by the bot localisation task; the seed key proves the wiring."""
+"""Bot strings. Filled in by the bot localisation task; one seed key proves wiring."""
 
 from uwp.i18n import Lang
 
