@@ -11,7 +11,13 @@ def test_a_run_status_is_translated():
 
 
 def test_the_report_sheet_and_the_chat_use_the_same_word():
-    """``labels`` exists so the metadata sheet cannot drift from the run line."""
+    """The chat label and the report label are one lookup, not two.
+
+    ``texts.status_label``/``export_label`` delegate to ``labels``; this test
+    pins that the delegation is still in place, so the report cannot drift from
+    the run line. It does *not* prove the words are right — the literal
+    assertions above do that.
+    """
     from uwp.bot import texts
 
     for value in RunStatus:

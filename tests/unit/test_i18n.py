@@ -17,7 +17,10 @@ from uwp.i18n import (
     t,
 )
 
-PLACEHOLDER = re.compile(r"\{(\w+)\}")
+# ``{seconds:.0f}`` and ``{slug:<20}`` are placeholders too: a lost format spec
+# makes ``str.format`` differ between languages (``:.0f`` vs ``:d``). Capturing
+# only the bare ``{\w+}`` let that drift through the parity test.
+PLACEHOLDER = re.compile(r"\{(\w+)(?::[^}]*)?\}")
 
 
 @pytest.fixture(autouse=True)
@@ -82,6 +85,12 @@ def test_placeholders_match_between_languages():
         ru = PLACEHOLDER.findall(t(Lang.ru, key))
         en = PLACEHOLDER.findall(t(Lang.en, key))
         assert sorted(ru) == sorted(en), key
+
+
+def test_the_placeholder_regex_sees_a_format_spec():
+    """A bare ``{\\w+}`` regex made the parity test blind to ``:.0f`` → ``:d``."""
+    assert PLACEHOLDER.findall("прокси не ответил за {seconds:.0f} с") == ["seconds"]
+    assert PLACEHOLDER.findall("{slug:<20} {state:<10}") == ["slug", "state"]
 
 
 def test_several_domains_may_not_define_the_same_key(monkeypatch):

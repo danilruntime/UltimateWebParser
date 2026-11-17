@@ -6,6 +6,7 @@ import pytest
 from bs4 import BeautifulSoup
 
 from uwp.domain import ErrorKind
+from uwp.i18n import Lang
 from uwp.parsers.base import ParseContext, ParseError
 from uwp.parsers.registry import ParserRegistry
 from uwp.parsers.steam_deals.parser import (
@@ -356,6 +357,26 @@ def test_every_column_has_a_catalogue_key():
         column.title_key.removeprefix("parser.steam_deals.column.")
         for column in SteamDealsParser.columns
     ]
+
+
+def test_every_column_title_resolves_in_both_languages():
+    """The key above is only checked for shape; a typo fails at report time.
+
+    ``title_for`` calls ``t``, which raises on an unknown key, so dereferencing
+    every column in both languages is what actually proves the catalogue has it.
+    """
+    for lang in (Lang.ru, Lang.en):
+        for column in SteamDealsParser.columns:
+            assert column.title_for(lang), (column.key, lang)
+
+
+def test_the_parser_name_and_description_resolve_in_both_languages():
+    parser = SteamDealsParser()
+
+    for lang in (Lang.ru, Lang.en):
+        assert parser.title_for(lang)
+        assert parser.description_for(lang)
+    assert parser.title_for(Lang.ru) != parser.title_for(Lang.en)
 
 
 def test_column_headers_are_translated():

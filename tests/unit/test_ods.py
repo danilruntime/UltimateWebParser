@@ -126,7 +126,12 @@ def test_an_english_report_names_its_sheets_and_flags_in_english(tmp_path):
 
 def test_the_column_header_uses_the_parser_translation(tmp_path):
     cols = [Column("url", "Ссылка", 40, title_key="parser.steam_deals.column.url")]
-    path = write_report(tmp_path / "t.ods", [{"external_key": "1", "url": "https://x/1"}], cols, {})
+    path = write_report(
+        tmp_path / "t.ods",
+        [{"external_key": "1", "url": "https://x/1"}],
+        cols,
+        {},
+    )
     assert _rows(_sheet(load(str(path)), "Данные"))[0] == ["Ссылка"]
 
     path = write_report(
@@ -317,10 +322,10 @@ def test_report_autofilter_and_number_format(tmp_path):
     assert ranges[0].getAttribute("name") == "Autofilter"
     assert ranges[0].getAttribute("displayfilterbuttons") == "true"
     # The range is built from the sheet name in the *same* language as the
-    # sheet; hardcoding «Данные» here would pass while an English report pointed
-    # its autofilter at a sheet that does not exist.
-    sheet = data_sheet(Lang.ru)
-    assert ranges[0].getAttribute("targetrangeaddress") == f"${sheet}.A1:${sheet}.C2"
+    # sheet. The literal below is deliberate: comparing against
+    # ``data_sheet(Lang.ru)`` would pass even if that helper returned the same
+    # wrong name for both the table and the range.
+    assert ranges[0].getAttribute("targetrangeaddress") == "$Данные.A1:$Данные.C2"
 
     # database-ranges must follow every sheet in document order.
     tags = [child.tagName for child in doc.spreadsheet.childNodes]
@@ -343,12 +348,13 @@ def test_an_english_report_points_its_autofilter_at_the_english_sheet(tmp_path):
     path = write_report(tmp_path / "t.ods", rows, cols, {}, lang=Lang.en)
     doc = load(str(path))
 
-    sheet = data_sheet(Lang.en)
     address = doc.spreadsheet.getElementsByType(DatabaseRange)[0].getAttribute(
         "targetrangeaddress"
     )
-    assert address == f"${sheet}.A1:${sheet}.B2"
-    assert _rows(_sheet(doc, sheet))
+    # Literal on purpose: the table and the range come from one helper, so a
+    # helper that returned the same wrong name for both would still match.
+    assert address == "$Data.A1:$Data.B2"
+    assert _rows(_sheet(doc, "Data"))
 
 
 def test_prune_keeps_newest(tmp_path):
