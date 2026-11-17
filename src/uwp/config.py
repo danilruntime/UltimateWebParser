@@ -13,6 +13,8 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
+from uwp.i18n import Lang
+
 BROWSER_VERSION = "150.0.7871.186"
 BROWSER_SHA256 = "48eff860053efd9ad498d51370f0a1f59f983df39c02a72ad2a8682cdead4055"
 BROWSER_URL = (
@@ -72,6 +74,14 @@ class Settings(BaseSettings):
     vnc_listen_host: str = "0.0.0.0"
     secret_key: str | None = None
     report_name_template: str = "{parser_title}_{site_name}_{timestamp}"
+    # Language of everything a human reads when no per-admin choice exists:
+    # the CLI, the fallback for the bot, and reports unless overridden below.
+    default_language: str = "ru"
+    # Reports are written by the worker, which has no admin context, so their
+    # language is a separate deployment setting. None means default_language.
+    report_language: str | None = None
+    # A restart must not replay commands sent while the bot was down.
+    drop_pending_updates: bool = True
     exports_retention: int = 50
     artifacts_retention: int = 20
     vnc_history_days: int = 7
@@ -107,6 +117,15 @@ class Settings(BaseSettings):
             return value or None
         return value
 
+    @field_validator("report_language", mode="before")
+    @classmethod
+    def _blank_report_language_is_none(cls, value: object) -> object:
+        """``UWP_REPORT_LANGUAGE=`` in .env means "use the default language"."""
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
     @classmethod
     def settings_customise_sources(
         cls,
@@ -128,6 +147,11 @@ class Settings(BaseSettings):
     @property
     def db_path(self) -> Path:
         return self.data_dir / "uwp.db"
+
+    @property
+    def report_lang(self) -> Lang:
+        """The language reports are written in: explicit setting, else the default."""
+        return Lang(self.report_language or self.default_language)
 
     @property
     def profiles_dir(self) -> Path:

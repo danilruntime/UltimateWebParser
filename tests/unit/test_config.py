@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from uwp.config import Settings, load_settings
+from uwp.i18n import Lang
 
 
 def test_admin_ids_parsed_from_csv(tmp_path):
@@ -122,6 +123,49 @@ def test_telegram_proxy_is_optional_and_blank_means_none():
         load_settings({"UWP_TELEGRAM_PROXY": " socks5://127.0.0.1:2080 "}).telegram_proxy
         == "socks5://127.0.0.1:2080"
     )
+
+
+def test_language_defaults(tmp_path):
+    s = load_settings({"UWP_DATA_DIR": str(tmp_path)})
+    assert s.default_language == "ru"
+    assert s.report_language is None
+    assert s.drop_pending_updates is True
+
+
+def test_a_blank_report_language_means_the_default_language(tmp_path):
+    """``.env.example`` ships ``UWP_REPORT_LANGUAGE=``: copying it must work."""
+    s = load_settings({"UWP_DATA_DIR": str(tmp_path), "UWP_REPORT_LANGUAGE": ""})
+    assert s.report_language is None
+    assert s.report_lang is Lang.ru
+
+
+def test_report_lang_falls_back_to_the_default_language(tmp_path):
+    s = load_settings({"UWP_DATA_DIR": str(tmp_path)})
+    assert s.report_lang is Lang.ru
+
+    assert load_settings(
+        {"UWP_DATA_DIR": str(tmp_path), "UWP_DEFAULT_LANGUAGE": "en"}
+    ).report_lang is Lang.en
+
+    assert load_settings(
+        {"UWP_DATA_DIR": str(tmp_path), "UWP_REPORT_LANGUAGE": "en"}
+    ).report_lang is Lang.en
+
+    # An explicit report language wins over the deployment default.
+    assert load_settings(
+        {
+            "UWP_DATA_DIR": str(tmp_path),
+            "UWP_DEFAULT_LANGUAGE": "ru",
+            "UWP_REPORT_LANGUAGE": "en",
+        }
+    ).report_lang is Lang.en
+
+
+def test_drop_pending_updates_can_be_turned_off(tmp_path):
+    s = load_settings(
+        {"UWP_DATA_DIR": str(tmp_path), "UWP_DROP_PENDING_UPDATES": "false"}
+    )
+    assert s.drop_pending_updates is False
 
 
 def test_public_scheme_is_http_or_https(tmp_path):

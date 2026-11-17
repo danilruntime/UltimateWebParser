@@ -12,7 +12,7 @@ from datetime import timedelta
 from typing import Any
 
 from uwp.artifacts import prune_artifacts
-from uwp.bot.app import BotDeps, build_dispatcher, make_bot
+from uwp.bot.app import BotDeps, build_dispatcher, make_bot, prepare_polling
 from uwp.bot.delivery import EventDelivery
 from uwp.config import Settings
 from uwp.db.database import Database
@@ -232,7 +232,9 @@ async def build_runtime(
 
     # Allowlist = environment ids ∪ rows in ``admins``. Notifications go only
     # to those who did not mute themselves, which makes ``admins.notify`` real.
-    stored = dict(await admins.with_notify())
+    stored = {
+        admin_id: notify for admin_id, notify, _language in await admins.with_settings()
+    }
     admin_ids = set(settings.admin_ids) | set(stored)
     recipients = sorted(
         admin_id for admin_id in admin_ids if stored.get(admin_id, True)
@@ -260,6 +262,7 @@ async def run_combined(settings: Settings) -> None:
     delivery_task = asyncio.create_task(runtime.delivery.run(stop))
     worker_task = asyncio.create_task(runtime.run_worker(stop))
     try:
+        await prepare_polling(runtime.bot, settings)
         await dispatcher.start_polling(runtime.bot)
     finally:
         stop.set()
@@ -294,6 +297,7 @@ async def run_bot_only(settings: Settings) -> None:
     dispatcher = build_dispatcher(settings, runtime.deps, admin_ids=runtime.admin_ids)
     delivery_task = asyncio.create_task(runtime.delivery.run(stop))
     try:
+        await prepare_polling(runtime.bot, settings)
         await dispatcher.start_polling(runtime.bot)
     finally:
         stop.set()

@@ -530,6 +530,63 @@ async def test_admins(db):
     assert await repo.list() == [20]
 
 
+async def test_admin_language_is_null_until_the_admin_chooses_one(db):
+    """NULL means "no opinion": the bot falls back to Telegram's locale."""
+    repo = AdminsRepo(db)
+    await repo.add(10)
+
+    assert await repo.language(10) is None
+    assert await repo.language(999) is None
+
+    await repo.set_language(10, "en")
+    assert await repo.language(10) == "en"
+
+    await repo.set_language(10, "ru")
+    assert await repo.language(10) == "ru"
+
+
+async def test_migration_006_adds_language_to_a_database_with_admins(monkeypatch):
+    """An upgraded deployment already has admin rows; the column must not lose them."""
+    from uwp.db import database as database_module
+
+    real = database_module._load_migrations
+    monkeypatch.setattr(
+        database_module, "_load_migrations", lambda: [m for m in real() if m[0] <= 5]
+    )
+    db = await Database.in_memory()
+    await db.migrate()
+    await db.execute(
+        "INSERT INTO admins (telegram_id, added_at) VALUES (?, ?)",
+        (42, "2026-11-01T00:00:00Z"),
+    )
+
+    monkeypatch.setattr(database_module, "_load_migrations", real)
+    await db.migrate()
+    try:
+        row = await db.fetchone("SELECT telegram_id, language FROM admins")
+        assert row["telegram_id"] == 42
+        assert row["language"] is None
+
+        repo = AdminsRepo(db)
+        await repo.set_language(42, "en")
+        assert await repo.language(42) == "en"
+    finally:
+        await db.close()
+
+
+async def test_with_settings_carries_notify_and_language(db):
+    repo = AdminsRepo(db)
+    await repo.add(10)
+    await repo.add(20)
+    await repo.set_notify(20, False)
+    await repo.set_language(20, "en")
+
+    assert await repo.with_settings() == [
+        (10, True, None),
+        (20, False, "en"),
+    ]
+
+
 async def test_migration_005_drops_the_token_and_blanks_finished_passwords(
     monkeypatch,
 ):

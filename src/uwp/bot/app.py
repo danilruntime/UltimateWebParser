@@ -83,11 +83,24 @@ async def handle_update_error(event: Any) -> bool:
     return False
 
 
+async def prepare_polling(bot: Bot, settings: Settings) -> None:
+    """Drop updates queued while the bot was down, when configured.
+
+    ``start_polling`` has no ``drop_pending_updates`` of its own (it is a
+    ``getUpdates``/``deleteWebhook`` parameter), so the webhook deletion is what
+    discards the backlog. Nothing is called when the flag is off: then the
+    backlog is delivered, which is what an operator who turned it off wants.
+    """
+    if settings.drop_pending_updates:
+        await bot.delete_webhook(drop_pending_updates=True)
+
+
 async def run_bot(settings: Settings, deps: BotDeps) -> None:
     """Long-poll Telegram until stopped."""
     bot = make_bot(settings)
     dp = build_dispatcher(settings, deps)
     try:
+        await prepare_polling(bot, settings)
         await dp.start_polling(bot)
     finally:
         await bot.session.close()
