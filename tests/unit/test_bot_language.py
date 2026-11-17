@@ -729,3 +729,53 @@ async def test_the_language_command_opens_the_same_screen():
         if b.callback_data
     ]
     assert "🇬🇧 English ✓" in labels
+
+
+async def test_adding_a_site_stores_the_name_in_the_admins_language():
+    """The picker said “Steam — deals”, so the stored site must say it too.
+
+    The service is built once from ``settings.default_language``; only the
+    handler knows which admin is pressing. A service-level test that constructs
+    the service with ``lang=Lang.en`` cannot see that wiring, so this one feeds
+    the real ``site:add:`` callback with a service built for Russian.
+    """
+    from uwp.bot.handlers import sites as sites_handlers
+    from uwp.db.repo.jobs import JobsRepo
+    from uwp.db.repo.sites import SitesRepo
+    from uwp.parsers.registry import ParserRegistry
+    from uwp.scheduler import Scheduler
+    from uwp.services.sites import SiteService
+
+    db = await Database.in_memory()
+    await db.migrate()
+    try:
+        sites, jobs = SitesRepo(db), JobsRepo(db)
+        service = SiteService(
+            sites,
+            jobs,
+            Scheduler(sites, jobs),
+            registry=ParserRegistry.discover(),
+            lang=Lang.ru,
+        )
+
+        class _SiteDeps:
+            pass
+
+        deps = _SiteDeps()
+        deps.sites = service
+        deps.registry = service.registry
+
+        class _Settings:
+            tz = "UTC"
+
+        router = sites_handlers.build_router(_Settings(), deps)
+        handler = _callback_handler(router, "add_site")
+        callback = _Callback("site:add:steam_deals")
+
+        await handler(callback, lang=Lang.en)
+
+        (site,) = await sites.list()
+        assert site.name == "Steam — deals"
+    finally:
+        await db.close()
+

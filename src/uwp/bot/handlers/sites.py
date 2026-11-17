@@ -58,7 +58,7 @@ def build_router(settings, deps) -> Router:
     async def add_site(callback: CallbackQuery, lang: Lang) -> None:
         key = callback.data.split(":", 2)[2]
         try:
-            site = await sites_service.create(key)
+            site = await sites_service.create(key, lang=lang)
         except ValueError as exc:
             await callback.answer(str(exc), show_alert=True)
             return

@@ -47,15 +47,22 @@ class SiteService:
     async def get(self, site_id: int) -> Site | None:
         return await self.sites.get(site_id)
 
-    async def create(self, parser_key: str, name: str | None = None) -> Site:
-        """Create a disabled site; ``next_run_at`` stays unset until enabled."""
+    async def create(
+        self, parser_key: str, name: str | None = None, lang: Lang | None = None
+    ) -> Site:
+        """Create a disabled site; ``next_run_at`` stays unset until enabled.
+
+        ``lang`` is the reader's language: the bot has one admin in front of it
+        and passes theirs, while the CLI and the worker have only the
+        deployment's. The service's own language is the fallback.
+        """
         parser = self.registry.get(parser_key)
         if parser is None:
             raise ValueError(t(self.lang, "error.parser.unknown", parser=parser_key))
         # The site name is data, but a default taken from the parser is a label:
         # an English admin adding Steam should not get a Russian site name.
         # The seeded row keeps its own literal in ``seed.py``.
-        title = name or parser.title_for(self.lang)
+        title = name or parser.title_for(lang or self.lang)
         site = Site(
             slug=await self._unique_slug(slugify(title) or parser_key),
             name=title,

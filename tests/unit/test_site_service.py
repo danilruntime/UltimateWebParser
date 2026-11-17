@@ -130,3 +130,20 @@ async def test_the_unknown_parser_error_follows_the_deployment_language(env):
         await russian.create("nope")
     with pytest.raises(ValueError, match="unknown parser: nope"):
         await english.create("nope")
+
+
+async def test_create_can_name_the_site_in_the_admins_language(env):
+    """The bot's service is built for the deployment; the admin differs.
+
+    ``de6e5f0`` made ``self.lang`` decide the default name, which is only true
+    when the deployment and the admin agree. The handler passes its own
+    language, and the explicit argument has to win.
+    """
+    _db, sites, jobs = env
+    russian = SiteService(
+        sites, jobs, Scheduler(sites, jobs), registry=_registry(), lang=Lang.ru
+    )
+
+    site = await russian.create("steam_deals", lang=Lang.en)
+
+    assert site.name == "Steam — deals"
