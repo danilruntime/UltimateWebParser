@@ -6,10 +6,12 @@ English, that the resolved language reaches the handler, and that pressing a
 language button changes what the *next* update renders.
 """
 
+import logging
 import re
 from datetime import UTC, datetime
 
 import pytest
+from aiogram.dispatcher.event.bases import UNHANDLED
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import StorageKey
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -94,7 +96,9 @@ def test_the_english_reply_keyboard_is_english():
 
 def test_the_inline_menu_keeps_every_item_and_adds_the_language():
     callbacks = [
-        b.callback_data for row in keyboards.menu_kb(Lang.ru).inline_keyboard for b in row
+        b.callback_data
+        for row in keyboards.menu_kb(Lang.ru).inline_keyboard
+        for b in row
     ]
 
     assert callbacks == ["sites:list", "profiles:list", "proxies:list", "lang:screen"]
@@ -184,8 +188,13 @@ async def test_an_anonymous_update_gets_the_default_language():
     assert seen["lang"] is Lang.en
 
 
-async def test_a_failing_repository_does_not_eat_the_update():
-    """A locked database must still produce an answer, not a silent drop."""
+async def test_a_failing_repository_does_not_eat_the_update(caplog):
+    """A locked database must still produce an answer, not a silent drop.
+
+    Ruling: the fallback stays, but the failure must be visible. A warning that
+    nobody greps for looks like normal noise, so the lookup failure is logged at
+    ``ERROR`` with the admin id and what was attempted.
+    """
 
     async def resolve(uid):
         raise RuntimeError("database is locked")
@@ -193,9 +202,14 @@ async def test_a_failing_repository_does_not_eat_the_update():
     middleware = LanguageMiddleware(resolve, default=Lang.ru)
     handler, seen = _handler_recorder()
 
-    await middleware(handler, _Event(1, "en"), {})
+    with caplog.at_level(logging.ERROR, logger="uwp.bot.middleware"):
+        await middleware(handler, _Event(1, "en"), {})
 
     assert seen["lang"] is Lang.en
+    (record,) = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert record.levelno == logging.ERROR
+    assert "1" in record.getMessage()
+    assert "language" in record.getMessage()
 
 
 async def test_the_choice_survives_a_restart(tmp_path):
@@ -221,18 +235,53 @@ async def test_the_choice_survives_a_restart(tmp_path):
         await db.close()
 
 
-async def test_the_language_middleware_runs_after_the_gate():
-    """A stranger must be refused before any language lookup hits the database."""
-    dp = build_dispatcher(
-        load_settings({"UWP_ADMIN_IDS": "1"}), BotDeps(sites=object(), registry=object())
-    )
-    middlewares = list(dp.update.outer_middleware)
+async def test_the_language_middleware_runs_after_the_gate(monkeypatch):
+    """A stranger must be refused before any language lookup hits the database.
 
-    gate = next(i for i, mw in enumerate(middlewares) if isinstance(mw, AdminOnlyMiddleware))
-    language = next(
-        i for i, mw in enumerate(middlewares) if isinstance(mw, LanguageMiddleware)
+    Behavioural, not just registration order: the gate could be registered first
+    and still let the language middleware read the row (an outer middleware that
+    returns early is the only thing that prevents it), so the assertion is on the
+    resolver's call log.
+    """
+    from aiogram import Bot
+    from aiogram.types import Chat, Message, Update, User
+
+    calls: list[int] = []
+
+    class _RecordingAdmins:
+        async def language(self, telegram_id):
+            calls.append(telegram_id)
+            return "en"
+
+    async def fake_answer(self, text=None, **kw):
+        return True
+
+    monkeypatch.setattr(Message, "answer", fake_answer)
+    deps = BotDeps(
+        sites=_Service(),
+        registry=object(),
+        admins=_RecordingAdmins(),
     )
-    assert gate < language
+    dp = build_dispatcher(
+        load_settings({"UWP_ADMIN_IDS": "1"}), deps, admin_ids={1}
+    )
+    bot = Bot("123456:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+    update = Update(
+        update_id=1,
+        message=Message(
+            message_id=1,
+            date=0,
+            chat=Chat(id=999, type="private"),
+            from_user=User(id=999, is_bot=False, first_name="x", language_code="en"),
+            text="/help",
+        ),
+    )
+    try:
+        assert await dp.feed_update(bot, update) is UNHANDLED
+    finally:
+        await bot.session.close()
+
+    assert calls == []
 
 
 # --- the refusal is localised ---------------------------------------------
@@ -398,6 +447,31 @@ async def test_a_missing_admins_repo_answers_an_error_instead_of_crashing():
     assert kwargs["show_alert"] is True
 
 
+async def test_a_failing_write_answers_an_error_and_does_not_switch(caplog):
+    """A locked database must not leave the admin staring at a dead button."""
+
+    class _BrokenAdmins:
+        async def set_language(self, telegram_id, code):
+            raise RuntimeError("database is locked")
+
+        async def language(self, telegram_id):
+            return None
+
+    router = common.build_router(settings=None, deps=_Deps(admins=_BrokenAdmins()))
+    handler = _callback_handler(router, "set_language")
+    callback = _Callback("lang:set:en")
+
+    with caplog.at_level(logging.ERROR, logger="uwp.bot.handlers.common"):
+        await handler(callback, lang=Lang.ru)
+
+    text, kwargs = callback.answers[0]
+    assert text == texts.language_save_failed(Lang.ru)
+    assert kwargs["show_alert"] is True
+    # Nothing was re-rendered: the screen still shows the old language.
+    assert callback.message.edits == []
+    assert [record.levelno for record in caplog.records] == [logging.ERROR]
+
+
 # --- VNC card -------------------------------------------------------------
 
 
@@ -417,7 +491,7 @@ def test_the_vnc_session_card_is_localised():
 # --- end to end: the resolved language reaches a real handler --------------
 
 
-async def _feed_help(monkeypatch, admins, uid=111):
+async def _feed_help(monkeypatch, admins, uid=111, language_code=None):
     """Drive the real dispatcher with /help and return what the admin saw."""
     from aiogram import Bot
     from aiogram.types import Chat, Message, Update, User
@@ -440,7 +514,12 @@ async def _feed_help(monkeypatch, admins, uid=111):
             message_id=1,
             date=0,
             chat=Chat(id=uid, type="private"),
-            from_user=User(id=uid, is_bot=False, first_name="x"),
+            from_user=User(
+                id=uid,
+                is_bot=False,
+                first_name="x",
+                language_code=language_code,
+            ),
             text="/help",
         ),
     )
@@ -459,13 +538,29 @@ async def test_a_stored_english_choice_changes_a_real_handler_output(monkeypatch
 
 
 async def test_no_stored_choice_uses_the_clients_locale(monkeypatch):
+    """No stored row, but the Telegram client says ``en``: the client wins."""
+
     class _NoChoice:
         async def language(self, telegram_id):
             return None
 
-    # The Update carries no ``language_code`` in this helper, so the deployment
-    # default (ru) is what an admin with no opinion sees.
-    answered = await _feed_help(monkeypatch, _NoChoice())
+    answered = await _feed_help(monkeypatch, _NoChoice(), language_code="en")
+
+    assert answered == [texts.help(Lang.en)]
+
+
+async def test_no_stored_choice_and_no_known_locale_uses_the_default(monkeypatch):
+    """Neither a stored row nor a supported client locale: deployment default.
+
+    ``load_settings`` leaves ``default_language`` at ``ru``, so an admin whose
+    client speaks German sees Russian rather than an untranslated guess.
+    """
+
+    class _NoChoice:
+        async def language(self, telegram_id):
+            return None
+
+    answered = await _feed_help(monkeypatch, _NoChoice(), language_code="de")
 
     assert answered == [texts.help(Lang.ru)]
 
@@ -512,6 +607,60 @@ def _profile():
 
 def _proxy():
     return Proxy(name="X", scheme="http", host="proxy.example", port=8080)
+
+
+def test_the_delete_confirmation_has_its_own_yes_label():
+    """The confirm screen must not offer the same label as the button that opened it."""
+    site = _site()
+
+    openers = {
+        b.callback_data: b.text
+        for row in keyboards.site_card_kb(site, Lang.ru).inline_keyboard
+        for b in row
+    }
+    confirm = keyboards.confirm_delete_kb(site, Lang.ru).inline_keyboard[0][0]
+
+    assert openers["site:del:3"] == texts.delete(Lang.ru) == "🗑 Удалить"
+    assert confirm.text == texts.confirm_delete_yes(Lang.ru) == "🗑 Да, удалить"
+    assert confirm.callback_data == "site:delok:3"
+    assert confirm.text != openers["site:del:3"]
+
+
+def test_the_proxy_card_keeps_its_punctuation_out_of_the_catalogue():
+    """Separators live in the joining template, so a translator cannot lose them."""
+    proxy = Proxy(
+        name="X",
+        scheme="http",
+        host="proxy.example",
+        port=8080,
+        username="bob",
+        country="NL",
+    )
+
+    card = texts.proxy_card(Lang.en, proxy)
+
+    assert card == (
+        "<b>🌍 X</b>\n"
+        "<blockquote>http://proxy.example:8080, user bob\n"
+        "Country: NL</blockquote>"
+    )
+
+
+def test_the_proxy_card_keeps_the_russian_separators():
+    proxy = Proxy(
+        name="X",
+        scheme="http",
+        host="proxy.example",
+        port=8080,
+        username="bob",
+        country="NL",
+    )
+
+    assert texts.proxy_card(Lang.ru, proxy) == (
+        "<b>🌍 X</b>\n"
+        "<blockquote>http://proxy.example:8080, пользователь bob\n"
+        "Страна: NL</blockquote>"
+    )
 
 
 @pytest.mark.parametrize("lang", [Lang.ru, Lang.en])

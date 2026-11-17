@@ -72,6 +72,7 @@ CATALOG: dict[Lang, dict[str, str]] = {
         "bot.sites.confirm_delete": (
             "Удалить сайт «{name}»? Очередь прогонов и история будут стёрты."
         ),
+        "bot.sites.confirm_delete_yes": "🗑 Да, удалить",
         "bot.sites.empty": "Пока нет ни одного сайта. Нажмите «➕ Добавить сайт».",
         "bot.sites.next_line": "   следующий: {when}",
         "bot.sites.list_suffix": " — след. {when}",
@@ -168,8 +169,8 @@ CATALOG: dict[Lang, dict[str, str]] = {
         ),
         "bot.proxies.added": "✅ Прокси добавлен.",
         "bot.proxies.deleted": "🗑 Прокси удалён.",
-        "bot.proxies.card.user": ", пользователь {name}",
-        "bot.proxies.card.country": "\nСтрана: {country}",
+        "bot.proxies.card.user": "пользователь {name}",
+        "bot.proxies.card.country": "Страна: {country}",
         # --- run history --------------------------------------------------
         "bot.runs.header": "📜 Последние прогоны:",
         "bot.runs.empty": "Прогонов ещё не было.",
@@ -202,6 +203,9 @@ CATALOG: dict[Lang, dict[str, str]] = {
         "bot.language.unknown": "Неизвестный язык.",
         "bot.language.unavailable": (
             "Не удалось сохранить язык: хранилище недоступно."
+        ),
+        "bot.language.save_failed": (
+            "Не удалось сохранить язык: база не ответила. Попробуйте ещё раз."
         ),
         # --- notifications -------------------------------------------------
         "bot.delivery.caption_report": (
@@ -301,6 +305,7 @@ CATALOG: dict[Lang, dict[str, str]] = {
             "Delete the site “{name}”? Its run queue and history will be "
             "erased."
         ),
+        "bot.sites.confirm_delete_yes": "🗑 Yes, delete",
         "bot.sites.empty": "No sites yet. Press “➕ Add site”.",
         "bot.sites.next_line": "   next: {when}",
         "bot.sites.list_suffix": " — next {when}",
@@ -393,8 +398,8 @@ CATALOG: dict[Lang, dict[str, str]] = {
         ),
         "bot.proxies.added": "✅ Proxy added.",
         "bot.proxies.deleted": "🗑 Proxy deleted.",
-        "bot.proxies.card.user": ", user {name}",
-        "bot.proxies.card.country": "\nCountry: {country}",
+        "bot.proxies.card.user": "user {name}",
+        "bot.proxies.card.country": "Country: {country}",
         # --- run history --------------------------------------------------
         "bot.runs.header": "📜 Recent runs:",
         "bot.runs.empty": "There have been no runs yet.",
@@ -425,6 +430,10 @@ CATALOG: dict[Lang, dict[str, str]] = {
         "bot.language.unknown": "Unknown language.",
         "bot.language.unavailable": (
             "Could not save the language: the storage is unavailable."
+        ),
+        "bot.language.save_failed": (
+            "Could not save the language: the database did not answer. "
+            "Try again."
         ),
         # --- notifications -------------------------------------------------
         "bot.delivery.caption_report": (

@@ -108,8 +108,14 @@ class LanguageMiddleware(BaseMiddleware):
             stored = await self.resolve(user.id)
         except Exception:
             # A broken row must not eat the update: fall back like an unset
-            # choice and let the handler answer in some language.
-            log.warning("cannot read the language of %s", user.id, exc_info=True)
+            # choice and let the handler answer in some language. It is logged
+            # at ERROR, not WARNING — a locked or dropped table is an outage,
+            # and an operator greps for errors, not for a line among the noise.
+            log.exception(
+                "cannot read the stored language of admin %s; "
+                "falling back to the client locale",
+                user.id,
+            )
             stored = None
         return (
             normalize(stored)

@@ -107,12 +107,17 @@ def vnc_session_kb(session_id: int, lang) -> InlineKeyboardMarkup:
 
 
 def confirm_delete_kb(site, lang) -> InlineKeyboardMarkup:
-    """Destructive actions ask once more before they run."""
+    """Destructive actions ask once more before they run.
+
+    The affirmative must not reuse the card's opener label: two identical
+    buttons on two screens make the second tap feel like the first did nothing.
+    """
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=texts.delete(lang), callback_data=f"site:delok:{site.id}"
+                    text=texts.confirm_delete_yes(lang),
+                    callback_data=f"site:delok:{site.id}",
                 )
             ],
             [

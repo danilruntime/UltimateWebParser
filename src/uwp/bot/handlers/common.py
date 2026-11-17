@@ -1,5 +1,7 @@
 """Handlers shared by every screen: /start, /help, /id, /sites, /language."""
 
+import logging
+
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -9,6 +11,8 @@ from uwp.bot import keyboards, texts
 from uwp.bot.handlers import profiles
 from uwp.i18n import Lang, normalize
 from uwp.timeutil import format_local
+
+log = logging.getLogger(__name__)
 
 
 def build_router(settings, deps) -> Router:
@@ -126,7 +130,18 @@ def build_router(settings, deps) -> Router:
         if admins is None:
             await callback.answer(texts.language_unavailable(lang), show_alert=True)
             return
-        await admins.set_language(callback.from_user.id, code.value)
+        try:
+            await admins.set_language(callback.from_user.id, code.value)
+        except Exception:
+            # A locked database must not look like a dead button: the admin
+            # taps, nothing happens, and the screen still shows the old tongue.
+            log.exception(
+                "cannot save the interface language of %s", callback.from_user.id
+            )
+            await callback.answer(
+                texts.language_save_failed(lang), show_alert=True
+            )
+            return
         # Re-render in the *new* language, then resend the reply keyboard: the
         # old one stays under the chat input until a new keyboard replaces it,
         # and its labels are the filter the menu handlers match on.

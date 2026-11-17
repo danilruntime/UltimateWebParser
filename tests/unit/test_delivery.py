@@ -487,8 +487,10 @@ async def test_a_network_error_is_still_retried(env):
 async def test_each_admin_gets_the_message_in_their_own_language(env):
     """Two admins, one queue: the same event must not pick one language for both.
 
-    Measured: a Russian admin and an English admin shared the ``admins.language``
-    check, and whichever the loop reached first decided the wording.
+    Pins the risk of resolving the language once per *event*: both admins are
+    recipients of one queued ``vnc_stopped``, so a single lookup at the top of
+    ``tick()`` would word both messages in whichever language it happened to
+    read first.
     """
     settings, bus, _tmp_path = env
     bot = FakeBot()

@@ -162,6 +162,11 @@ def confirm_delete(lang, name) -> str:
     return t(lang, "bot.sites.confirm_delete", name=esc(name))
 
 
+def confirm_delete_yes(lang) -> str:
+    """The affirmative on the confirmation screen, not the card's opener."""
+    return t(lang, "bot.sites.confirm_delete_yes")
+
+
 def no_sites(lang) -> str:
     return t(lang, "bot.sites.empty")
 
@@ -495,12 +500,12 @@ def proxy_deleted(lang) -> str:
 
 def proxy_card(lang, proxy) -> str:
     auth = (
-        t(lang, "bot.proxies.card.user", name=esc(proxy.username))
+        ", " + t(lang, "bot.proxies.card.user", name=esc(proxy.username))
         if proxy.username
         else ""
     )
     country = (
-        t(lang, "bot.proxies.card.country", country=esc(proxy.country))
+        "\n" + t(lang, "bot.proxies.card.country", country=esc(proxy.country))
         if proxy.country
         else ""
     )
@@ -604,3 +609,8 @@ def language_unknown(lang) -> str:
 
 def language_unavailable(lang) -> str:
     return t(lang, "bot.language.unavailable")
+
+
+def language_save_failed(lang) -> str:
+    """The repo existed but the write raised: storage failure, not wiring."""
+    return t(lang, "bot.language.save_failed")
