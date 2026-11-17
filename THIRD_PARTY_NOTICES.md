@@ -125,7 +125,13 @@ and that a full licence text is attached for an Apache-2.0 derivative.
 
 ## Appendix A: Apache License 2.0
 
-
+> **The copyright placeholder in the text below is quoted, not forgotten.**
+> The line with the bracketed year and owner is the literal boilerplate of
+> Appendix A of the Apache License 2.0, reproduced as part of the licence
+> quotation for `docker/seccomp-uwp.json` (Copyright Docker, Inc.). It is not
+> this project's copyright line and must not be filled in: doing so would
+> misquote the licence the image ships. The project's own copyright line is in
+> [`LICENSE`](LICENSE).
 
                                  Apache License
                            Version 2.0, January 2004
