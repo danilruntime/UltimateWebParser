@@ -2,12 +2,14 @@
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 
+from uwp.bot import texts
 from uwp.bot.texts import esc as _esc
 from uwp.config import Settings
 from uwp.domain import Event
@@ -20,6 +22,7 @@ from uwp.events import (
     VNC_STOPPED,
     EventBus,
 )
+from uwp.i18n import DEFAULT_LANG, Lang, normalize, t
 from uwp.timeutil import utcnow
 
 log = logging.getLogger(__name__)
@@ -38,12 +41,19 @@ RETRY_MAX_SECONDS = 60
 
 _KNOWN = {RUN_FINISHED, RUN_FAILED, SITE_PROBLEM, VNC_READY, VNC_STOPPED, VNC_FAILED}
 
+LanguageFor = Callable[[int], Awaitable[str | None]]
+
 
 class EventDelivery:
     """Polls the event queue and turns each event into one message per admin.
 
     A failed send is logged and left pending, so the next tick retries it: a
     Telegram outage must never lose a report.
+
+    Every message is rendered in *its recipient's* language, resolved once per
+    (admin, event) through ``language_for``: two admins with different choices
+    share the queue, and one admin switching language must not have to restart
+    the process. One indexed SELECT per message is cheap next to a Bot API call.
     """
 
     def __init__(
@@ -52,6 +62,7 @@ class EventDelivery:
         bus: EventBus,
         settings: Settings,
         recipients: list[int] | None = None,
+        language_for: LanguageFor | None = None,
     ) -> None:
         self.bot = bot
         self.bus = bus
@@ -60,6 +71,7 @@ class EventDelivery:
         self.recipients = list(
             recipients if recipients is not None else settings.admin_ids
         )
+        self.language_for = language_for
         self._last_purge: datetime | None = None
         # (admin_id, event_id) -> (failures so far, earliest next attempt). In
         # memory on purpose: after a restart one immediate attempt is right.
@@ -136,48 +148,75 @@ class EventDelivery:
         delay = min(RETRY_BASE_SECONDS * 2 ** (failures - 1), RETRY_MAX_SECONDS)
         self._retry[key] = (failures, now + timedelta(seconds=delay))
 
+    async def _language(self, admin_id: int) -> Lang:
+        """The recipient's language, read each time so a switch is live."""
+        if self.language_for is not None:
+            try:
+                resolved = normalize(await self.language_for(admin_id))
+            except Exception:
+                # A DB hiccup must not silence a report: the fallback below is
+                # the same language an admin with no choice would get.
+                log.warning(
+                    "cannot read the language of %s", admin_id, exc_info=True
+                )
+                resolved = None
+            if resolved is not None:
+                return resolved
+        return normalize(self.settings.default_language) or DEFAULT_LANG
+
     async def _deliver(self, admin_id: int, event: Event) -> None:
         if event.kind not in _KNOWN:
             log.warning("dropping event %s of unknown kind %r", event.id, event.kind)
             await self._drop(event)
             return
+        lang = await self._language(admin_id)
         if event.kind == RUN_FINISHED:
-            await self._send_report(admin_id, event)
+            await self._send_report(admin_id, event, lang)
             return
         if event.kind == RUN_FAILED:
-            await self._send_failure(admin_id, event)
+            await self._send_failure(admin_id, event, lang)
             return
-        await self.bot.send_message(admin_id, _text_for(event))
+        await self.bot.send_message(admin_id, _text_for(event, lang))
 
     async def _drop(self, event: Event) -> None:
         for admin_id in self.recipients:
             await self.bus.mark_delivered(event.id, admin_id)
 
-    async def _send_report(self, admin_id: int, event: Event) -> None:
+    async def _send_report(self, admin_id: int, event: Event, lang: Lang) -> None:
         payload = event.payload or {}
         path = payload.get("report_path")
-        caption = _caption_for(event)
+        caption = _caption_for(event, lang)
         if path and Path(path).is_file():
             await self.bot.send_document(admin_id, FSInputFile(path), caption=caption)
             return
         if payload.get("report_status") == "failed":
             # The run was fine but the export was not: say so, do not pretend.
-            reason = _esc(payload.get("report_error") or "неизвестная ошибка")
+            reason = _esc(payload.get("report_error") or _unknown_error(lang))
             await self.bot.send_message(
-                admin_id, _limit(f"{caption}\n⚠️ Отчёт не создан: {reason}")
+                admin_id,
+                _limit(
+                    caption
+                    + "\n"
+                    + t(
+                        lang,
+                        "bot.delivery.report_missing_reason",
+                        reason=reason,
+                    )
+                ),
             )
             return
         log.warning("run %s has no report file (%s)", event.run_id, path)
         await self.bot.send_message(admin_id, caption)
 
-    async def _send_failure(self, admin_id: int, event: Event) -> None:
+    async def _send_failure(self, admin_id: int, event: Event, lang: Lang) -> None:
         """Text plus the run's screenshot, with action buttons when possible."""
         payload = event.payload or {}
         buttons = []
         if payload.get("site_id") is not None:
             buttons.append(
                 InlineKeyboardButton(
-                    text="🔁 Повторить", callback_data=f"run:retry:{payload['site_id']}"
+                    text=texts.retry(lang),
+                    callback_data=f"run:retry:{payload['site_id']}",
                 )
             )
         # A login wall is fixed in the profile, not by retrying blindly.
@@ -185,7 +224,7 @@ class EventDelivery:
             buttons.insert(
                 0,
                 InlineKeyboardButton(
-                    text="🖥 Войти в профиль",
+                    text=texts.vnc_login_button(lang),
                     callback_data=f"profile:login:{payload['profile_id']}",
                 ),
             )
@@ -196,17 +235,19 @@ class EventDelivery:
                 await self.bot.send_photo(
                     admin_id,
                     FSInputFile(screenshot),
-                    caption=_caption_for(event),
+                    caption=_caption_for(event, lang),
                     reply_markup=markup,
                 )
                 # The caption is short, so the full error follows as text.
                 await self.bot.send_message(
-                    admin_id, _text_for(event), reply_markup=markup
+                    admin_id, _text_for(event, lang), reply_markup=markup
                 )
                 return
             except Exception:
                 log.exception("sending the screenshot of event %s failed", event.id)
-        await self.bot.send_message(admin_id, _text_for(event), reply_markup=markup)
+        await self.bot.send_message(
+            admin_id, _text_for(event, lang), reply_markup=markup
+        )
 
 
 def _is_permanent(exc: Exception) -> bool:
@@ -236,23 +277,50 @@ def _is_permanent(exc: Exception) -> bool:
     return isinstance(exc, (TelegramForbiddenError, TelegramNotFound))
 
 
-def _caption_for(event: Event) -> str:
+def _unknown_error(lang: Lang) -> str:
+    return t(lang, "bot.delivery.unknown_error")
+
+
+def _site_name(payload: dict, lang: Lang) -> str:
+    return (
+        payload.get("site")
+        or payload.get("site_name")
+        or t(lang, "bot.delivery.site_placeholder")
+    )
+
+
+def _caption_for(event: Event, lang: Lang = DEFAULT_LANG) -> str:
     payload = event.payload or {}
-    site = payload.get("site") or payload.get("site_name") or "сайт"
+    site = _esc(_site_name(payload, lang))
     if event.kind == RUN_FINISHED:
         rows = payload.get("rows", 0)
         new = payload.get("new", 0)
-        head = "⚠️ Прогон частичный" if payload.get("status") == "partial" else "📊"
-        text = f"{head} {_esc(site)}\nСтрок: {rows}, новых: {new}"
+        head = (
+            t(lang, "bot.delivery.partial_head")
+            if payload.get("status") == "partial"
+            else t(lang, "bot.delivery.report_head")
+        )
+        text = t(
+            lang,
+            "bot.delivery.caption_report",
+            head=head,
+            site=site,
+            rows=rows,
+            new=new,
+        )
         if payload.get("notes"):
             text += f"\n{_esc(payload['notes'])}"
         if payload.get("report_status") == "failed":
-            text += "\n⚠️ Отчёт не создан"
+            text += "\n" + t(lang, "bot.delivery.report_missing")
         return _limit(text, CAPTION_LENGTH)
     if event.kind == RUN_FAILED:
-        reason = _esc(payload.get("text") or payload.get("error") or "неизвестная ошибка")
-        return _limit(f"❌ {_esc(site)}: {reason}")
-    return f"{_esc(site)}"
+        reason = _esc(
+            payload.get("text") or payload.get("error") or _unknown_error(lang)
+        )
+        return _limit(
+            t(lang, "bot.delivery.caption_failed", site=site, reason=reason)
+        )
+    return site
 
 
 def _limit(text: str, limit: int = MAX_MESSAGE_LENGTH) -> str:
@@ -272,28 +340,56 @@ def _limit(text: str, limit: int = MAX_MESSAGE_LENGTH) -> str:
     return cut + "…"
 
 
-def _text_for(event: Event) -> str:
+def _text_for(event: Event, lang: Lang = DEFAULT_LANG) -> str:
     payload = event.payload or {}
     site = payload.get("site") or payload.get("site_name")
     if event.kind == RUN_FAILED:
-        reason = _esc(payload.get("text") or payload.get("error") or "неизвестная ошибка")
-        return _limit(f"❌ Прогон {_esc('«' + site + '» ') if site else ''}не удался: {reason}")
-    if event.kind == SITE_PROBLEM:
+        reason = _esc(
+            payload.get("text") or payload.get("error") or _unknown_error(lang)
+        )
+        if site:
+            return _limit(
+                t(
+                    lang,
+                    "bot.delivery.run_failed_site",
+                    site=_esc(site),
+                    reason=reason,
+                )
+            )
         return _limit(
-            f"⚠️ Проблема с сайтом{_esc(' «' + site + '»') if site else ''}: "
-            + _esc(payload.get("text") or payload.get("error") or "—")
+            t(lang, "bot.delivery.run_failed", reason=reason)
+        )
+    if event.kind == SITE_PROBLEM:
+        detail = _esc(payload.get("text") or payload.get("error") or "—")
+        if site:
+            return _limit(
+                t(
+                    lang,
+                    "bot.delivery.site_problem_named",
+                    site=_esc(site),
+                    text=detail,
+                )
+            )
+        return _limit(
+            t(lang, "bot.delivery.site_problem", text=detail)
         )
     if event.kind == VNC_READY:
         return _limit(
-            "🖥 Вход на сайт готов\n"
-            f"Ссылка: {_esc(payload.get('url', '—'))}\n"
-            f"Пароль: {_esc(payload.get('password', '—'))}"
+            t(
+                lang,
+                "bot.delivery.vnc_ready",
+                url=_esc(payload.get("url", "—")),
+                password=_esc(payload.get("password", "—")),
+            )
         )
     if event.kind == VNC_STOPPED:
-        return "🖥 Сессия входа завершена."
+        return t(lang, "bot.delivery.vnc_stopped")
     if event.kind == VNC_FAILED:
         return _limit(
-            "🖥 Не удалось запустить сессию входа: "
-            + _esc(payload.get("error") or "—")
+            t(
+                lang,
+                "bot.delivery.vnc_failed",
+                error=_esc(payload.get("error") or "—"),
+            )
         )
-    return f"Уведомление: {event.kind}"
+    return t(lang, "bot.delivery.unknown_event", kind=_esc(event.kind))

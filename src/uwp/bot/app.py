@@ -10,8 +10,9 @@ from aiogram.enums import ParseMode
 
 from uwp.bot.handlers import common, profiles, sites
 from uwp.bot.handlers import settings as settings_handlers
-from uwp.bot.middleware import AdminOnlyMiddleware
+from uwp.bot.middleware import AdminOnlyMiddleware, LanguageMiddleware
 from uwp.config import Settings
+from uwp.i18n import DEFAULT_LANG, Lang, normalize
 
 log = logging.getLogger(__name__)
 
@@ -28,23 +29,37 @@ class BotDeps:
     proxies: Any = None
     vnc: Any = None
     runs: Any = None
+    # The language screen writes through this repo. Optional so a test can build
+    # ``BotDeps`` by hand without a database; the handler then answers "storage
+    # unavailable" instead of crashing.
+    admins: Any = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 
 def build_dispatcher(
     settings: Settings, deps: BotDeps, admin_ids: set[int] | None = None
 ) -> Dispatcher:
-    """Register the admin gate and every router, in a stable order.
+    """Register the admin gate, the language resolver and every router.
 
     ``admin_ids`` defaults to the environment list; the runtime passes the union
     with the ``admins`` table so rows created by ``uwp init`` also work.
+
+    The gate is registered before the language middleware on purpose: a stranger
+    is refused without a database read, and the refusal uses the client's own
+    locale (see ``AdminOnlyMiddleware``).
     """
     dp = Dispatcher()
-    gate = AdminOnlyMiddleware(set(admin_ids or ()) or set(settings.admin_ids))
+    default = _default_lang(settings)
+    gate = AdminOnlyMiddleware(
+        set(admin_ids or ()) or set(settings.admin_ids), default=default
+    )
     # Outer middleware on the update itself: runs once before handler
     # resolution, so a non-admin gets exactly one refusal, and every update
     # type is gated (message, callback, edited message, inline query, ...).
     dp.update.outer_middleware(gate)
+    dp.update.outer_middleware(
+        LanguageMiddleware(_language_resolver(deps), default=default)
+    )
 
     dp.include_router(common.build_router(settings, deps))
     dp.include_router(sites.build_router(settings, deps))
@@ -53,6 +68,24 @@ def build_dispatcher(
     dp.include_router(common.build_fallback_router())
     dp.errors.register(handle_update_error)
     return dp
+
+
+def _default_lang(settings: Settings) -> Lang:
+    """The deployment language; a hand-built ``Settings`` still carries it."""
+    return normalize(getattr(settings, "default_language", None)) or DEFAULT_LANG
+
+
+def _language_resolver(deps: BotDeps):
+    """``AdminsRepo.language`` when the database is wired, else "no opinion"."""
+
+    async def resolve(telegram_id: int) -> str | None:
+        admins = deps.admins
+        reader = getattr(admins, "language", None)
+        if reader is None:
+            return None
+        return await reader(telegram_id)
+
+    return resolve
 
 
 async def handle_update_error(event: Any) -> bool:

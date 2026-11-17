@@ -130,22 +130,26 @@ def test_quoted_bot_labels_match_the_code():
 
     Measured: the first translation of this file translated the labels, and the
     documented buttons no longer existed anywhere in the bot.
+
+    Until the README rewrite (Task 5) both files quote the Russian labels, so
+    this resolves the Russian side of the code and checks it twice. Task 5 flips
+    the English half to ``t(Lang.en, ...)``.
     """
-    from uwp.bot.keyboards import BTN_HELP, BTN_PROFILES, BTN_PROXIES, BTN_SITES
-    from uwp.bot.texts import ADD_SITE, DELETE, RUN_NOW, SETTINGS, TOGGLE_OFF, TOGGLE_ON
+    from uwp.bot import keyboards, texts
+    from uwp.i18n import Lang
     from uwp.ods import NEW_COLUMN_TITLE
 
     labels = [
-        BTN_SITES,
-        BTN_PROFILES,
-        BTN_PROXIES,
-        BTN_HELP,
-        ADD_SITE,
-        DELETE,
-        RUN_NOW,
-        SETTINGS,
-        TOGGLE_OFF,
-        TOGGLE_ON,
+        keyboards.BTN_SITES[Lang.ru],
+        keyboards.BTN_PROFILES[Lang.ru],
+        keyboards.BTN_PROXIES[Lang.ru],
+        keyboards.BTN_HELP[Lang.ru],
+        texts.add_site(Lang.ru),
+        texts.delete(Lang.ru),
+        texts.run_now(Lang.ru),
+        texts.settings(Lang.ru),
+        texts.toggle_off(Lang.ru),
+        texts.toggle_on(Lang.ru),
         NEW_COLUMN_TITLE,
     ]
     for name in ("README.md", "README.ru.md"):

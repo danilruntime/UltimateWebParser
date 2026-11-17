@@ -6,6 +6,7 @@ from uwp.bot.keyboards import vnc_session_kb
 from uwp.config import load_settings
 from uwp.db.database import Database
 from uwp.db.repo.profiles import ProfilesRepo
+from uwp.i18n import Lang
 from uwp.profiles import ProfileManager
 from uwp.services.profiles import ProfilesService
 
@@ -51,7 +52,11 @@ async def test_profiles_kb_has_new_and_back(env):
     _repo, svc, _tmp = env
     await svc.create("A")
 
-    flat = [b.callback_data for row in profiles_kb(await svc.list()).inline_keyboard for b in row]
+    flat = [
+        b.callback_data
+        for row in profiles_kb(await svc.list(), Lang.ru).inline_keyboard
+        for b in row
+    ]
 
     assert flat[-2:] == ["profile:new", "menu:main"]
     assert flat[0].startswith("profile:")
@@ -61,7 +66,11 @@ async def test_profile_card_offers_login_and_delete(env):
     _repo, svc, _tmp = env
     profile = await svc.create("A")
 
-    flat = [b.callback_data for row in profile_card_kb(profile).inline_keyboard for b in row]
+    flat = [
+        b.callback_data
+        for row in profile_card_kb(profile, Lang.ru).inline_keyboard
+        for b in row
+    ]
 
     assert f"profile:login:{profile.id}" in flat
     assert f"profile:del:{profile.id}" in flat
@@ -90,32 +99,39 @@ async def test_release_after_login_frees_a_profile_waiting_for_login(env):
 
 
 async def test_proxies_kb_and_vnc_kb():
-    flat = [b.callback_data for row in proxies_kb([]).inline_keyboard for b in row]
+    flat = [
+        b.callback_data for row in proxies_kb([], Lang.ru).inline_keyboard for b in row
+    ]
     assert flat == ["proxy:new", "menu:main"]
 
-    flat = [b.callback_data for row in vnc_session_kb(9).inline_keyboard for b in row]
+    flat = [
+        b.callback_data
+        for row in vnc_session_kb(9, Lang.ru).inline_keyboard
+        for b in row
+    ]
     assert flat == ["vnc:done:9", "vnc:extend:9"]
 
 
-def test_reply_menu_kb_is_a_two_by_two_keyboard():
+def test_reply_menu_kb_has_a_language_row():
     from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 
     from uwp.bot import keyboards
 
-    # The copy is binding, so pin the constants to literals: a mistyped
-    # constant (Latin C, wrong emoji) has to fail here rather than sail through.
+    # The copy is binding, so pin the labels to literals: a mistyped constant
+    # (Latin C, wrong emoji) has to fail here rather than sail through. Only the
+    # Russian side is pinned — the English copy lives in test_bot_language.py.
     assert [
-        keyboards.BTN_SITES,
-        keyboards.BTN_PROFILES,
-        keyboards.BTN_PROXIES,
-        keyboards.BTN_HELP,
+        keyboards.BTN_SITES[Lang.ru],
+        keyboards.BTN_PROFILES[Lang.ru],
+        keyboards.BTN_PROXIES[Lang.ru],
+        keyboards.BTN_HELP[Lang.ru],
     ] == ["🌐 Сайты", "👤 Профили", "🌍 Прокси", "❓ Помощь"]
 
-    kb = keyboards.reply_menu_kb()
+    kb = keyboards.reply_menu_kb(Lang.ru)
 
     assert isinstance(kb, ReplyKeyboardMarkup)
-    assert [len(row) for row in kb.keyboard] == [2, 2]
+    assert [len(row) for row in kb.keyboard] == [2, 2, 1]
     labels = [b.text for row in kb.keyboard for b in row]
-    assert labels == ["🌐 Сайты", "👤 Профили", "🌍 Прокси", "❓ Помощь"]
+    assert labels == ["🌐 Сайты", "👤 Профили", "🌍 Прокси", "❓ Помощь", "🌐 Язык"]
     assert all(isinstance(b, KeyboardButton) for row in kb.keyboard for b in row)
     assert kb.resize_keyboard is True

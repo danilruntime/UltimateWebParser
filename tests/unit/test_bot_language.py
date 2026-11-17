@@ -1,0 +1,582 @@
+"""The bot speaks both languages: resolution, the screen and the switch.
+
+The catalogue parity test in ``test_i18n.py`` proves that keys and placeholders
+line up. These tests prove the other half: that the English side is actually
+English, that the resolved language reaches the handler, and that pressing a
+language button changes what the *next* update renders.
+"""
+
+import re
+from datetime import UTC, datetime
+
+import pytest
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.base import StorageKey
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import User
+
+from uwp.bot import keyboards, texts
+from uwp.bot.app import BotDeps, build_dispatcher
+from uwp.bot.handlers import common
+from uwp.bot.middleware import AdminOnlyMiddleware, LanguageMiddleware
+from uwp.config import load_settings
+from uwp.db.database import Database
+from uwp.db.repo.admins import AdminsRepo
+from uwp.domain import Profile, Proxy, Site
+from uwp.i18n import Lang, catalog_keys, normalize
+from uwp.services.vnc import VncInfo
+
+CYRILLIC = re.compile(r"[А-Яа-яЁё]")
+
+
+# --- the English half is English ------------------------------------------
+
+
+def test_no_english_bot_string_contains_cyrillic():
+    """Catches a copy-pasted Russian value in the ``Lang.en`` half.
+
+    A missing key already raises; a value pasted from the other column renders
+    happily and only a human notices, so the check has to be mechanical. The one
+    allowed exception is the Russian language's own name: a language menu is
+    written in the language it offers, in every locale.
+    """
+    with_cyrillic = {
+        key for key in catalog_keys()[Lang.en] if CYRILLIC.search(_english(key))
+    }
+
+    assert with_cyrillic == {"bot.language.ru"}
+
+
+def _english(key: str) -> str:
+    from uwp.i18n import t
+
+    return t(Lang.en, key)
+
+
+def test_the_language_names_are_written_in_their_own_language():
+    """An English screen saying «Немецкий» would not help an English reader."""
+    assert texts.language_option(Lang.en, Lang.ru) == "🇷🇺 Русский"
+    assert texts.language_option(Lang.en, Lang.en) == "🇬🇧 English"
+    assert CYRILLIC.search(texts.language_screen(Lang.en)) is None
+
+
+def test_every_reply_keyboard_label_differs_between_languages():
+    """A copied label would make both keyboards look the same and hide a bug."""
+    for label in (keyboards.BTN_SITES, keyboards.BTN_PROFILES,
+                  keyboards.BTN_PROXIES, keyboards.BTN_HELP):
+        assert set(label) == {Lang.ru, Lang.en}
+        assert label[Lang.ru] != label[Lang.en]
+
+
+# --- the reply keyboard and the menu --------------------------------------
+
+
+def test_the_reply_keyboard_has_a_language_row():
+    kb = keyboards.reply_menu_kb(Lang.ru)
+
+    assert [len(row) for row in kb.keyboard] == [2, 2, 1]
+    assert kb.keyboard[-1][0].text == keyboards.BTN_LANGUAGE[Lang.ru]
+    assert kb.keyboard[-1][0].text == "🌐 Язык"
+    assert kb.keyboard[0][0].text == "🌐 Сайты"
+
+
+def test_the_english_reply_keyboard_is_english():
+    labels = [b.text for row in keyboards.reply_menu_kb(Lang.en).keyboard for b in row]
+
+    assert labels == [
+        "🌐 Sites",
+        "👤 Profiles",
+        "🌍 Proxies",
+        "❓ Help",
+        "🌐 Language",
+    ]
+
+
+def test_the_inline_menu_keeps_every_item_and_adds_the_language():
+    callbacks = [
+        b.callback_data for row in keyboards.menu_kb(Lang.ru).inline_keyboard for b in row
+    ]
+
+    assert callbacks == ["sites:list", "profiles:list", "proxies:list", "lang:screen"]
+
+
+def test_the_language_screen_ticks_the_current_one():
+    rows = keyboards.language_kb(Lang.ru).inline_keyboard
+    labels = {b.callback_data: b.text for row in rows for b in row if b.callback_data}
+
+    assert labels["lang:set:ru"].endswith("✓")
+    assert not labels["lang:set:en"].endswith("✓")
+    assert labels["lang:set:en"].startswith("🇬🇧")
+
+
+# --- the middleware --------------------------------------------------------
+
+
+class _Event:
+    """A message-shaped event: a sender plus the one method the gate calls."""
+
+    def __init__(self, uid=None, language_code=None):
+        if uid is not None:
+            self.from_user = User(
+                id=uid, is_bot=False, first_name="x", language_code=language_code
+            )
+        self.answers = []
+
+    async def answer(self, text=None, **kw):
+        self.answers.append(text)
+
+
+def _handler_recorder():
+    seen = {}
+
+    async def handler(event, data):
+        seen.update(data)
+        return "ran"
+
+    return handler, seen
+
+
+async def test_the_stored_choice_wins_over_the_telegram_locale():
+    async def resolve(uid):
+        return "en"
+
+    middleware = LanguageMiddleware(resolve, default=Lang.ru)
+    handler, seen = _handler_recorder()
+
+    await middleware(handler, _Event(1, "ru"), {})
+
+    assert seen["lang"] is Lang.en
+
+
+async def test_a_telegram_locale_is_used_when_no_choice_is_stored():
+    async def resolve(uid):
+        return None
+
+    middleware = LanguageMiddleware(resolve, default=Lang.ru)
+    handler, seen = _handler_recorder()
+
+    await middleware(handler, _Event(1, "en-GB"), {})
+
+    assert seen["lang"] is Lang.en
+
+
+async def test_an_unsupported_locale_falls_back_to_the_default():
+    async def resolve(uid):
+        return None
+
+    middleware = LanguageMiddleware(resolve, default=Lang.ru)
+    handler, seen = _handler_recorder()
+
+    await middleware(handler, _Event(1, "de"), {})
+
+    assert seen["lang"] is Lang.ru
+
+
+async def test_an_anonymous_update_gets_the_default_language():
+    async def resolve(uid):
+        raise AssertionError("a sender-less update must not be resolved")
+
+    middleware = LanguageMiddleware(resolve, default=Lang.en)
+    handler, seen = _handler_recorder()
+
+    await middleware(handler, object(), {})
+
+    assert seen["lang"] is Lang.en
+
+
+async def test_a_failing_repository_does_not_eat_the_update():
+    """A locked database must still produce an answer, not a silent drop."""
+
+    async def resolve(uid):
+        raise RuntimeError("database is locked")
+
+    middleware = LanguageMiddleware(resolve, default=Lang.ru)
+    handler, seen = _handler_recorder()
+
+    await middleware(handler, _Event(1, "en"), {})
+
+    assert seen["lang"] is Lang.en
+
+
+async def test_the_choice_survives_a_restart(tmp_path):
+    """A fresh resolver, reading the same database, returns the stored ``en``.
+
+    This is the whole point of ``admins.language``: the Telegram client's
+    ``language_code`` is not in an update forever, and a restart must not reset
+    an admin to Russian.
+    """
+    db = await Database.in_memory()
+    await db.migrate()
+    repo = AdminsRepo(db)
+    try:
+        await repo.set_language(777, "en")
+
+        # Nothing but the stored choice: no language_code on the event.
+        middleware = LanguageMiddleware(repo.language, default=Lang.ru)
+        handler, seen = _handler_recorder()
+        await middleware(handler, _Event(777), {})
+
+        assert seen["lang"] is Lang.en
+    finally:
+        await db.close()
+
+
+async def test_the_language_middleware_runs_after_the_gate():
+    """A stranger must be refused before any language lookup hits the database."""
+    dp = build_dispatcher(
+        load_settings({"UWP_ADMIN_IDS": "1"}), BotDeps(sites=object(), registry=object())
+    )
+    middlewares = list(dp.update.outer_middleware)
+
+    gate = next(i for i, mw in enumerate(middlewares) if isinstance(mw, AdminOnlyMiddleware))
+    language = next(
+        i for i, mw in enumerate(middlewares) if isinstance(mw, LanguageMiddleware)
+    )
+    assert gate < language
+
+
+# --- the refusal is localised ---------------------------------------------
+
+
+async def test_a_strangers_refusal_follows_their_own_locale():
+    middleware = AdminOnlyMiddleware({111}, default=Lang.ru)
+    event = _Event(999, "en")
+
+    await middleware(lambda e, d: None, event, {})
+
+    assert event.answers == [texts.access_denied(Lang.en)]
+
+
+async def test_a_stranger_without_a_known_locale_gets_the_default():
+    middleware = AdminOnlyMiddleware({111}, default=Lang.en)
+    event = _Event(999, "de")
+
+    await middleware(lambda e, d: None, event, {})
+
+    assert event.answers == [texts.access_denied(Lang.en)]
+
+
+# --- the language screen ---------------------------------------------------
+
+
+class _Service:
+    async def list(self):
+        return []
+
+
+class _Admins:
+    def __init__(self, language_code=None):
+        self.written: list[tuple[int, str]] = []
+        self.language_code = language_code
+
+    async def set_language(self, telegram_id, code):
+        self.written.append((telegram_id, code))
+
+    async def language(self, telegram_id):
+        return self.language_code
+
+
+class _Deps:
+    def __init__(self, admins=None):
+        self.sites = _Service()
+        self.profiles = _Service()
+        self.proxies = _Service()
+        self.runs = _Service()
+        self.admins = admins
+
+
+class _Message:
+    def __init__(self, text=None, user_id=1):
+        self.text = text
+        self.from_user = User(id=user_id, is_bot=False, first_name="x")
+        self.answers = []
+        self.edits = []
+        self.kwargs = []
+        self.markups = []
+
+    async def answer(self, text=None, reply_markup=None, **kw):
+        self.answers.append(text)
+        self.markups.append(reply_markup)
+
+    async def edit_text(self, text=None, reply_markup=None, **kw):
+        self.edits.append(text)
+        self.kwargs.append(kw)
+
+    async def reply(self, text=None, **kw):
+        self.answers.append(text)
+
+
+class _Callback:
+    def __init__(self, data, user_id=1):
+        self.data = data
+        self.from_user = User(id=user_id, is_bot=False, first_name="x")
+        self.message = _Message()
+        self.answers: list[tuple[str, dict]] = []
+
+    async def answer(self, text=None, **kwargs):
+        self.answers.append((text, kwargs))
+
+
+def _state():
+    return FSMContext(
+        storage=MemoryStorage(),
+        key=StorageKey(bot_id=1, chat_id=1, user_id=1),
+    )
+
+
+def _callback_handler(router, data_prefix):
+    return next(
+        observer.callback
+        for observer in router.callback_query.handlers
+        if observer.callback.__name__ == data_prefix
+    )
+
+
+async def test_the_language_screen_lists_both_languages():
+    router = common.build_router(settings=None, deps=_Deps())
+    handler = next(
+        observer.callback
+        for observer in router.message.handlers
+        if observer.callback.__name__ == "menu_language"
+    )
+    message = _Message()
+
+    await handler(message, state=_state(), lang=Lang.ru)
+
+    labels = [
+        b.text
+        for row in message.markups[0].inline_keyboard
+        for b in row
+        if b.callback_data
+    ]
+    assert any("Русский" in label and label.endswith("✓") for label in labels)
+    assert any("English" in label and not label.endswith("✓") for label in labels)
+
+
+async def test_setting_the_language_writes_the_repo_and_switches_the_keyboard():
+    admins = _Admins()
+    router = common.build_router(settings=None, deps=_Deps(admins=admins))
+    handler = _callback_handler(router, "set_language")
+    callback = _Callback("lang:set:en")
+
+    await handler(callback, lang=Lang.ru)
+
+    assert admins.written == [(1, "en")]
+    # The screen is re-rendered in the new language, not the one it was opened in.
+    assert callback.message.edits == [texts.language_screen(Lang.en)]
+    # The reply keyboard under the chat input is replaced immediately, otherwise
+    # the user keeps pressing Russian buttons on an English screen.
+    assert callback.message.markups[-1].keyboard[0][0].text == "🌐 Sites"
+    assert callback.message.answers == [texts.language_saved(Lang.en)]
+
+
+async def test_an_unknown_language_code_is_refused_and_not_written():
+    admins = _Admins()
+    router = common.build_router(settings=None, deps=_Deps(admins=admins))
+    handler = _callback_handler(router, "set_language")
+    callback = _Callback("lang:set:de")
+
+    await handler(callback, lang=Lang.ru)
+
+    assert admins.written == []
+    text, kwargs = callback.answers[0]
+    assert text == texts.language_unknown(Lang.ru)
+    assert kwargs["show_alert"] is True
+    assert normalize("de") is None
+
+
+async def test_a_missing_admins_repo_answers_an_error_instead_of_crashing():
+    """Tests build ``BotDeps`` by hand; a real deployment always has the repo."""
+    router = common.build_router(settings=None, deps=_Deps(admins=None))
+    handler = _callback_handler(router, "set_language")
+    callback = _Callback("lang:set:ru")
+
+    await handler(callback, lang=Lang.ru)
+
+    text, kwargs = callback.answers[0]
+    assert text == texts.language_unavailable(Lang.ru)
+    assert kwargs["show_alert"] is True
+
+
+# --- VNC card -------------------------------------------------------------
+
+
+def test_the_vnc_session_card_is_localised():
+    info = VncInfo(
+        session_id=1,
+        port=6100,
+        password="pw",
+        url="http://127.0.0.1:6100/vnc.html",
+        expires_at=datetime.now(UTC),
+    )
+
+    assert "Вход на сайт" in texts.vnc_session(Lang.ru, info, 30)
+    assert "Log in to the site" in texts.vnc_session(Lang.en, info, 30)
+
+
+# --- end to end: the resolved language reaches a real handler --------------
+
+
+async def _feed_help(monkeypatch, admins, uid=111):
+    """Drive the real dispatcher with /help and return what the admin saw."""
+    from aiogram import Bot
+    from aiogram.types import Chat, Message, Update, User
+
+    answered: list[str] = []
+
+    async def fake_answer(self, text=None, **kw):
+        answered.append(text)
+        return True
+
+    monkeypatch.setattr(Message, "answer", fake_answer)
+    deps = BotDeps(sites=_Service(), registry=object(), admins=admins)
+    dp = build_dispatcher(
+        load_settings({"UWP_ADMIN_IDS": str(uid)}), deps, admin_ids={uid}
+    )
+    bot = Bot("123456:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+    update = Update(
+        update_id=1,
+        message=Message(
+            message_id=1,
+            date=0,
+            chat=Chat(id=uid, type="private"),
+            from_user=User(id=uid, is_bot=False, first_name="x"),
+            text="/help",
+        ),
+    )
+    try:
+        await dp.feed_update(bot, update)
+    finally:
+        await bot.session.close()
+    return answered
+
+
+async def test_a_stored_english_choice_changes_a_real_handler_output(monkeypatch):
+    """Without the middleware wiring, every handler would still speak Russian."""
+    answered = await _feed_help(monkeypatch, _Admins(language_code="en"))
+
+    assert answered == [texts.help(Lang.en)]
+
+
+async def test_no_stored_choice_uses_the_clients_locale(monkeypatch):
+    class _NoChoice:
+        async def language(self, telegram_id):
+            return None
+
+    # The Update carries no ``language_code`` in this helper, so the deployment
+    # default (ru) is what an admin with no opinion sees.
+    answered = await _feed_help(monkeypatch, _NoChoice())
+
+    assert answered == [texts.help(Lang.ru)]
+
+
+# --- layout ----------------------------------------------------------------
+
+
+def _site(**kw):
+    return Site(
+        **{
+            "id": 3,
+            "slug": "s",
+            "name": "S",
+            "parser_key": "steam_deals",
+            "interval_min_min": 45,
+            "interval_max_min": 90,
+            **kw,
+        }
+    )
+
+
+def test_the_site_card_escapes_a_hostile_name():
+    """A site name is user input; the bot speaks HTML, so `<b>` would render."""
+    card = texts.site_card(Lang.en, _site(name="<b>A & B</b>"), None)
+
+    assert "<b>A & B</b>" not in card
+    assert "&lt;b&gt;A &amp; B&lt;/b&gt;" in card
+
+
+def _profile():
+    return Profile(
+        id=1,
+        name="P",
+        kind="persistent",
+        seed=1,
+        platform="Win32",
+        brand="Chromium",
+        brand_version="140",
+        timezone="Europe/Moscow",
+        locale="ru-RU",
+        user_data_dir="/tmp/p",
+    )
+
+
+def _proxy():
+    return Proxy(name="X", scheme="http", host="proxy.example", port=8080)
+
+
+@pytest.mark.parametrize("lang", [Lang.ru, Lang.en])
+@pytest.mark.parametrize(
+    "render",
+    [
+        lambda lang: texts.site_card(lang, _site(), None),
+        lambda lang: texts.profile_card(lang, _profile()),
+        lambda lang: texts.proxy_card(lang, _proxy()),
+    ],
+    ids=["site", "profile", "proxy"],
+)
+def test_every_card_shares_one_layout(lang, render):
+    """A profile or proxy card left in the old shape looks like another screen."""
+    first, rest = render(lang).split("\n", 1)
+
+    assert first.startswith("<b>") and first.endswith("</b>")
+    assert rest.startswith("<blockquote>") and rest.endswith("</blockquote>")
+
+
+def test_a_card_disables_the_link_preview():
+    """Telegram would unfold a preview of the first link and push buttons away."""
+    assert keyboards.NO_PREVIEW.is_disabled is True
+
+
+async def test_the_site_card_handler_passes_the_no_preview_option():
+    """The constant alone changes nothing: the handler must hand it to Telegram."""
+    from uwp.bot.handlers import sites as sites_handlers
+
+    class _OneSite:
+        async def get(self, site_id):
+            return _site()
+
+    class _Settings:
+        tz = "UTC"
+
+    class _SiteDeps:
+        sites = _OneSite()
+        registry = object()
+
+    router = sites_handlers.build_router(_Settings(), _SiteDeps())
+    handler = _callback_handler(router, "show_card")
+    callback = _Callback("site:3")
+
+    await handler(callback, lang=Lang.en)
+
+    assert callback.message.kwargs[-1]["link_preview_options"] is keyboards.NO_PREVIEW
+
+
+async def test_the_language_command_opens_the_same_screen():
+    router = common.build_router(settings=None, deps=_Deps())
+    handler = next(
+        observer.callback
+        for observer in router.message.handlers
+        if observer.callback.__name__ == "command_language"
+    )
+    message = _Message()
+
+    await handler(message, lang=Lang.en)
+
+    assert message.answers == [texts.language_screen(Lang.en)]
+    labels = [
+        b.text
+        for row in message.markups[0].inline_keyboard
+        for b in row
+        if b.callback_data
+    ]
+    assert "🇬🇧 English ✓" in labels

@@ -479,3 +479,110 @@ async def test_a_network_error_is_still_retried(env):
     await delivery.tick()
 
     assert len(await bus.pending(111, utcnow())) == 1
+
+
+# --- per-recipient language ------------------------------------------------
+
+
+async def test_each_admin_gets_the_message_in_their_own_language(env):
+    """Two admins, one queue: the same event must not pick one language for both.
+
+    Measured: a Russian admin and an English admin shared the ``admins.language``
+    check, and whichever the loop reached first decided the wording.
+    """
+    settings, bus, _tmp_path = env
+    bot = FakeBot()
+    spoken = {111: "ru", 222: "en"}
+
+    async def language_for(admin_id):
+        return spoken[admin_id]
+
+    delivery = EventDelivery(bot, bus, settings, language_for=language_for)
+    await bus.emit("vnc_stopped", payload={})
+
+    await delivery.tick()
+
+    by_admin = {admin_id: text for admin_id, text, *_ in bot.messages}
+    assert by_admin[111] == "🖥 Сессия входа завершена."
+    assert by_admin[222] == "🖥 Login session finished."
+
+
+async def test_an_unset_choice_falls_back_to_the_deployment_language(env):
+    settings, bus, _tmp_path = env
+    bot = FakeBot()
+
+    async def language_for(admin_id):
+        return None
+
+    delivery = EventDelivery(bot, bus, settings, language_for=language_for)
+    await bus.emit("vnc_stopped", payload={})
+
+    await delivery.tick()
+
+    assert all(text == "🖥 Сессия входа завершена." for _, text, *_ in bot.messages)
+
+
+async def test_a_switched_language_applies_without_a_restart(env):
+    """The resolver is read on every event, not remembered at construction."""
+    settings, bus, _tmp_path = env
+    bot = FakeBot()
+    spoken = {111: "ru"}
+
+    async def language_for(admin_id):
+        return spoken.get(admin_id)
+
+    delivery = EventDelivery(
+        bot, bus, settings, recipients=[111], language_for=language_for
+    )
+    await bus.emit("vnc_stopped", payload={})
+    await delivery.tick()
+
+    spoken[111] = "en"
+    await bus.emit("vnc_stopped", payload={})
+    await delivery.tick()
+
+    assert [text for _, text, *_ in bot.messages] == [
+        "🖥 Сессия входа завершена.",
+        "🖥 Login session finished.",
+    ]
+
+
+async def test_a_failing_language_lookup_still_delivers(env):
+    """A locked database must not silence a report: fall back and send it."""
+    settings, bus, _tmp_path = env
+    bot = FakeBot()
+
+    async def language_for(admin_id):
+        raise RuntimeError("database is locked")
+
+    delivery = EventDelivery(bot, bus, settings, language_for=language_for)
+    await bus.emit("vnc_stopped", payload={})
+
+    await delivery.tick()
+
+    assert len(bot.messages) == 2
+    assert all(text == "🖥 Сессия входа завершена." for _, text, *_ in bot.messages)
+
+
+async def test_the_failure_buttons_are_localised(env):
+    settings, bus, _tmp_path = env
+    bot = FakeBot()
+    spoken = {111: "en", 222: "ru"}
+
+    async def language_for(admin_id):
+        return spoken[admin_id]
+
+    delivery = EventDelivery(bot, bus, settings, language_for=language_for)
+    await bus.emit(
+        "run_failed",
+        payload={"text": "boom", "site_id": 5, "site": "Steam"},
+    )
+
+    await delivery.tick()
+
+    buttons = {
+        admin_id: [b.text for b in markup.inline_keyboard[0]]
+        for admin_id, _text, markup in bot.messages
+    }
+    assert buttons[111] == ["🔁 Retry"]
+    assert buttons[222] == ["🔁 Повторить"]

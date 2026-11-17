@@ -9,6 +9,7 @@ from uwp.bot.handlers.settings import (
     settings_kb,
 )
 from uwp.domain import ExportMode, Site
+from uwp.i18n import Lang
 from uwp.parsers.steam_deals.parser import SteamDealsParser
 
 
@@ -40,7 +41,7 @@ def _site(**kw):
 def test_settings_kb_has_every_target():
     flat = [
         button.callback_data
-        for row in settings_kb(_site()).inline_keyboard
+        for row in settings_kb(_site(), Lang.ru).inline_keyboard
         for button in row
     ]
 
@@ -56,7 +57,7 @@ def test_settings_kb_has_every_target():
 
 def test_params_kb_shows_current_values_and_field_callbacks():
     parser = SteamDealsParser()
-    rows = params_kb(parser, _site()).inline_keyboard
+    rows = params_kb(parser, _site(), Lang.ru).inline_keyboard
     buttons = [button for row in rows for button in row]
     callbacks = [button.callback_data for button in buttons if button.callback_data]
 
@@ -106,7 +107,7 @@ def test_apply_param_explains_a_bad_integer_in_russian():
     site = _site(parser_settings={})
 
     with pytest.raises(ValueError, match="целое число"):
-        apply_param(parser, site, "max_pages", "abc")
+        apply_param(parser, site, "max_pages", "abc", Lang.ru)
 
 
 def test_apply_param_reports_the_range_in_russian():
@@ -114,4 +115,18 @@ def test_apply_param_reports_the_range_in_russian():
     site = _site(parser_settings={})
 
     with pytest.raises(ValueError, match="не больше 10"):
-        apply_param(parser, site, "max_pages", "99")
+        apply_param(parser, site, "max_pages", "99", Lang.ru)
+
+
+def test_apply_param_explains_the_same_failure_in_english():
+    """A translated message is not a translation if the error text stays Russian."""
+    parser = SteamDealsParser()
+    site = _site(parser_settings={})
+
+    with pytest.raises(ValueError, match="whole number"):
+        apply_param(parser, site, "max_pages", "abc", Lang.en)
+
+
+def test_parse_interval_explains_a_bad_range_in_english():
+    with pytest.raises(ValueError, match="number or a range"):
+        parse_interval("abc", Lang.en)

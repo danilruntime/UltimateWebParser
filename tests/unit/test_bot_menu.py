@@ -4,14 +4,45 @@ import pytest
 
 from uwp.bot import keyboards, texts
 from uwp.bot.handlers import common
+from uwp.i18n import Lang
 
-# The four buttons and the text each one must render, in one table so a handler
-# wired to a neighbour's button cannot pass unnoticed.
+# The five buttons and the text each one must render in that language, in one
+# table so a handler wired to a neighbour's button cannot pass unnoticed.
 _MENU = {
-    "menu_sites": (keyboards.BTN_SITES, texts.NO_SITES),
-    "menu_profiles": (keyboards.BTN_PROFILES, texts.NO_PROFILES),
-    "menu_proxies": (keyboards.BTN_PROXIES, texts.NO_PROXIES),
-    "menu_help": (keyboards.BTN_HELP, texts.HELP),
+    Lang.ru: {
+        "menu_sites": (keyboards.BTN_SITES[Lang.ru], texts.no_sites(Lang.ru)),
+        "menu_profiles": (
+            keyboards.BTN_PROFILES[Lang.ru],
+            texts.no_profiles(Lang.ru),
+        ),
+        "menu_proxies": (keyboards.BTN_PROXIES[Lang.ru], texts.no_proxies(Lang.ru)),
+        "menu_help": (keyboards.BTN_HELP[Lang.ru], texts.help(Lang.ru)),
+        "menu_language": (
+            keyboards.BTN_LANGUAGE[Lang.ru],
+            texts.language_screen(Lang.ru),
+        ),
+    },
+    Lang.en: {
+        "menu_sites": (keyboards.BTN_SITES[Lang.en], texts.no_sites(Lang.en)),
+        "menu_profiles": (
+            keyboards.BTN_PROFILES[Lang.en],
+            texts.no_profiles(Lang.en),
+        ),
+        "menu_proxies": (keyboards.BTN_PROXIES[Lang.en], texts.no_proxies(Lang.en)),
+        "menu_help": (keyboards.BTN_HELP[Lang.en], texts.help(Lang.en)),
+        "menu_language": (
+            keyboards.BTN_LANGUAGE[Lang.en],
+            texts.language_screen(Lang.en),
+        ),
+    },
+}
+
+_HANDLER_NAMES = {
+    "menu_sites",
+    "menu_profiles",
+    "menu_proxies",
+    "menu_help",
+    "menu_language",
 }
 
 
@@ -29,14 +60,19 @@ class _Deps:
 
 
 class _Message:
-    """Just the surface a menu handler touches: ``text`` and ``answer``."""
+    """Just the surface a menu handler touches: ``text``, ``from_user``, ``answer``."""
 
-    def __init__(self, text=None):
+    def __init__(self, text=None, user_id=1):
+        from aiogram.types import User
+
         self.text = text
+        self.from_user = User(id=user_id, is_bot=False, first_name="x")
         self.answers = []
+        self.markups = []
 
-    async def answer(self, text=None, **kwargs):
+    async def answer(self, text=None, reply_markup=None, **kwargs):
         self.answers.append(text)
+        self.markups.append(reply_markup)
 
 
 def _menu_handlers(router):
@@ -66,12 +102,12 @@ def _state():
     )
 
 
-def test_all_four_reply_buttons_have_handlers():
+def test_all_five_reply_buttons_have_handlers():
     router = common.build_router(settings=None, deps=_Deps())
 
     names = {observer.callback.__name__ for observer in _menu_handlers(router)}
 
-    assert names == {"menu_sites", "menu_profiles", "menu_proxies", "menu_help"}
+    assert names == _HANDLER_NAMES
 
 
 def test_the_handlers_are_not_restricted_to_an_empty_state():
@@ -86,32 +122,38 @@ def test_the_handlers_are_not_restricted_to_an_empty_state():
         ), observer.callback.__name__
 
 
-@pytest.mark.parametrize(("name", "expected"), sorted(
-    (name, text) for name, (_, text) in _MENU.items()
-))
-async def test_tapping_a_menu_button_abandons_an_active_wizard(name, expected):
+@pytest.mark.parametrize("lang", [Lang.ru, Lang.en])
+@pytest.mark.parametrize("name", sorted(_HANDLER_NAMES))
+async def test_tapping_a_menu_button_abandons_an_active_wizard(lang, name):
     """The whole point of the task: a mid-wizard tap drops the wizard.
 
     Invokes the real callback, so dropping ``await state.clear()`` from any one
-    handler fails here — unlike the introspection tests above.
+    handler fails here — unlike the introspection tests above. The English run
+    also proves the label and the rendered text are the English ones.
     """
     router = common.build_router(settings=None, deps=_Deps())
     handler = _handler(router, name)
+    label, expected = _MENU[lang][name]
 
     state = _state()
     await state.set_state("ProfileNameInput:waiting")
     assert await state.get_state() is not None
 
-    message = _Message(text=_MENU[name][0])
-    await handler(message, state=state)
+    message = _Message(text=label)
+    await handler(message, state=state, lang=lang)
 
     assert await state.get_state() is None
     assert message.answers == [expected]
 
 
-@pytest.mark.parametrize("name", sorted(_MENU))
-def test_each_handler_matches_only_its_own_button(name):
-    """Resolve the real ``F`` filter: correct button true, neighbours false."""
+@pytest.mark.parametrize("lang", [Lang.ru, Lang.en])
+@pytest.mark.parametrize("name", sorted(_HANDLER_NAMES))
+def test_each_handler_matches_only_its_own_button(lang, name):
+    """Resolve the real ``F`` filter: correct button true, neighbours false.
+
+    Every label in both languages is offered, so a filter that only accepts the
+    Russian label fails on the English one (and vice versa).
+    """
     router = common.build_router(settings=None, deps=_Deps())
     observer = next(
         observer
@@ -119,12 +161,18 @@ def test_each_handler_matches_only_its_own_button(name):
         if observer.callback.__name__ == name
     )
     [filter_object] = observer.filters
-    own_label = _MENU[name][0]
 
     matched = {
         label
-        for label, _ in _MENU.values()
+        for table in _MENU.values()
+        for label, _ in table.values()
         if filter_object.callback(_Message(text=label))
     }
 
-    assert matched == {own_label}
+    # Ruling: a filter accepts its button in *both* languages, so a user who
+    # switched language without pressing /start keeps working. It must still
+    # reject every neighbour, in both languages.
+    expected = {table[name][0] for table in _MENU.values()}
+    if name == "menu_language":
+        expected = set(keyboards.BTN_LANGUAGE.values())
+    assert matched == expected

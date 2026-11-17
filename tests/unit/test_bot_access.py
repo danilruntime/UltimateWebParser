@@ -5,14 +5,17 @@ from aiogram.types import User
 from uwp.bot import texts
 from uwp.bot.app import BotDeps, build_dispatcher
 from uwp.bot.keyboards import site_card_kb, sites_list_kb
-from uwp.bot.middleware import AdminOnlyMiddleware
+from uwp.bot.middleware import AdminOnlyMiddleware, LanguageMiddleware
 from uwp.config import Settings
 from uwp.domain import Site
+from uwp.i18n import Lang
 
 
 class FakeEvent:
-    def __init__(self, uid):
-        self.from_user = User(id=uid, is_bot=False, first_name="x")
+    def __init__(self, uid, language_code=None):
+        self.from_user = User(
+            id=uid, is_bot=False, first_name="x", language_code=language_code
+        )
         self.answers = []
 
     async def answer(self, text=None, **kw):
@@ -28,7 +31,7 @@ async def test_non_admin_is_refused():
 
     assert await mw(handler, event, {}) is UNHANDLED
 
-    assert event.answers == [texts.ACCESS_DENIED]
+    assert event.answers == [texts.access_denied(Lang.ru)]
 
 
 async def test_admin_passes_and_is_flagged():
@@ -59,7 +62,7 @@ async def test_message_without_user_is_refused():
 
     assert await mw(lambda e, d: None, event, {}) is UNHANDLED
 
-    assert event.answers == [texts.ACCESS_DENIED]
+    assert event.answers == [texts.access_denied(Lang.ru)]
 
 
 async def test_a_wrapped_update_is_checked_by_its_inner_sender():
@@ -84,7 +87,7 @@ async def test_a_wrapped_update_is_checked_by_its_inner_sender():
     assert await mw(lambda e, d: None, Wrapped(inner), {}) is UNHANDLED
 
     # The refusal goes to the nested message, not silently into the log.
-    assert inner.answers == [texts.ACCESS_DENIED]
+    assert inner.answers == [texts.access_denied(Lang.ru)]
 
     data: dict = {}
 
@@ -103,7 +106,7 @@ def test_sites_keyboard_offers_every_site_and_add():
              interval_max_min=2),
     ]
 
-    rows = sites_list_kb(sites).inline_keyboard
+    rows = sites_list_kb(sites, Lang.ru).inline_keyboard
 
     assert [row[0].callback_data for row in rows] == ["site:1", "site:2", "site:add"]
     assert rows[0][0].text == "🟢 A"
@@ -114,7 +117,7 @@ def test_sites_keyboard_skips_sites_without_an_id():
     site = Site(slug="a", name="A", parser_key="steam_deals", interval_min_min=1,
                 interval_max_min=2)
 
-    rows = sites_list_kb([site]).inline_keyboard
+    rows = sites_list_kb([site], Lang.ru).inline_keyboard
 
     assert [row[0].callback_data for row in rows] == ["site:add"]
 
@@ -129,6 +132,9 @@ def test_gate_runs_as_outer_middleware():
     # any type is gated, not just messages and callback queries.
     assert any(
         isinstance(mw, AdminOnlyMiddleware) for mw in dp.update.outer_middleware
+    )
+    assert any(
+        isinstance(mw, LanguageMiddleware) for mw in dp.update.outer_middleware
     )
     assert not any(
         isinstance(mw, AdminOnlyMiddleware) for mw in dp.message.outer_middleware
@@ -174,7 +180,7 @@ async def test_a_stranger_is_refused_by_the_real_dispatcher(monkeypatch):
     finally:
         await bot.session.close()
 
-    assert answered == [texts.ACCESS_DENIED]
+    assert answered == [texts.access_denied(Lang.ru)]
 
 
 def test_site_card_keyboard_has_toggle_run_settings_back():
@@ -183,7 +189,11 @@ def test_site_card_keyboard_has_toggle_run_settings_back():
         interval_min_min=1, interval_max_min=2, enabled=True,
     )
 
-    flat = [b.callback_data for row in site_card_kb(site).inline_keyboard for b in row]
+    flat = [
+        b.callback_data
+        for row in site_card_kb(site, Lang.ru).inline_keyboard
+        for b in row
+    ]
 
     assert flat[:3] == ["site:toggle:5", "site:run:5", "site:settings:5"]
     assert flat[-1] == "sites:list"

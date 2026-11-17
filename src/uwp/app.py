@@ -228,6 +228,7 @@ async def build_runtime(
         proxies=proxy_service,
         vnc=vnc_service,
         runs=RunsService(runs, sites, jobs),
+        admins=admins,
     )
 
     # Allowlist = environment ids ∪ rows in ``admins``. Notifications go only
@@ -245,7 +246,13 @@ async def build_runtime(
         db=db,
         worker=worker,
         deps=deps,
-        delivery=EventDelivery(bot, bus, settings, recipients=recipients),
+        delivery=EventDelivery(
+            bot,
+            bus,
+            settings,
+            recipients=recipients,
+            language_for=admins.language,
+        ),
         registry=registry,
         vnc=vnc_manager,
         bot=bot,

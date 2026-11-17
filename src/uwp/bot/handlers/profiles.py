@@ -14,7 +14,7 @@ from aiogram.types import (
 
 from uwp.bot import keyboards, texts
 from uwp.domain import ProfileStatus
-from uwp.services.vnc import session_text
+from uwp.i18n import DEFAULT_LANG, Lang
 from uwp.timeutil import format_local
 
 log = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ class ProfileNameInput(StatesGroup):
     waiting = State()
 
 
-def profiles_kb(profiles) -> InlineKeyboardMarkup:
+def profiles_kb(profiles, lang: Lang = DEFAULT_LANG) -> InlineKeyboardMarkup:
     rows = [
         [
             InlineKeyboardButton(
@@ -38,17 +38,27 @@ def profiles_kb(profiles) -> InlineKeyboardMarkup:
         for profile in profiles
     ]
     rows.append(
-        [InlineKeyboardButton(text="➕ Новый профиль", callback_data="profile:new")]
+        [
+            InlineKeyboardButton(
+                text=texts.new_profile(lang), callback_data="profile:new"
+            )
+        ]
     )
-    rows.append([InlineKeyboardButton(text=texts.BACK, callback_data="menu:main")])
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=texts.back(lang), callback_data="menu:main"
+            )
+        ]
+    )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def profile_card_kb(profile) -> InlineKeyboardMarkup:
+def profile_card_kb(profile, lang: Lang = DEFAULT_LANG) -> InlineKeyboardMarkup:
     rows = [
         [
             InlineKeyboardButton(
-                text="🖥 Войти", callback_data=f"profile:login:{profile.id}"
+                text=texts.login(lang), callback_data=f"profile:login:{profile.id}"
             )
         ]
     ]
@@ -56,22 +66,29 @@ def profile_card_kb(profile) -> InlineKeyboardMarkup:
         rows.append(
             [
                 InlineKeyboardButton(
-                    text="✅ Вход выполнен", callback_data=f"profile:done:{profile.id}"
+                    text=texts.login_done(lang),
+                    callback_data=f"profile:done:{profile.id}",
                 )
             ]
         )
     rows.append(
         [
             InlineKeyboardButton(
-                text="🗑 Удалить", callback_data=f"profile:del:{profile.id}"
+                text=texts.delete(lang), callback_data=f"profile:del:{profile.id}"
             )
         ]
     )
-    rows.append([InlineKeyboardButton(text=texts.BACK, callback_data="profiles:list")])
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=texts.back(lang), callback_data="profiles:list"
+            )
+        ]
+    )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def proxies_kb(proxies) -> InlineKeyboardMarkup:
+def proxies_kb(proxies, lang: Lang = DEFAULT_LANG) -> InlineKeyboardMarkup:
     rows = [
         [
             InlineKeyboardButton(
@@ -81,9 +98,19 @@ def proxies_kb(proxies) -> InlineKeyboardMarkup:
         for proxy in proxies
     ]
     rows.append(
-        [InlineKeyboardButton(text="➕ Новый прокси", callback_data="proxy:new")]
+        [
+            InlineKeyboardButton(
+                text=texts.new_proxy(lang), callback_data="proxy:new"
+            )
+        ]
     )
-    rows.append([InlineKeyboardButton(text=texts.BACK, callback_data="menu:main")])
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=texts.back(lang), callback_data="menu:main"
+            )
+        ]
+    )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -95,44 +122,50 @@ def build_router(settings, deps) -> Router:
     runs = deps.runs
 
     @router.callback_query(F.data == "profiles:list")
-    async def list_profiles(callback: CallbackQuery) -> None:
+    async def list_profiles(callback: CallbackQuery, lang: Lang) -> None:
         items = await profiles.list()
-        text = texts.PROFILES_HEADER if items else texts.NO_PROFILES
-        await callback.message.edit_text(text, reply_markup=profiles_kb(items))
+        text = (
+            texts.profiles_header(lang) if items else texts.no_profiles(lang)
+        )
+        await callback.message.edit_text(
+            text, reply_markup=profiles_kb(items, lang)
+        )
         await callback.answer()
 
     @router.callback_query(F.data == "profile:new")
-    async def ask_name(callback: CallbackQuery, state: FSMContext) -> None:
+    async def ask_name(callback: CallbackQuery, state: FSMContext, lang: Lang) -> None:
         await state.set_state(ProfileNameInput.waiting)
-        await callback.message.answer(texts.ASK_PROFILE_NAME)
+        await callback.message.answer(texts.ask_profile_name(lang))
         await callback.answer()
 
     @router.message(ProfileNameInput.waiting)
-    async def create_profile(message: Message, state: FSMContext) -> None:
+    async def create_profile(message: Message, state: FSMContext, lang: Lang) -> None:
         try:
             profile = await profiles.create(message.text or "")
         except ValueError as exc:
-            await message.answer(f"❌ {exc}")
+            await message.answer(f"❌ {texts.esc(exc)}")
             return
         await state.clear()
         await message.answer(
-            texts.PROFILE_CREATED.format(name=profile.name),
-            reply_markup=profile_card_kb(profile),
+            texts.profile_created(lang, profile.name),
+            reply_markup=profile_card_kb(profile, lang),
         )
 
     @router.callback_query(F.data.regexp(r"^profile:\d+$"))
-    async def show_profile(callback: CallbackQuery) -> None:
+    async def show_profile(callback: CallbackQuery, lang: Lang) -> None:
         profile = await profiles.get(int(callback.data.split(":")[1]))
         if profile is None:
-            await callback.answer("Профиль не найден", show_alert=True)
+            await callback.answer(texts.profile_not_found(lang), show_alert=True)
             return
         await callback.message.edit_text(
-            texts.profile_card(profile), reply_markup=profile_card_kb(profile)
+            texts.profile_card(lang, profile),
+            reply_markup=profile_card_kb(profile, lang),
+            link_preview_options=keyboards.NO_PREVIEW,
         )
         await callback.answer()
 
     @router.callback_query(F.data.regexp(r"^profile:del:\d+$"))
-    async def delete_profile(callback: CallbackQuery) -> None:
+    async def delete_profile(callback: CallbackQuery, lang: Lang) -> None:
         profile_id = int(callback.data.rsplit(":", 1)[1])
         try:
             await profiles.delete(profile_id)
@@ -141,13 +174,13 @@ def build_router(settings, deps) -> Router:
             return
         items = await profiles.list()
         await callback.message.edit_text(
-            texts.NO_PROFILES if not items else texts.PROFILES_HEADER,
-            reply_markup=profiles_kb(items),
+            texts.no_profiles(lang) if not items else texts.profiles_header(lang),
+            reply_markup=profiles_kb(items, lang),
         )
-        await callback.answer(texts.PROFILE_DELETED)
+        await callback.answer(texts.profile_deleted(lang))
 
     @router.callback_query(F.data.regexp(r"^profile:login:\d+$"))
-    async def start_login(callback: CallbackQuery) -> None:
+    async def start_login(callback: CallbackQuery, lang: Lang) -> None:
         profile_id = int(callback.data.rsplit(":", 1)[1])
         try:
             info = await vnc.request(profile_id, started_by=callback.from_user.id)
@@ -155,13 +188,13 @@ def build_router(settings, deps) -> Router:
             await callback.answer(str(exc), show_alert=True)
             return
         await callback.message.answer(
-            session_text(info, settings.vnc_ttl_minutes),
-            reply_markup=keyboards.vnc_session_kb(info.session_id),
+            texts.vnc_session(lang, info, settings.vnc_ttl_minutes),
+            reply_markup=keyboards.vnc_session_kb(info.session_id, lang),
         )
         await callback.answer()
 
     @router.callback_query(F.data.regexp(r"^profile:done:\d+$"))
-    async def finish_login(callback: CallbackQuery) -> None:
+    async def finish_login(callback: CallbackQuery, lang: Lang) -> None:
         profile_id = int(callback.data.rsplit(":", 1)[1])
         # Freeing the profile here would let the next run open a second
         # Chromium on the same user-data-dir while the VNC browser is alive.
@@ -173,26 +206,26 @@ def build_router(settings, deps) -> Router:
             await profiles.release(profile_id)
         profile = await profiles.get(profile_id)
         await callback.message.edit_text(
-            texts.PROFILE_DONE.format(name=profile.name if profile else ""),
-            reply_markup=profile_card_kb(profile) if profile else None,
+            texts.profile_done(lang, profile.name if profile else ""),
+            reply_markup=profile_card_kb(profile, lang) if profile else None,
         )
         await callback.answer()
 
     @router.callback_query(F.data == "proxies:list")
-    async def list_proxies(callback: CallbackQuery) -> None:
+    async def list_proxies(callback: CallbackQuery, lang: Lang) -> None:
         items = await proxies.list()
-        text = texts.PROXIES_HEADER if items else texts.NO_PROXIES
-        await callback.message.edit_text(text, reply_markup=proxies_kb(items))
+        text = texts.proxies_header(lang) if items else texts.no_proxies(lang)
+        await callback.message.edit_text(text, reply_markup=proxies_kb(items, lang))
         await callback.answer()
 
     @router.callback_query(F.data == "proxy:new")
-    async def ask_proxy(callback: CallbackQuery, state: FSMContext) -> None:
+    async def ask_proxy(callback: CallbackQuery, state: FSMContext, lang: Lang) -> None:
         await state.set_state(ProxyInput.waiting)
-        await callback.message.answer(texts.ASK_PROXY)
+        await callback.message.answer(texts.ask_proxy(lang))
         await callback.answer()
 
     @router.message(ProxyInput.waiting)
-    async def create_proxy(message: Message, state: FSMContext) -> None:
+    async def create_proxy(message: Message, state: FSMContext, lang: Lang) -> None:
         text = (message.text or "").strip()
         name, _, url = text.partition(" ")
         if not url:
@@ -200,88 +233,104 @@ def build_router(settings, deps) -> Router:
         try:
             await proxies.add(name, url)
         except ValueError as exc:
-            await message.answer(f"❌ {exc}\n{texts.ASK_PROXY}")
+            await message.answer(
+                f"❌ {texts.esc(exc)}\n{texts.ask_proxy(lang)}"
+            )
             return
         await state.clear()
         items = await proxies.list()
-        await message.answer(texts.PROXY_ADDED, reply_markup=proxies_kb(items))
+        await message.answer(
+            texts.proxy_added(lang), reply_markup=proxies_kb(items, lang)
+        )
 
     @router.callback_query(F.data.regexp(r"^proxy:\d+$"))
-    async def show_proxy(callback: CallbackQuery) -> None:
+    async def show_proxy(callback: CallbackQuery, lang: Lang) -> None:
         proxy = await proxies.get(int(callback.data.split(":")[1]))
         if proxy is None:
-            await callback.answer("Прокси не найден", show_alert=True)
+            await callback.answer(texts.proxy_not_found(lang), show_alert=True)
             return
         rows = [
             [
                 InlineKeyboardButton(
-                    text="🔌 Проверить", callback_data=f"proxy:test:{proxy.id}"
+                    text=texts.check(lang), callback_data=f"proxy:test:{proxy.id}"
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="🗑 Удалить", callback_data=f"proxy:del:{proxy.id}"
+                    text=texts.delete(lang), callback_data=f"proxy:del:{proxy.id}"
                 )
             ],
-            [InlineKeyboardButton(text=texts.BACK, callback_data="proxies:list")],
+            [
+                InlineKeyboardButton(
+                    text=texts.back(lang), callback_data="proxies:list"
+                )
+            ],
         ]
         await callback.message.edit_text(
-            texts.proxy_card(proxy),
+            texts.proxy_card(lang, proxy),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+            link_preview_options=keyboards.NO_PREVIEW,
         )
         await callback.answer()
 
     @router.callback_query(F.data.regexp(r"^proxy:test:\d+$"))
-    async def test_proxy(callback: CallbackQuery) -> None:
+    async def test_proxy(callback: CallbackQuery, lang: Lang) -> None:
         ok, message = await proxies.test(int(callback.data.rsplit(":", 1)[1]))
         await callback.answer(("✅ " if ok else "❌ ") + message, show_alert=True)
 
     @router.callback_query(F.data.regexp(r"^proxy:del:\d+$"))
-    async def delete_proxy(callback: CallbackQuery) -> None:
+    async def delete_proxy(callback: CallbackQuery, lang: Lang) -> None:
         await proxies.delete(int(callback.data.rsplit(":", 1)[1]))
         items = await proxies.list()
         await callback.message.edit_text(
-            texts.PROXIES_HEADER if items else texts.NO_PROXIES,
-            reply_markup=proxies_kb(items),
+            texts.proxies_header(lang) if items else texts.no_proxies(lang),
+            reply_markup=proxies_kb(items, lang),
         )
-        await callback.answer(texts.PROXY_DELETED)
+        await callback.answer(texts.proxy_deleted(lang))
 
     @router.callback_query(F.data.regexp(r"^vnc:done:\d+$"))
-    async def vnc_done(callback: CallbackQuery) -> None:
+    async def vnc_done(callback: CallbackQuery, lang: Lang) -> None:
         await vnc.mark_done(int(callback.data.rsplit(":", 1)[1]))
-        await callback.message.edit_text("🖥 Сессия входа завершена.")
+        await callback.message.edit_text(texts.vnc_finished(lang))
         await callback.answer()
 
     @router.callback_query(F.data.regexp(r"^vnc:extend:\d+$"))
-    async def vnc_extend(callback: CallbackQuery) -> None:
+    async def vnc_extend(callback: CallbackQuery, lang: Lang) -> None:
         session = await vnc.extend(int(callback.data.rsplit(":", 1)[1]))
         remaining = await vnc.remaining_minutes(session)
-        await callback.answer(f"⏱ Продлено, осталось {remaining} мин.", show_alert=True)
+        await callback.answer(
+            texts.vnc_extended(lang, remaining), show_alert=True
+        )
 
     @router.callback_query(F.data.regexp(r"^runs:\d+$"))
-    async def run_history(callback: CallbackQuery) -> None:
+    async def run_history(callback: CallbackQuery, lang: Lang) -> None:
         site_id = int(callback.data.rsplit(":", 1)[1])
         items = await runs.recent(site_id)
         if not items:
-            await callback.message.edit_text(texts.NO_RUNS)
+            await callback.message.edit_text(texts.no_runs(lang))
             await callback.answer()
             return
-        lines = [texts.RUNS_HEADER]
+        lines = [texts.runs_header(lang)]
         for run in items:
             lines.append(
-                f"{_status_mark(run.status)} {format_local(run.started_at, settings.tz)} — "
-                f"{texts.status_label(run.status)}, {run.rows_count} строк, "
-                f"новых {run.new_count}"
+                texts.run_history_line(
+                    lang,
+                    texts.status_mark(run.status),
+                    format_local(run.started_at, settings.tz),
+                    texts.status_label(lang, run.status),
+                    run.rows_count,
+                    run.new_count,
+                )
             )
         rows = [
             [
                 InlineKeyboardButton(
-                    text="🔁 Повторить", callback_data=f"run:retry:{site_id}"
+                    text=texts.retry(lang), callback_data=f"run:retry:{site_id}"
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text=texts.BACK, callback_data=f"site:settings:{site_id}"
+                    text=texts.back(lang), callback_data=f"site:settings:{site_id}"
                 )
             ],
         ]
@@ -291,25 +340,17 @@ def build_router(settings, deps) -> Router:
         await callback.answer()
 
     @router.callback_query(F.data.regexp(r"^run:retry:\d+$"))
-    async def retry_run(callback: CallbackQuery) -> None:
+    async def retry_run(callback: CallbackQuery, lang: Lang) -> None:
         try:
             job_id = await runs.retry(int(callback.data.rsplit(":", 1)[1]))
         except ValueError:
-            await callback.answer("Сайт не найден", show_alert=True)
+            await callback.answer(texts.site_not_found(lang), show_alert=True)
             return
         await callback.answer(
-            texts.SITE_STARTED if job_id is not None else texts.SITE_ALREADY_RUNNING,
+            texts.site_started(lang)
+            if job_id is not None
+            else texts.site_already_running(lang),
             show_alert=job_id is None,
         )
 
     return router
-
-
-def _status_mark(status) -> str:
-    return {
-        "ok": "✅",
-        "partial": "⚠️",
-        "failed": "❌",
-        "running": "⏳",
-        "canceled": "🚫",
-    }.get(str(status), "•")
