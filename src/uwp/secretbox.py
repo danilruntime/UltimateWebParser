@@ -37,7 +37,8 @@ class SecretUnreadable(ValueError):
     an English chat. ``str()`` stays a developer-facing English line for the
     log; the chat renders ``code`` through the catalogue.
 
-    Still a ``ValueError``: the CLI and the worker already catch that.
+    Still a ``ValueError``: the CLI and the worker already catch that. A bot
+    handler must render ``code`` (see ``texts.coded_error``), never ``str()``.
     """
 
     def __init__(self, code: str) -> None:

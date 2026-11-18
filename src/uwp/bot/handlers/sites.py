@@ -138,7 +138,8 @@ def build_router(settings, deps) -> Router:
                 site.profile_id, site_id=site.id, started_by=callback.from_user.id
             )
         except ValueError as exc:
-            await callback.answer(str(exc), show_alert=True)
+            # Same rule as the profile card: render the code, never ``str()``.
+            await callback.answer(texts.coded_error(lang, exc), show_alert=True)
             return
         await callback.message.answer(
             texts.vnc_session(lang, info, settings.vnc_ttl_minutes),

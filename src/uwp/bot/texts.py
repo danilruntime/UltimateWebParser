@@ -628,3 +628,30 @@ def language_unavailable(lang) -> str:
 def language_save_failed(lang) -> str:
     """The repo existed but the write raised: storage failure, not wiring."""
     return t(lang, "bot.language.save_failed")
+
+
+# --- failures raised by a service -----------------------------------------
+
+
+def coded_error(lang, error) -> str:
+    """The sentence for a failure that carries a catalogue ``code``.
+
+    ``SecretUnreadable`` and ``VncLoginError`` stay ``ValueError``s so the CLI
+    and the worker can keep catching that type, but their ``str()`` is an
+    English developer line for the log. A handler that prints it puts that line
+    into a chat — a rotated ``UWP_SECRET_KEY`` used to show it to a Russian
+    admin — so a login handler renders every refusal through this one function.
+    A ``ValueError`` without a code is a sentence a service wrote for the admin;
+    it passes through unchanged.
+    """
+    code = getattr(error, "code", None)
+    detail = getattr(error, "detail", None)
+    if isinstance(code, str) and has_key(lang, code):
+        try:
+            return t(lang, code, **(detail if isinstance(detail, dict) else {}))
+        except KeyError:
+            # The code is ours but the sentence needs a value nobody supplied;
+            # the developer line beats losing the answer to the button press.
+            return str(error)
+    return str(error)
+

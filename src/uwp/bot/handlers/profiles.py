@@ -185,7 +185,9 @@ def build_router(settings, deps) -> Router:
         try:
             info = await vnc.request(profile_id, started_by=callback.from_user.id)
         except ValueError as exc:
-            await callback.answer(str(exc), show_alert=True)
+            # ``SecretUnreadable`` is a ``ValueError`` (the CLI and the worker
+            # catch that type) but its ``str()`` is an English developer line.
+            await callback.answer(texts.coded_error(lang, exc), show_alert=True)
             return
         await callback.message.answer(
             texts.vnc_session(lang, info, settings.vnc_ttl_minutes),

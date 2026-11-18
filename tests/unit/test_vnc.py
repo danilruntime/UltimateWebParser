@@ -380,7 +380,7 @@ async def test_default_factory_reports_storepasswd_failure(tmp_path, monkeypatch
     monkeypatch.setattr(vnc, "_spawn", fake_spawn)
     await _pretend_ready(monkeypatch, vnc)
 
-    with pytest.raises(RuntimeError, match="storepasswd"):
+    with pytest.raises(vnc.VncStartError, match="storepasswd") as caught:
         await vnc._default_process_factory(settings)(
             display=100,
             port=6100,
@@ -389,6 +389,8 @@ async def test_default_factory_reports_storepasswd_failure(tmp_path, monkeypatch
             url="https://example.com",
             proxy_url=None,
         )
+
+    assert caught.value.code == "error.vnc.storepasswd_failed"
 
 
 async def test_default_factory_kills_partial_stack_on_failure(tmp_path, monkeypatch):
@@ -1288,3 +1290,30 @@ async def test_expired_reservation_is_not_launched(env):
 
     assert (await repo.get(info.session_id)).status == VncStatus.stopped
     assert procs == []
+
+
+async def test_a_busy_profile_is_a_coded_error_not_an_english_sentence(env):
+    """The alert is rendered by the handler, so the reason has to be a code."""
+    from uwp import vnc
+
+    settings, db, profiles, pid = env
+    mgr = _manager(settings, db, [])
+    await profiles.update(pid, status=str(ProfileStatus.locked))
+
+    with pytest.raises(vnc.VncLoginError) as caught:
+        await mgr.reserve(await profiles.get(pid), "https://example.com")
+
+    assert caught.value.code == "error.vnc.profile_busy"
+
+
+async def test_a_non_persistent_profile_is_a_coded_error(env):
+    from uwp import vnc
+
+    settings, db, profiles, pid = env
+    mgr = _manager(settings, db, [])
+    await profiles.update(pid, kind=str(ProfileKind.clean))
+
+    with pytest.raises(vnc.VncLoginError) as caught:
+        await mgr.reserve(await profiles.get(pid), "https://example.com")
+
+    assert caught.value.code == "error.vnc.profile_not_persistent"

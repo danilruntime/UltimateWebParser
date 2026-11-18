@@ -52,6 +52,22 @@ class VncStartError(RuntimeError):
         self.code = code
         self.detail = detail
         super().__init__(message)
+
+
+class VncLoginError(ValueError):
+    """A login session cannot be opened; ``code`` names the reason for the chat.
+
+    A ``ValueError`` on purpose: the bot handlers around the login buttons
+    already catch that type, and the CLI does too. ``str()`` stays an English
+    developer line for the log; a handler must render ``code`` instead.
+    """
+
+    def __init__(self, message: str, code: str, **detail: object) -> None:
+        self.code = code
+        self.detail = detail
+        super().__init__(message)
+
+
 # Chromium refuses to navigate to its "unsafe" ports, and the default VNC band
 # starts at 6000 — the X11 port. A link on 6000 opens with ERR_UNSAFE_PORT in
 # the admin's own browser, so those ports are never handed out.
@@ -403,7 +419,9 @@ def _default_process_factory(
             ["x11vnc", "-storepasswd", password, str(password_file)], env=base_env
         )
         if await store.wait() != 0:
-            raise RuntimeError("x11vnc -storepasswd failed")
+            raise VncStartError(
+                "x11vnc -storepasswd failed", "error.vnc.storepasswd_failed"
+            )
 
         # The RFB listener stays inside the container on a private band; only
         # the websockify/noVNC port is published.
@@ -589,13 +607,19 @@ class VncManager:
 
     @staticmethod
     def _check_profile(profile: Profile) -> None:
-        """Reject profiles a login session cannot use."""
+        """Reject profiles a login session cannot use; the code reaches the chat."""
         if profile.kind != ProfileKind.persistent:
-            raise ValueError("VNC login requires a persistent profile")
+            raise VncLoginError(
+                "VNC login requires a persistent profile",
+                "error.vnc.profile_not_persistent",
+            )
         if profile.status != ProfileStatus.free:
-            raise ValueError(f"profile is not free: {profile.status}")
+            raise VncLoginError(
+                f"profile is not free: {profile.status}",
+                "error.vnc.profile_busy",
+            )
         if profile.id is None:
-            raise ValueError("profile is not stored")
+            raise VncLoginError("profile is not stored", "error.vnc.profile_unsaved")
 
     async def _emit(self, kind: str, session: VncSession, **payload: Any) -> None:
         """Queue a VNC notification; never let it break the session itself."""
@@ -766,7 +790,7 @@ class VncManager:
             return None, None
         proxy = await self.proxies.resolved(proxy_id)
         if proxy is None:
-            raise ValueError(f"proxy {proxy_id} not found")
+            raise VncLoginError(f"proxy {proxy_id} not found", "error.proxy.not_found")
         factory = self.bridge_factory
         if factory is None:
             from uwp.proxybridge import ProxyBridge

@@ -47,6 +47,17 @@ CATALOG: dict[Lang, dict[str, str]] = {
         ),
         # --- VNC ----------------------------------------------------------
         "error.vnc.session_not_found": "сессия {id} не найдена",
+        # A profile a login cannot use: ``vnc.py`` raises these as codes.
+        "error.vnc.profile_not_persistent": (
+            "для входа нужен постоянный профиль, а не временный"
+        ),
+        "error.vnc.profile_busy": (
+            "профиль уже занят: закройте сессию входа или дождитесь её завершения"
+        ),
+        "error.vnc.profile_unsaved": "профиль ещё не сохранён",
+        "error.vnc.storepasswd_failed": (
+            "x11vnc не сохранил пароль сессии"
+        ),
         # The stack's own failures: ``vnc.py`` emits a code, delivery renders it.
         "error.vnc.port_taken": (
             "порт {port} уже занят: похоже, запущен второй стек UWP"
@@ -94,6 +105,16 @@ CATALOG: dict[Lang, dict[str, str]] = {
             "cannot decrypt the stored secret: check UWP_SECRET_KEY"
         ),
         "error.vnc.session_not_found": "session {id} not found",
+        "error.vnc.profile_not_persistent": (
+            "VNC login needs a persistent profile, not a temporary one"
+        ),
+        "error.vnc.profile_busy": (
+            "the profile is already in use: finish the login session or wait"
+        ),
+        "error.vnc.profile_unsaved": "the profile is not stored yet",
+        "error.vnc.storepasswd_failed": (
+            "x11vnc could not store the session password"
+        ),
         "error.vnc.port_taken": (
             "port {port} is already taken: a second UWP stack looks alive"
         ),

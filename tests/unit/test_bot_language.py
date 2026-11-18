@@ -834,3 +834,127 @@ async def test_the_proxy_check_alert_speaks_the_admins_language():
         ok=False, reason="connection_error", detail="no route & host down"
     )
     assert await alert(refused, Lang.en) == "❌ connection error: no route & host down"
+
+
+# --- a stored secret we cannot read ---------------------------------------
+
+
+def _login_deps(vnc):
+    class _Deps:
+        pass
+
+    deps = _Deps()
+    deps.sites = _Service()
+    deps.profiles = _Service()
+    deps.proxies = _Service()
+    deps.runs = _Service()
+    deps.registry = object()
+    deps.vnc = vnc
+    return deps
+
+
+class _Settings:
+    tz = "UTC"
+    vnc_ttl_minutes = 30
+
+
+@pytest.mark.parametrize(
+    "lang, expected",
+    [
+        (Lang.ru, "не удалось расшифровать секрет: проверьте UWP_SECRET_KEY"),
+        (Lang.en, "cannot decrypt the stored secret: check UWP_SECRET_KEY"),
+    ],
+)
+async def test_the_profile_login_alert_renders_an_unreadable_secret(lang, expected):
+    """A rotated ``UWP_SECRET_KEY`` is by design, so its sentence must translate.
+
+    ``SecretUnreadable`` is a ``ValueError`` whose ``str()`` is an English
+    developer line. The generic ``except ValueError`` printed that line into a
+    Russian chat; the handler must render ``code`` instead.
+    """
+    from uwp.bot.handlers import profiles as profiles_handlers
+    from uwp.secretbox import SecretUnreadable
+
+    class _Vnc:
+        async def request(self, *args, **kwargs):
+            raise SecretUnreadable("error.secret.wrong_key")
+
+    router = profiles_handlers.build_router(_Settings(), _login_deps(_Vnc()))
+    handler = _callback_handler(router, "start_login")
+    callback = _Callback("profile:login:4")
+
+    await handler(callback, lang=lang)
+
+    (text, kwargs), = callback.answers
+    assert text == expected
+    assert "the stored secret cannot be decrypted" not in text
+    assert kwargs["show_alert"] is True
+
+
+@pytest.mark.parametrize(
+    "lang, expected",
+    [
+        (Lang.ru, "не удалось расшифровать секрет: проверьте UWP_SECRET_KEY"),
+        (Lang.en, "cannot decrypt the stored secret: check UWP_SECRET_KEY"),
+    ],
+)
+async def test_the_site_login_alert_renders_an_unreadable_secret(lang, expected):
+    """The second login path reaches the same secret and used to print the same line."""
+    from uwp.bot.handlers import sites as sites_handlers
+    from uwp.secretbox import SecretUnreadable
+
+    class _Sites:
+        async def get(self, site_id):
+            return _site(profile_id=7)
+
+    class _Vnc:
+        async def request(self, *args, **kwargs):
+            raise SecretUnreadable("error.secret.wrong_key")
+
+    deps = _login_deps(_Vnc())
+    deps.sites = _Sites()
+    router = sites_handlers.build_router(_Settings(), deps)
+    handler = _callback_handler(router, "login_from_site")
+    callback = _Callback("site:login:3")
+
+    await handler(callback, lang=lang)
+
+    (text, kwargs), = callback.answers
+    assert text == expected
+    assert "the stored secret cannot be decrypted" not in text
+    assert kwargs["show_alert"] is True
+
+
+@pytest.mark.parametrize(
+    "lang, expected",
+    [
+        (
+            Lang.ru,
+            "профиль уже занят: закройте сессию входа или дождитесь её завершения",
+        ),
+        (
+            Lang.en,
+            "the profile is already in use: finish the login session or wait",
+        ),
+    ],
+)
+async def test_a_profile_that_cannot_open_is_answered_in_the_admin_language(
+    lang, expected
+):
+    """``_check_profile`` used to raise English ``ValueError``s into this alert."""
+    from uwp.bot.handlers import profiles as profiles_handlers
+    from uwp.vnc import VncLoginError
+
+    class _Vnc:
+        async def request(self, *args, **kwargs):
+            raise VncLoginError("profile is not free: locked", "error.vnc.profile_busy")
+
+    router = profiles_handlers.build_router(_Settings(), _login_deps(_Vnc()))
+    handler = _callback_handler(router, "start_login")
+    callback = _Callback("profile:login:4")
+
+    await handler(callback, lang=lang)
+
+    (text, kwargs), = callback.answers
+    assert text == expected
+    assert kwargs["show_alert"] is True
