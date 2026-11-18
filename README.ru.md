@@ -33,7 +33,7 @@ docker compose -f compose.split.yaml -f compose.split.hostnet.yaml up -d --build
 > со Steam, но API и схема базы ещё могут меняться между бета-выпусками.
 > Миграции только добавляются, поэтому обновление не теряет строк; откат на
 > предыдущую версию не поддерживается. Известные ограничения —
-> в [`docs/releases/v0.1b1.md`](docs/releases/v0.1b1.md).
+> в [`docs/releases/v0.1b2.md`](docs/releases/v0.1b2.md).
 
 **English version:** [`README.md`](README.md).
 
