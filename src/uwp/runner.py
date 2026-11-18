@@ -120,7 +120,11 @@ class Runner:
         try:
             parser = self.registry.get(site.parser_key)
             if parser is None:
-                raise _ConfigError(f"unknown parser '{site.parser_key}'")
+                raise _ConfigError(
+                    f"unknown parser '{site.parser_key}'",
+                    "error.parser.unknown",
+                    parser=site.parser_key,
+                )
             if cancel is not None and cancel.is_set():
                 outcome.status = RunStatus.canceled
                 return outcome
@@ -177,11 +181,17 @@ class Runner:
         except TimeoutError:
             outcome.error_kind = ErrorKind.transient
             outcome.error = f"run timed out after {self.settings.run_timeout}s"
+            # The sentence is ours; the seconds are its data.
+            outcome.error_code = "error.run.timeout"
+            outcome.error_detail = {"seconds": self.settings.run_timeout}
             outcome.status = RunStatus.failed
             return outcome
         except BrowserUnavailable as exc:
             outcome.error_kind = ErrorKind.config_error
             outcome.error = str(exc)
+            # ``browser`` says "fingerprint-chromium not found; run `uwp browser
+            # install`" — correct, but English and written for a terminal.
+            outcome.error_code = "error.browser.missing"
             outcome.status = RunStatus.failed
             return outcome
         except ProfileInUse as exc:
@@ -204,6 +214,8 @@ class Runner:
         except _ConfigError as exc:
             outcome.error_kind = ErrorKind.config_error
             outcome.error = str(exc)
+            outcome.error_code = exc.code
+            outcome.error_detail = dict(exc.detail)
             outcome.status = RunStatus.failed
             return outcome
         except Exception as exc:  # any other failure is a parser bug
@@ -294,13 +306,24 @@ class Runner:
     async def _acquire_profile(self, site: Site, run_id: int) -> Profile:
         if site.profile_mode == ProfileKind.persistent:
             if site.profile_id is None:
-                raise _ConfigError("site has no persistent profile assigned")
+                raise _ConfigError(
+                    "site has no persistent profile assigned",
+                    "error.profile.none_assigned",
+                )
             ttl = self.settings.run_timeout + LEASE_MARGIN_SECONDS
             if not await self.profiles.lease(site.profile_id, ttl):
-                raise _ConfigError(f"profile busy: {site.profile_id}")
+                raise _ConfigError(
+                    f"profile busy: {site.profile_id}",
+                    "error.profile.locked",
+                    id=site.profile_id,
+                )
             profile = await self.profiles.repo.get(site.profile_id)
             if profile is None:
-                raise _ConfigError(f"profile {site.profile_id} not found")
+                raise _ConfigError(
+                    f"profile {site.profile_id} not found",
+                    "error.profile.not_found",
+                    id=site.profile_id,
+                )
             return profile
         return await self.profiles.create_clean(run_id)
 
@@ -329,7 +352,14 @@ class Runner:
         try:
             parser_settings = parser.settings_model(**site.parser_settings)
         except Exception as exc:  # bad site settings are a config error
-            raise _ConfigError(f"invalid parser settings: {exc}") from exc
+            # pydantic's message names the field and the bad value; it is the
+            # detail of our sentence, not a sentence of its own.
+            raise _ConfigError(
+                f"invalid parser settings: {exc}",
+                "error.parser.invalid_settings",
+                # ``error_detail`` is stored as JSON, so the value is a string.
+                detail=str(exc),
+            ) from exc
         return ParseContext(
             page=session.page,
             context=session.context,
@@ -399,7 +429,20 @@ class Runner:
 
 
 class _ConfigError(Exception):
-    """A run cannot start because of configuration; mapped to ``config_error``."""
+    """A run cannot start because of configuration; mapped to ``config_error``.
+
+    The message is an English developer line for ``runs.error`` and the log. A
+    sentence the admin reads is ours, so the raise site also names its catalogue
+    key and values; ``delivery`` renders those in the recipient's language, the
+    same way ``ProfileInUse`` does (see ``browser.py``).
+    """
+
+    def __init__(
+        self, message: str, code: str | None = None, **detail: object
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.detail = detail
 
 
 def _stored_error(outcome: RunOutcome) -> str | None:

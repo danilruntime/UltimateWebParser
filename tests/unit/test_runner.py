@@ -345,6 +345,8 @@ async def test_unexpected_exception_is_parser_error(env):
     assert out.status == RunStatus.failed
     assert out.error_kind == ErrorKind.parser_error and "kaboom" in out.error
     assert "Traceback" in out.error
+    # A parser bug is data we cannot translate: no code, the text goes raw.
+    assert out.error_code is None
     assert sessions[0].closed
     run = (await RunsRepo(db).list_for_site(1))[0]
     assert run.status == RunStatus.failed
@@ -356,6 +358,10 @@ async def test_timeout_is_transient(env):
     out = await runner.run(site, job, proxy=None)
     assert out.status == RunStatus.failed
     assert out.error_kind == ErrorKind.transient and "timed out" in out.error
+    # The sentence is ours: delivery renders the code in the reader's language
+    # and the English here is only the developer line in ``runs.error``.
+    assert out.error_code == "error.run.timeout"
+    assert out.error_detail == {"seconds": 1}
     assert sessions[0].closed
     assert (await ProfilesRepo(db).list())[0].status == ProfileStatus.expired
 
@@ -370,6 +376,7 @@ async def test_browser_unavailable_is_config_error(env):
     out = await runner.run(site, job, proxy=None)
     assert out.status == RunStatus.failed and out.error_kind == ErrorKind.config_error
     assert "fingerprint-chromium" in out.error
+    assert out.error_code == "error.browser.missing"
     assert (await ProfilesRepo(db).list())[0].status == ProfileStatus.expired
 
 
@@ -433,7 +440,78 @@ async def test_busy_persistent_profile_is_config_error(env):
     out = await runner.run(site, job, proxy=None)
     assert out.status == RunStatus.failed and out.error_kind == ErrorKind.config_error
     assert "profile busy" in out.error
+    assert out.error_code == "error.profile.locked"
+    assert out.error_detail == {"id": profile.id}
     assert launches == []
+
+
+async def test_a_missing_persistent_profile_is_a_coded_config_error(env):
+    """Leasing a row that vanished must not end in an English sentence."""
+    runner, site, job, _, _, launches, _ = env
+    profile = await runner.profiles.create_persistent("main")
+    site = site.model_copy(
+        update={"profile_mode": ProfileKind.persistent, "profile_id": profile.id}
+    )
+    # The lease succeeds on a row the following read cannot see: the race the
+    # review measured between `lease` and `repo.get`.
+    original_lease = runner.profiles.lease
+
+    async def lease_then_lose(profile_id, ttl):
+        await original_lease(profile_id, ttl)
+        await runner.profiles.repo.delete(profile_id)
+        return True
+
+    runner.profiles.lease = lease_then_lose
+
+    out = await runner.run(site, job, proxy=None)
+
+    assert out.status == RunStatus.failed and out.error_kind == ErrorKind.config_error
+    assert out.error_code == "error.profile.not_found"
+    assert out.error_detail == {"id": profile.id}
+    assert launches == []
+
+
+async def test_a_site_without_a_profile_is_a_coded_config_error(env):
+    """Measured in a Russian chat: «не удался: site has no persistent profile»."""
+    runner, site, job, _, _, launches, _ = env
+    site = site.model_copy(update={"profile_mode": ProfileKind.persistent})
+
+    out = await runner.run(site, job, proxy=None)
+
+    assert out.status == RunStatus.failed and out.error_kind == ErrorKind.config_error
+    assert out.error_code == "error.profile.none_assigned"
+    assert launches == []
+
+
+async def test_bad_parser_settings_are_a_coded_config_error(env):
+    """pydantic's own message is English; the site's config is ours to name."""
+    from pydantic import BaseModel
+
+    class StrictSettings(BaseModel):
+        wait_seconds: int
+
+    class StrictParser(FakeParser):
+        key = "strict"
+        settings_model = StrictSettings
+
+    runner, _site, job, _, _, _, _ = env
+    runner.registry.register(StrictParser())
+    site = Site(
+        id=1,
+        slug="s",
+        name="S",
+        parser_key="strict",
+        interval_min_min=1,
+        interval_max_min=2,
+        parser_settings={"wait_seconds": "soon"},
+    )
+
+    out = await runner.run(site, job, proxy=None)
+
+    assert out.status == RunStatus.failed and out.error_kind == ErrorKind.config_error
+    assert out.error_code == "error.parser.invalid_settings"
+    # The pydantic text is the detail: it names the field and the bad value.
+    assert "wait_seconds" in out.error_detail["detail"]
 
 
 async def test_a_profile_held_by_a_live_browser_is_a_clear_config_error(env):
@@ -503,6 +581,8 @@ async def test_unknown_parser_is_config_error(env):
     out = await runner.run(site, job, proxy=None)
     assert out.status == RunStatus.failed and out.error_kind == ErrorKind.config_error
     assert "nope" in out.error
+    assert out.error_code == "error.parser.unknown"
+    assert out.error_detail == {"parser": "nope"}
     assert launches == []
 
 

@@ -75,6 +75,18 @@ CATALOG: dict[Lang, dict[str, str]] = {
         # --- sites --------------------------------------------------------
         "error.site.not_found": "сайт {id} не найден",
         "error.parser.unknown": "неизвестный парсер: {parser}",
+        "error.parser.invalid_settings": (
+            "нерабочие настройки парсера: {detail}"
+        ),
+        # --- a run -------------------------------------------------------
+        "error.profile.none_assigned": (
+            "у сайта нет постоянного профиля: выберите его в настройках"
+        ),
+        "error.run.timeout": "прогон не уложился в {seconds} с",
+        "error.browser.missing": (
+            "браузер fingerprint-chromium не найден: запустите "
+            "«uwp browser install»"
+        ),
     },
     Lang.en: {
         "error.proxy.bad_scheme": "unsupported proxy scheme: {scheme}",
@@ -130,5 +142,14 @@ CATALOG: dict[Lang, dict[str, str]] = {
         ),
         "error.site.not_found": "site {id} not found",
         "error.parser.unknown": "unknown parser: {parser}",
+        "error.parser.invalid_settings": "invalid parser settings: {detail}",
+        "error.profile.none_assigned": (
+            "the site has no persistent profile: pick one in its settings"
+        ),
+        "error.run.timeout": "the run did not finish within {seconds} s",
+        "error.browser.missing": (
+            "the fingerprint-chromium browser is missing: run "
+            "“uwp browser install”"
+        ),
     },
 }

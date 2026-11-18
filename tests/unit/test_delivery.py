@@ -1,5 +1,6 @@
 """Tests for the event delivery loop that pushes notifications to admins."""
 import asyncio
+import logging
 from datetime import timedelta
 
 import pytest
@@ -372,6 +373,8 @@ async def test_a_login_wall_offers_the_profile_button(env):
 
     buttons = bot.messages[0][2].inline_keyboard[0]
     assert [b.callback_data for b in buttons] == ["profile:login:7", "run:retry:3"]
+    # A parser's own words are data we cannot translate: passed through raw.
+    assert "нужен вход" in bot.messages[0][1]
 
 
 async def test_a_chat_not_found_is_dropped_not_retried_forever(env):
@@ -549,7 +552,7 @@ async def test_a_switched_language_applies_without_a_restart(env):
     ]
 
 
-async def test_a_failing_language_lookup_still_delivers(env):
+async def test_a_failing_language_lookup_still_delivers(env, caplog):
     """A locked database must not silence a report: fall back and send it."""
     settings, bus, _tmp_path = env
     bot = FakeBot()
@@ -560,10 +563,17 @@ async def test_a_failing_language_lookup_still_delivers(env):
     delivery = EventDelivery(bot, bus, settings, language_for=language_for)
     await bus.emit("vnc_stopped", payload={})
 
-    await delivery.tick()
+    with caplog.at_level(logging.ERROR, logger="uwp.bot.delivery"):
+        await delivery.tick()
 
     assert len(bot.messages) == 2
     assert all(text == "🖥 Сессия входа завершена." for _, text, *_ in bot.messages)
+    # An operator greps for errors: this was a WARNING while ``middleware``
+    # logs the same failure at ERROR.
+    assert any(
+        record.levelno == logging.ERROR and "language" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 async def test_the_failure_buttons_are_localised(env):
@@ -621,6 +631,36 @@ async def test_our_own_failure_reason_is_rendered_in_the_readers_language(env):
     russian = next(text for admin, text, *_ in bot.messages if admin == 222)
     assert "UWP_SECRET_KEY" in english and "зашифрован" not in english
     assert "UWP_SECRET_KEY" in russian and "зашифрован" in russian
+
+
+async def test_a_missing_profile_reason_is_rendered_for_the_recipient(env):
+    """Measured: a Russian chat showed "site has no persistent profile assigned"."""
+    settings, bus, _tmp_path = env
+    bot = FakeBot()
+    spoken = {111: "en", 222: "ru"}
+
+    async def language_for(admin_id):
+        return spoken[admin_id]
+
+    delivery = EventDelivery(bot, bus, settings, language_for=language_for)
+    await bus.emit(
+        "run_failed",
+        payload={
+            "text": "site has no persistent profile assigned",
+            "error_code": "error.profile.none_assigned",
+            "site": "Steam",
+            "site_id": 5,
+        },
+    )
+
+    await delivery.tick()
+
+    english = next(text for admin, text, *_ in bot.messages if admin == 111)
+    russian = next(text for admin, text, *_ in bot.messages if admin == 222)
+    assert "no persistent profile" in english
+    assert "нет постоянного профиля" in russian
+    # The English developer line must not leak into the Russian chat.
+    assert "site has no persistent profile assigned" not in russian
 
 
 async def test_an_empty_reason_falls_back_to_the_unknown_error(env):

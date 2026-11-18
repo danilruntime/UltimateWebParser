@@ -579,6 +579,28 @@ async def test_an_unreadable_proxy_secret_becomes_a_code_not_a_sentence(env):
     assert event.payload["error_kind"] == "config_error"
 
 
+async def test_the_runner_config_code_travels_to_delivery(env):
+    """A runner ``_ConfigError`` now carries a code; the worker must not drop it."""
+    db, sites, jobs, sid = env
+    settings = Settings()
+    bus = EventBus(EventsRepo(db), AdminsRepo(db), settings)
+    outcome = RunOutcome(
+        status=RunStatus.failed,
+        error_kind=ErrorKind.config_error,
+        error="site has no persistent profile assigned",
+        error_code="error.profile.none_assigned",
+    )
+    worker = _worker(settings, db, jobs, sites, FakeRunner(outcome))
+    worker.bus = bus
+    await jobs.create(sid, "scheduled")
+
+    await worker.process_one(NOW)
+
+    (event,) = await bus.pending(111, NOW)
+    assert event.payload["error_code"] == "error.profile.none_assigned"
+    assert event.payload["error_kind"] == "config_error"
+
+
 async def test_the_profile_detail_travels_to_delivery(env):
     """The code says "another browser"; the pid says which one."""
     from uwp.browser import ProfileInUse

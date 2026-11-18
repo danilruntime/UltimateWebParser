@@ -159,9 +159,13 @@ class EventDelivery:
                 resolved = normalize(await self.language_for(admin_id))
             except Exception:
                 # A DB hiccup must not silence a report: the fallback below is
-                # the same language an admin with no choice would get.
-                log.warning(
-                    "cannot read the language of %s", admin_id, exc_info=True
+                # the same language an admin with no choice would get. Logged at
+                # ERROR for the same reason as ``LanguageMiddleware``: a locked
+                # table is an outage, and an operator greps for errors.
+                log.exception(
+                    "cannot read the language of %s; "
+                    "falling back to the deployment language",
+                    admin_id,
                 )
                 resolved = None
             if resolved is not None:
