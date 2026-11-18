@@ -240,10 +240,11 @@ $(git status --short)"
     [[ $(git rev-parse HEAD) == $(git rev-parse origin/main) ]] ||
         die "локальный main расходится с origin/main: сначала git pull"
 
-    local current next previous
+    local current previous
     current=$(current_version)
     [[ -n $current ]] || die "в $PYPROJECT нет строки version"
     next=$(compute_next "$current" "$kind")
+    NOTES_FILE="$NOTES_DIR/v$next.md"
     previous=$(git describe --tags --abbrev=0 2>/dev/null || true)
 
     # A tag is immutable in practice: unlike a commit, a pushed one cannot be
@@ -268,11 +269,24 @@ $(git status --short)"
     # left a bumped pyproject, an edited README and a notes file behind, and the
     # next invocation refused because the tree was dirty — the script had
     # blocked itself. The originals are captured only when it will write.
-    local rollback=0
+    #
+    # ``rollback`` is deliberately global: the trap runs at EXIT, i.e. after
+    # ``main`` has returned and its locals are gone. As a ``local`` it was
+    # unbound there, `set -u` killed the trap, and *every* successful release
+    # exited 1 — a script that created the tag and then reported failure, so
+    # `./scripts/release.sh beta && git push` never ran the second half.
+    rollback=0
     _restore() {
         ((rollback)) || return 0
+        # Unstage first: ``git add -A`` precedes the commit, and
+        # ``git checkout --`` restores from the *index*. Without the reset an
+        # interrupted commit left the bump staged and the next run refused
+        # because the tree was dirty — the same self-block, one step later.
+        git reset --quiet HEAD -- "$PYPROJECT" "$INIT" "$README_EN" "$README_RU" \
+            2>/dev/null || true
         git checkout -- "$PYPROJECT" "$INIT" "$README_EN" "$README_RU" 2>/dev/null || true
-        rm -f "$NOTES_DIR/v$next.md"
+        # Global for the same reason as ``rollback``: the trap outlives main.
+        [[ -n ${NOTES_FILE:-} ]] && rm -f "$NOTES_FILE"
         printf 'изменения отменены: дерево как было\n' >&2
     }
     trap '_restore' EXIT

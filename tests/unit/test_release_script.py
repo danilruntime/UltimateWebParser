@@ -9,7 +9,9 @@ a pure function of (current, kind) and needs no repository.
 
 from __future__ import annotations
 
+import os
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -171,3 +173,72 @@ def test_the_script_does_not_run_the_suite_with_the_system_interpreter():
     assert "RELEASE_PYTHON" in script
     assert "import pytest" in script
 
+
+
+def test_a_successful_run_exits_zero():
+    """Measured: every successful release exited 1.
+
+    ``rollback`` and ``next`` were ``local`` to ``main``, but the ``trap`` runs
+    at EXIT — after ``main`` returned and its locals were gone. Under
+    ``set -u`` the trap itself died with "rollback: unbound variable", which
+    turned a created tag into a failed command: `./scripts/release.sh beta &&
+    git push` never pushed, and CI read the release as broken. The script is run
+    here in a throwaway repository, because exit status is the whole point.
+    """
+    _made: list[Path] = []
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "t@example.com"], cwd=root, check=True
+        )
+        subprocess.run(["git", "config", "user.name", "T"], cwd=root, check=True)
+        (root / "pyproject.toml").write_text('version = "0.1b1"\n')
+        (root / "src" / "uwp").mkdir(parents=True)
+        (root / "src" / "uwp" / "__init__.py").write_text('__version__ = "0.1b1"\n')
+        (root / "README.md").write_text("see docs/releases/v0.1b1.md\n")
+        (root / "README.ru.md").write_text("см. docs/releases/v0.1b1.md\n")
+        (root / "docs" / "releases").mkdir(parents=True)
+        (root / "docs" / "releases" / "v0.1b1.md").write_text("# v0.1b1\n")
+        (root / "scripts").mkdir()
+        (root / "scripts" / "release.sh").write_text(SCRIPT.read_text())
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=root, check=True)
+        subprocess.run(["git", "tag", "-a", "v0.1b1", "-m", "v0.1b1"], cwd=root, check=True)
+        # The origin check compares HEAD with origin/main; point both at the
+        # same commit without a network.
+        subprocess.run(["git", "tag", "origin-main"], cwd=root, check=True)
+        subprocess.run(
+            ["git", "update-ref", "refs/remotes/origin/main", "HEAD"],
+            cwd=root,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "remote", "add", "origin", str(root)], cwd=root, check=True
+        )
+        # One commit after the tag, so "nothing to release" does not fire.
+        (root / "CHANGELOG.md").write_text("x\n")
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "feat: x"], cwd=root, check=True)
+
+        # Outside the repository: the script refuses a dirty tree, and an
+        # untracked helper inside it would be exactly that.
+        fake = Path(tmp).parent / f"{Path(tmp).name}-fakepy"
+        fake.write_text("#!/bin/sh\nexit 0\n")
+        fake.chmod(0o755)
+        _made.append(fake)
+
+        result = subprocess.run(
+            ["bash", str(root / "scripts" / "release.sh"), "beta", "--no-push"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            env={**os.environ, "RELEASE_PYTHON": str(fake)},
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert "unbound" not in result.stderr
+
+    for path in _made:
+        path.unlink(missing_ok=True)
