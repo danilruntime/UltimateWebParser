@@ -106,7 +106,11 @@ class ProxyService:
 
     @property
     def lang(self) -> Lang:
-        """The deployment language for the service's own ``ValueError`` text."""
+        """The deployment language: the *fallback* for the service's refusals.
+
+        The bot passes its reader's language to :meth:`add`; the CLI and the
+        worker have no admin in context and take this one.
+        """
         return Lang(self.settings.default_language)
 
     async def resolved(self, proxy_id: int) -> Proxy | None:
@@ -118,9 +122,17 @@ class ProxyService:
             update={"password": secretbox.decrypt(proxy.password, self.settings.secret_key)}
         )
 
-    async def add(self, name: str, url: str) -> Proxy:
-        """Store a proxy from a URL, encrypting the password when a key is set."""
-        proxy = parse_proxy_url(url, self.lang)
+    async def add(
+        self, name: str, url: str, *, lang: Lang | None = None
+    ) -> Proxy:
+        """Store a proxy from a URL, encrypting the password when a key is set.
+
+        ``lang`` is the reader's language: the bot has one admin in front of it
+        and passes theirs, while the CLI passes nothing and gets the
+        deployment's.
+        """
+        reader = lang or self.lang
+        proxy = parse_proxy_url(url, reader)
         proxy.name = name.strip() or proxy.host
         if proxy.password and self.settings.secret_key:
             proxy.password = secretbox.encrypt(proxy.password, self.settings.secret_key)
@@ -130,7 +142,7 @@ class ProxyService:
             # ``proxies.name`` is UNIQUE; an admin reusing a name deserves a
             # sentence, not a traceback in the log.
             raise ValueError(
-                t(self.lang, "error.proxy.duplicate", name=proxy.name)
+                t(reader, "error.proxy.duplicate", name=proxy.name)
             ) from None
         return proxy
 

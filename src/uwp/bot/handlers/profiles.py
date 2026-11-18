@@ -141,7 +141,7 @@ def build_router(settings, deps) -> Router:
     @router.message(ProfileNameInput.waiting)
     async def create_profile(message: Message, state: FSMContext, lang: Lang) -> None:
         try:
-            profile = await profiles.create(message.text or "")
+            profile = await profiles.create(message.text or "", lang=lang)
         except ValueError as exc:
             await message.answer(f"❌ {texts.esc(exc)}")
             return
@@ -168,7 +168,7 @@ def build_router(settings, deps) -> Router:
     async def delete_profile(callback: CallbackQuery, lang: Lang) -> None:
         profile_id = int(callback.data.rsplit(":", 1)[1])
         try:
-            await profiles.delete(profile_id)
+            await profiles.delete(profile_id, lang=lang)
         except ValueError as exc:
             await callback.answer(str(exc), show_alert=True)
             return
@@ -183,7 +183,9 @@ def build_router(settings, deps) -> Router:
     async def start_login(callback: CallbackQuery, lang: Lang) -> None:
         profile_id = int(callback.data.rsplit(":", 1)[1])
         try:
-            info = await vnc.request(profile_id, started_by=callback.from_user.id)
+            info = await vnc.request(
+                profile_id, started_by=callback.from_user.id, lang=lang
+            )
         except ValueError as exc:
             # ``SecretUnreadable`` is a ``ValueError`` (the CLI and the worker
             # catch that type) but its ``str()`` is an English developer line.
@@ -233,7 +235,7 @@ def build_router(settings, deps) -> Router:
         if not url:
             name, url = "", text
         try:
-            await proxies.add(name, url)
+            await proxies.add(name, url, lang=lang)
         except ValueError as exc:
             await message.answer(
                 f"❌ {texts.esc(exc)}\n{texts.ask_proxy(lang)}"
@@ -298,7 +300,16 @@ def build_router(settings, deps) -> Router:
 
     @router.callback_query(F.data.regexp(r"^vnc:extend:\d+$"))
     async def vnc_extend(callback: CallbackQuery, lang: Lang) -> None:
-        session = await vnc.extend(int(callback.data.rsplit(":", 1)[1]))
+        try:
+            session = await vnc.extend(
+                int(callback.data.rsplit(":", 1)[1]), lang=lang
+            )
+        except ValueError as exc:
+            # The session row is swept after its TTL: a card older than an hour
+            # still carries this button, and an unanswered callback leaves the
+            # admin's spinner running until Telegram times it out.
+            await callback.answer(texts.coded_error(lang, exc), show_alert=True)
+            return
         remaining = await vnc.remaining_minutes(session)
         await callback.answer(
             texts.vnc_extended(lang, remaining), show_alert=True

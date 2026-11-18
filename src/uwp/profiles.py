@@ -15,7 +15,7 @@ from pathlib import Path
 from uwp.config import Settings
 from uwp.db.repo.profiles import ProfilesRepo
 from uwp.domain import Profile, ProfileKind, ProfileStatus
-from uwp.i18n import t
+from uwp.i18n import Lang, t
 from uwp.timeutil import utcnow
 
 CLEAN_TTL = timedelta(hours=24)
@@ -249,9 +249,16 @@ class ProfileManager:
         name: str,
         identity: Identity | None = None,
         proxy_id: int | None = None,
+        *,
+        lang: Lang | None = None,
     ) -> Profile:
-        """Create a persistent profile with a fixed folder and identity."""
+        """Create a persistent profile with a fixed folder and identity.
+
+        ``lang`` is the reader's language for the duplicate refusal; ``None``
+        means the deployment's, which is what the CLI and the worker have.
+        """
         identity = identity or random_identity()
+        lang = lang or Lang(self.settings.default_language)
         user_data_dir = self.settings.profiles_dir / str(uuid.uuid4())
         user_data_dir.mkdir(parents=True, exist_ok=True)
         profile = Profile(
@@ -274,7 +281,7 @@ class ProfileManager:
             # a crash, and the bot must say so in the wizard.
             shutil.rmtree(user_data_dir, ignore_errors=True)
             raise ValueError(
-                t(self.settings.default_language, "error.profile.duplicate", name=name)
+                t(lang, "error.profile.duplicate", name=name)
             ) from None
         except BaseException:
             shutil.rmtree(user_data_dir, ignore_errors=True)
@@ -334,14 +341,22 @@ class ProfileManager:
             removed += 1
         return removed
 
-    async def delete(self, profile_id: int) -> None:
-        """Remove a profile and its folder; refuses a locked persistent profile."""
+    async def delete(self, profile_id: int, *, lang: Lang | None = None) -> None:
+        """Remove a profile and its folder; refuses a locked persistent profile.
+
+        ``lang`` is the reader's language for that refusal; ``None`` means the
+        deployment's, which is what the CLI and the worker have.
+        """
         profile = await self.repo.get(profile_id)
         if profile is None:
             return
         if profile.kind == ProfileKind.persistent and profile.status == ProfileStatus.locked:
             raise ValueError(
-                t(self.settings.default_language, "error.profile.locked", id=profile_id)
+                t(
+                    lang or Lang(self.settings.default_language),
+                    "error.profile.locked",
+                    id=profile_id,
+                )
             )
         shutil.rmtree(profile.user_data_dir, ignore_errors=True)
         await self.repo.delete(profile_id)

@@ -137,7 +137,10 @@ def build_router(settings, deps) -> Router:
             return
         try:
             info = await deps.vnc.request(
-                site.profile_id, site_id=site.id, started_by=callback.from_user.id
+                site.profile_id,
+                site_id=site.id,
+                started_by=callback.from_user.id,
+                lang=lang,
             )
         except ValueError as exc:
             # Same rule as the profile card: render the code, never ``str()``.

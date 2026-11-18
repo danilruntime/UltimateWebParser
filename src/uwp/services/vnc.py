@@ -10,7 +10,7 @@ from uwp.db.repo.profiles import ProfilesRepo
 from uwp.db.repo.sites import SitesRepo
 from uwp.db.repo.vnc import VncRepo
 from uwp.domain import VncSession
-from uwp.i18n import t
+from uwp.i18n import Lang, t
 from uwp.timeutil import utcnow
 from uwp.vnc import VncInfo, VncManager
 
@@ -43,18 +43,29 @@ class VncService:
         # and the worker launches it on its next tick.
         self.eager_launch = eager_launch
 
+    @property
+    def lang(self) -> Lang:
+        """The deployment language: the fallback when no reader is in context."""
+        return Lang(self.settings.default_language)
+
     async def request(
         self,
         profile_id: int,
         site_id: int | None = None,
         started_by: int | None = None,
+        *,
+        lang: Lang | None = None,
     ) -> VncInfo:
-        """Open a login session for a persistent profile."""
+        """Open a login session for a persistent profile.
+
+        ``lang`` is the reader's language: the bot passes the admin's, while the
+        CLI passes nothing and gets the deployment's.
+        """
         profile = await self.profiles.get(profile_id)
         if profile is None:
             raise ValueError(
                 t(
-                    self.settings.default_language,
+                    lang or self.lang,
                     "error.profile.not_found",
                     id=profile_id,
                 )
@@ -91,14 +102,21 @@ class VncService:
         return await self.sessions.active_or_stopping(profile_id)
 
     async def extend(
-        self, session_id: int, minutes: int = EXTEND_MINUTES
+        self,
+        session_id: int,
+        minutes: int = EXTEND_MINUTES,
+        *,
+        lang: Lang | None = None,
     ) -> VncSession:
-        """Push a session's hard TTL further so the admin can keep working."""
+        """Push a session's hard TTL further so the admin can keep working.
+
+        ``lang`` is the reader's language for the missing-session refusal.
+        """
         session = await self.sessions.get(session_id)
         if session is None:
             raise ValueError(
                 t(
-                    self.settings.default_language,
+                    lang or self.lang,
                     "error.vnc.session_not_found",
                     id=session_id,
                 )
