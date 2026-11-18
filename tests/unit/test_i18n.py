@@ -53,18 +53,21 @@ def test_t_raises_on_an_unknown_key():
 
 
 def test_t_formats_placeholders_for_both_languages():
-    assert t(Lang.ru, "bot.error.not_found", name="Сайт") == "Сайт не найден"
-    assert t(Lang.en, "bot.error.not_found", name="Site") == "Site not found"
+    assert (
+        t(Lang.ru, "cli.site.not_found", slug="steam")
+        == "❌ Сайт «steam» не найден."
+    )
+    assert t(Lang.en, "cli.site.not_found", slug="steam") == "❌ Site “steam” not found."
 
 
 def test_t_without_kwargs_returns_the_template_verbatim():
     """A literal ``{`` must not reach ``str.format`` and raise there."""
-    assert t(Lang.ru, "bot.error.not_found") == "{name} не найден"
+    assert t(Lang.ru, "cli.site.not_found") == "❌ Сайт «{slug}» не найден."
 
 
 def test_has_key_reports_what_the_catalogue_holds():
-    assert has_key(Lang.ru, "bot.error.not_found") is True
-    assert has_key("en", "cli.ok") is True
+    assert has_key(Lang.ru, "bot.error.site_not_found") is True
+    assert has_key("en", "cli.init.skipped") is True
     assert has_key(Lang.en, "bot.missing") is False
 
 

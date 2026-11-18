@@ -15,7 +15,6 @@ from uwp.i18n import Lang
 CATALOG: dict[Lang, dict[str, str]] = {
     Lang.ru: {
         # --- shared words -------------------------------------------------
-        "bot.error.not_found": "{name} не найден",
         "bot.error.access_denied": "⛔ Доступ только для администратора.",
         "bot.error.site_not_found": "Сайт не найден",
         "bot.error.profile_not_found": "Профиль не найден",
@@ -240,7 +239,6 @@ CATALOG: dict[Lang, dict[str, str]] = {
     },
     Lang.en: {
         # --- shared words -------------------------------------------------
-        "bot.error.not_found": "{name} not found",
         "bot.error.access_denied": "⛔ Administrators only.",
         "bot.error.site_not_found": "Site not found",
         "bot.error.profile_not_found": "Profile not found",

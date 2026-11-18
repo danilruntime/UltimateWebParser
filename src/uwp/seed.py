@@ -13,12 +13,23 @@ from uwp.db.database import Database
 from uwp.db.repo.admins import AdminsRepo
 from uwp.db.repo.sites import SitesRepo
 from uwp.domain import Site
+from uwp.i18n import Lang, t
 
 log = logging.getLogger(__name__)
 
 SEED_PARSER = "steam_deals"
 SEED_SITE_SLUG = "steam_skidki"
-SEED_SITE_NAME = "Steam — скидки"
+
+
+def seed_site_name(settings: Settings) -> str:
+    """The example site's name in the deployment's language.
+
+    A literal here named an English deployment's first site «Steam — скидки»
+    while the parser picker next to it said "Steam — deals" — one screen, two
+    names for one thing. The slug never changes: it is what the docs and
+    ``uwp site enable steam_skidki`` point at.
+    """
+    return t(Lang(settings.default_language), "parser.steam_deals.title")
 
 
 async def is_fresh(db: Database) -> bool:
@@ -45,7 +56,7 @@ async def seed(db: Database, settings: Settings) -> bool:
     await sites.create(
         Site(
             slug=SEED_SITE_SLUG,
-            name=SEED_SITE_NAME,
+            name=seed_site_name(settings),
             parser_key=SEED_PARSER,
             enabled=False,
             interval_min_min=45,

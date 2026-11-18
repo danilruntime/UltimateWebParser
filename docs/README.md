@@ -179,11 +179,11 @@ RFB checks only the first eight anyway, and a longer string would display
 characters the server ignores.
 
 The password has a shorter life than the session row: `stop()` writes
-`password = ""` as it marks the row `stopped` (`vnc.py:841`), and a session that
-failed is wiped the same way (`vnc.py:736`, `:768`). The row itself survives as
-history until the hourly housekeeping deletes finished rows older than
-`UWP_VNC_HISTORY_DAYS` (7 days) — that is what keeps a copy of `data/uwp.db`
-from carrying every password ever issued.
+`password = ""` as it marks the row `stopped`, and `launch()` wipes a session
+that failed the same way. The row itself survives as history until the hourly
+housekeeping deletes finished rows older than `UWP_VNC_HISTORY_DAYS` (7 days) —
+that is what keeps a copy of `data/uwp.db` from carrying every password ever
+issued.
 
 #### Access from another machine
 

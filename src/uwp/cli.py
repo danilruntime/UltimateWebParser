@@ -75,14 +75,14 @@ def _find_site(sites, slug: str):
 
 
 def cmd_init(settings: Settings) -> int:
-    from uwp.seed import SEED_SITE_NAME, seed
+    from uwp.seed import seed, seed_site_name
 
     lang = _lang(settings)
 
     async def action(db) -> int:
         created = await seed(db, settings)
         if created:
-            _print(t(lang, "cli.init.site_created", name=SEED_SITE_NAME))
+            _print(t(lang, "cli.init.site_created", name=seed_site_name(settings)))
         else:
             _print(t(lang, "cli.init.skipped"))
         _print(t(lang, "cli.init.db_path", path=settings.db_path))
@@ -619,12 +619,22 @@ def cmd_profile_list(settings: Settings) -> int:
 def cmd_profile_create(settings: Settings, name: str) -> int:
     from uwp.db.repo.profiles import ProfilesRepo
     from uwp.profiles import ProfileManager
+    from uwp.services.profiles import ProfilesService
 
     lang = _lang(settings)
 
     async def action(db) -> int:
         repo = ProfilesRepo(db)
-        profile = await ProfileManager(settings, repo).create_persistent(name)
+        service = ProfilesService(ProfileManager(settings, repo), repo, settings)
+        # Through the service, not the manager: the manager only refuses a
+        # duplicate, while the service also refuses a blank name and renders
+        # both in the CLI's language. ``uwp profile create "   "`` used to
+        # create a profile literally named by spaces.
+        try:
+            profile = await service.create(name, lang=lang)
+        except ValueError as exc:
+            _print(f"❌ {exc}")
+            return 1
         _print(t(lang, "cli.profile.created", id=profile.id, name=profile.name))
         return 0
 
@@ -634,13 +644,15 @@ def cmd_profile_create(settings: Settings, name: str) -> int:
 def cmd_profile_delete(settings: Settings, profile_id: int) -> int:
     from uwp.db.repo.profiles import ProfilesRepo
     from uwp.profiles import ProfileManager
+    from uwp.services.profiles import ProfilesService
 
     lang = _lang(settings)
 
     async def action(db) -> int:
         repo = ProfilesRepo(db)
+        service = ProfilesService(ProfileManager(settings, repo), repo, settings)
         try:
-            await ProfileManager(settings, repo).delete(profile_id)
+            await service.delete(profile_id, lang=lang)
         except ValueError as exc:
             _print(f"❌ {exc}")
             return 1

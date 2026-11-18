@@ -418,3 +418,47 @@ def test_the_cli_still_refuses_in_the_deployment_language(
 
     assert main(["proxy", "add", "DE-1", "http://1.2.3.4:8080"]) == 1
     assert "already exists" in capsys.readouterr().out
+
+
+def test_profile_create_refuses_a_blank_name_instead_of_storing_spaces(
+    capsys, monkeypatch, tmp_path
+):
+    """``uwp profile create "   "`` used to store a profile named by spaces."""
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+
+    assert main(["profile", "create", "   "]) == 1
+    assert "не может быть пустым" in capsys.readouterr().out
+    assert main(["profile", "list"]) == 0
+    assert "Постоянных профилей нет" in capsys.readouterr().out
+
+
+def test_profile_create_reports_a_duplicate_instead_of_a_traceback(
+    capsys, monkeypatch, tmp_path
+):
+    """The CLI called ``ProfileManager`` directly, so the refusal escaped as a
+    traceback while the bot answered the same mistake with a sentence."""
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    main(["profile", "create", "Phone"])
+
+    assert main(["profile", "create", "Phone"]) == 1
+    assert "уже есть" in capsys.readouterr().out
+
+    monkeypatch.setenv("UWP_DEFAULT_LANGUAGE", "en")
+    assert main(["profile", "create", "Phone"]) == 1
+    assert "already exists" in capsys.readouterr().out
+
+
+def test_the_seeded_site_is_named_in_the_deployments_language(
+    capsys, monkeypatch, tmp_path
+):
+    """The seed carried a Russian literal, so an English first run showed the
+    Russian name while the parser picker beside it said "Steam — deals"."""
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("UWP_DEFAULT_LANGUAGE", "en")
+
+    assert main(["init"]) == 0
+    assert "Steam — deals" in capsys.readouterr().out
+
+    # The slug is a stable handle the docs and `uwp site enable` rely on.
+    assert main(["site", "list"]) == 0
+    assert "steam_skidki" in capsys.readouterr().out

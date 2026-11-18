@@ -10,9 +10,6 @@ from uwp.i18n import Lang
 
 CATALOG: dict[Lang, dict[str, str]] = {
     Lang.ru: {
-        # Seed key from Task 1: ``test_i18n.py`` asserts it as the proof that
-        # the CLI domain is merged. Kept even though no command prints it.
-        "cli.ok": "Готово.",
         # --- init ---------------------------------------------------------
         "cli.init.site_created": "Создан сайт «{name}» (выключен).",
         "cli.init.skipped": "Сайты уже есть, сид пропущен.",
@@ -160,7 +157,6 @@ CATALOG: dict[Lang, dict[str, str]] = {
         "cli.help.db_upgrade": "применить миграции",
     },
     Lang.en: {
-        "cli.ok": "Done.",
         "cli.init.site_created": "Created the site “{name}” (disabled).",
         "cli.init.skipped": "Sites already exist; seeding skipped.",
         "cli.init.db_path": "Database: {path}",
