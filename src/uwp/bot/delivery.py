@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -26,6 +27,9 @@ from uwp.i18n import DEFAULT_LANG, Lang, has_key, normalize, t
 from uwp.timeutil import utcnow
 
 log = logging.getLogger(__name__)
+
+# A ``{name}`` or ``{name:spec}`` left unfilled in a rendered sentence.
+_PLACEHOLDER = re.compile(r"\{\w+(?::[^}]*)?\}")
 
 POLL_SECONDS = 5
 PURGE_EVERY_SECONDS = 3600
@@ -313,13 +317,18 @@ def _reason_for(payload: dict, lang: Lang) -> str:
             if isinstance(detail, dict)
             else {}
         )
-        # The catalogue is checked above, but a template can still name a
-        # placeholder the sender did not fill; the raw text is better than a
-        # ``KeyError`` that loses the notice.
         try:
-            return t(lang, code, **values)
+            rendered = t(lang, code, **values)
         except KeyError:
-            log.warning("error code %r is missing a value for %s", code, lang)
+            rendered = ""
+        # ``t()`` skips ``str.format`` entirely when it receives no kwargs, so a
+        # known code whose detail arrived as a string rendered its ``{pid}``
+        # literally and the ``KeyError`` guard never fired. Judge the output,
+        # not the exception: an unfilled placeholder means the sender's detail
+        # cannot render this sentence.
+        if rendered and not _PLACEHOLDER.search(rendered):
+            return rendered
+        log.warning("error code %r has no usable detail for %s", code, lang)
     return _esc(payload.get("text") or payload.get("error") or _unknown_error(lang))
 
 

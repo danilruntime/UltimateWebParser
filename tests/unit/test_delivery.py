@@ -767,3 +767,62 @@ async def test_a_non_dict_reason_detail_does_not_crash_delivery(env):
 
     assert [admin for admin, *_ in bot.messages] == [111, 222]
     assert "UWP_SECRET_KEY" in bot.messages[0][1]
+
+
+async def test_a_known_reason_with_a_non_dict_detail_does_not_leak_its_placeholder(env):
+    """``t()`` skips ``str.format`` when it gets no kwargs.
+
+    ``_reason_for`` guards ``error_detail`` with ``isinstance(..., dict)`` and
+    substituted ``{}``, so ``t()`` returned the template verbatim: the chat
+    showed the literal ``{pid}``. ``except KeyError`` never fired on that path
+    either, because formatting was never attempted.
+    """
+    settings, bus, _tmp_path = env
+    bot = FakeBot()
+
+    async def language_for(admin_id):
+        return "en"
+
+    delivery = EventDelivery(bot, bus, settings, language_for=language_for)
+    await bus.emit(
+        "run_failed",
+        payload={
+            "text": "the profile directory is held by a live browser",
+            "error_code": "error.profile.in_use_same_host",
+            "error_detail": "a string",
+            "site": "Steam",
+            "site_id": 5,
+        },
+    )
+
+    await delivery.tick()
+
+    assert [admin for admin, *_ in bot.messages] == [111, 222]
+    assert "the profile directory is held by a live browser" in bot.messages[0][1]
+    assert "{pid}" not in bot.messages[0][1]
+
+
+async def test_a_known_reason_missing_one_placeholder_falls_back_to_the_raw_text(env):
+    """A detail dict can supply ``host`` but forget the ``pid`` the sentence needs."""
+    settings, bus, _tmp_path = env
+    bot = FakeBot()
+
+    async def language_for(admin_id):
+        return "en"
+
+    delivery = EventDelivery(bot, bus, settings, language_for=language_for)
+    await bus.emit(
+        "run_failed",
+        payload={
+            "text": "profile is open elsewhere",
+            "error_code": "error.profile.in_use_same_host",
+            "error_detail": {"host": "other-host"},
+            "site": "Steam",
+            "site_id": 5,
+        },
+    )
+
+    await delivery.tick()
+
+    assert "profile is open elsewhere" in bot.messages[0][1]
+    assert "{pid}" not in bot.messages[0][1]

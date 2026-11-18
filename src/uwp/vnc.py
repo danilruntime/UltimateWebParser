@@ -735,7 +735,14 @@ class VncManager:
             await self.sessions.update(
                 session.id, status=str(VncStatus.failed), password=""
             )
-            raise ValueError(f"profile {session.profile_id} not found")
+            # A profile deleted between ``reserve`` and this launch. The raise
+            # happens before the ``try`` below, so it travels to the login
+            # handler: give it a code instead of an English developer line.
+            raise VncLoginError(
+                f"profile {session.profile_id} not found",
+                "error.profile.not_found",
+                id=session.profile_id,
+            )
         bridge = None
         try:
             if proxy_url is None and session.proxy_id is not None:

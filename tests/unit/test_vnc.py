@@ -1317,3 +1317,30 @@ async def test_a_non_persistent_profile_is_a_coded_error(env):
         await mgr.reserve(await profiles.get(pid), "https://example.com")
 
     assert caught.value.code == "error.vnc.profile_not_persistent"
+
+
+async def test_launching_after_the_profile_vanished_raises_a_code(env):
+    """The profile can be deleted between ``reserve`` and the worker's launch.
+
+    The raise sits before ``launch``'s ``try``, so it travels straight to the
+    login handler; with a bare ``ValueError`` the alert showed the English
+    developer line.
+    """
+    from uwp import vnc
+
+    settings, db, profiles, pid = env
+    mgr = _manager(settings, db, [])
+    info = await mgr.reserve(await profiles.get(pid), "https://example.com")
+
+    class _Gone:
+        async def get(self, profile_id):
+            return None
+
+    mgr.profiles = _Gone()
+    session = await VncRepo(db).get(info.session_id)
+
+    with pytest.raises(vnc.VncLoginError) as caught:
+        await mgr.launch(session)
+
+    assert caught.value.code == "error.profile.not_found"
+    assert caught.value.detail == {"id": session.profile_id}
