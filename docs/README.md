@@ -1,10 +1,10 @@
 # Documentation
 
-The project README answers three questions and stops: what this is, whether it
-fits you, and how to get the first report. Everything that would push that first
-command below the fold lives here — the operating detail, the measurements
-behind design decisions, and the implementation plans written while the code was
-being built.
+[`../README.md`](../README.md) answers three questions and stops: what this is,
+whether it fits you, and how to get the first report. Everything that would push
+that first command below the fold lives here — the operating detail, the
+measurements behind design decisions, and the implementation plans written while
+the code was being built.
 
 The plans are a historical record, not instructions. They are kept because the
 numbers in them are the evidence for several rules in `AGENTS.md` — a future
@@ -121,6 +121,35 @@ docker exec uwp-worker /entrypoint.sh vnc stop <id>
 The worker sweeps such rows on its next start (`sweep_orphans`), but until then
 the profile stays busy.
 
+**Do not move the worker onto the host network.** `compose.split.hostnet.yaml`
+gives the host network to `bot` only, on purpose: the worker keeps publishing
+the VNC band through Docker, and a worker with `network_mode: host` would have
+`websockify` binding the same ports directly as `docker-proxy` holds them. The
+session then dies at `Address already in use` while Xvfb, Chromium and x11vnc
+stay healthy — the admin sees a link that resets. `compose.hostnet.yaml` (the
+combined overlay) does run everything on the host network; it works because no
+port publishing remains, and it sets `UWP_VNC_LISTEN_HOST=127.0.0.1` so noVNC
+does not land on every interface.
+
+### What the worker cleans up
+
+Housekeeping runs on the worker's first maintenance tick and then once an hour
+(`CLEANUP_SECONDS = 3600` in `app.py`), and the worker survives a failure in any
+single step:
+
+- **expired clean profiles** — the folder and the row of a disposable profile
+  past `expires_at` are removed (`profiles.cleanup_clean`); persistent profiles
+  are never touched;
+- **old VNC session rows** — rows in `stopped`/`failed` are deleted once
+  `started_at` is older than `UWP_VNC_HISTORY_DAYS` (7 days); the password in
+  them was already blanked at stop, see the VNC section below;
+- **artifact directories** — `data/artifacts/<run-id>` is trimmed to the last
+  `UWP_ARTIFACTS_RETENTION` (20).
+
+Reports are not part of that hourly pass: `data/exports/<site-slug>/` is pruned
+to the last `UWP_EXPORTS_RETENTION` (50) on **every write**, so a site that runs
+rarely keeps its old files until the next report.
+
 ### VNC sessions in detail
 
 Sites with a login use a persistent profile. Create one and request a session:
@@ -145,6 +174,13 @@ A session lives 60 minutes (extendable by 30) and, once a client has connected,
 closes 20 minutes after the last one disconnects. The password is 8 characters:
 RFB checks only the first eight anyway, and a longer string would display
 characters the server ignores.
+
+The password has a shorter life than the session row: `stop()` writes
+`password = ""` as it marks the row `stopped` (`vnc.py:841`), and a session that
+failed is wiped the same way (`vnc.py:736`, `:768`). The row itself survives as
+history until the hourly housekeeping deletes finished rows older than
+`UWP_VNC_HISTORY_DAYS` (7 days) — that is what keeps a copy of `data/uwp.db`
+from carrying every password ever issued.
 
 #### Access from another machine
 

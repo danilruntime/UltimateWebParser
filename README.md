@@ -126,7 +126,10 @@ process that runs a browser, and a bot restart does not interrupt a run.
 
 A bare `docker compose up` brings up combined mode: it has a single file, which
 is why it stays Compose's default. Split needs explicit `-f`, but it survives a
-bot restart and keeps the token out of the process that runs the browser.
+bot restart and keeps the token out of the process that runs the browser. Only
+the bot gets the host network: a worker there would have `websockify` fight
+`docker-proxy` for the VNC band and fail with `Address already in use` while the
+session still looks started.
 
 In split mode everything that touches processes happens in the worker, on its
 next 5-second tick: «🖥 Log in to profile» writes a request row and the worker
@@ -134,7 +137,9 @@ brings up Xvfb and Chromium; `uwp vnc stop` only marks a session and the worker
 kills it. Reports reach Telegram only through the bot, because a worker that
 drained the notification queue would claim every event and send nothing.
 
-Maintenance commands, the troubleshooting table, the CLI, writing a parser and
+Two first-run snags — [permissions on `./data`](docs/README.md#permissions-on-data)
+and [finding your Telegram id](docs/README.md#how-to-find-your-telegram-id) — plus
+maintenance commands, the troubleshooting table, the CLI, writing a parser and
 the release routine are in [`docs/README.md`](docs/README.md).
 
 ## The bot
@@ -209,6 +214,7 @@ Two variables are required: the token and the admins.
 | --- | --- | --- |
 | `UWP_BOT_TOKEN` | — | From @BotFather. Required by the bot process only; split mode blanks it in the worker. |
 | `UWP_ADMIN_IDS` | empty | Comma-separated Telegram ids (`111,222`); the bot admits the union of these and the `admins` table. |
+| `UWP_DATA_DIR` | `data` (`/data` in the image) | Database, profiles, reports, artifacts. The compose files point it at the mounted volume. |
 | `UWP_SECRET_KEY` | — | Encrypts proxy and VNC passwords with a PBKDF2-stretched key. Without it they are stored in plaintext (the doctor warns). |
 | `UWP_TELEGRAM_PROXY` | — | Proxy for the Bot API **only**: `socks5://`, `socks4://`, `http://`, `https://`. |
 | `UWP_DEFAULT_LANGUAGE` | `ru` | `ru` or `en`: the CLI, the bot's fallback and, unless overridden, the report language. |
@@ -219,8 +225,8 @@ Two variables are required: the token and the admins.
 | `UWP_PUBLIC_HOST` | `localhost` | The host you open noVNC on. |
 | `UWP_PUBLIC_SCHEME` | `http` | `https` if a TLS reverse proxy fronts VNC. |
 
-The full list — data directory, timeouts, retention, VNC ports, the browser
-build — is in [`.env.example`](.env.example), one commented line each.
+The full list — timeouts, retention, VNC ports, the browser build — is in
+[`.env.example`](.env.example), with a comment above each entry.
 
 ## Security
 
@@ -250,7 +256,14 @@ build — is in [`.env.example`](.env.example), one commented line each.
   offline oracle, but a weak key is still guessable.
 - **Files.** `data` is created with mode `0700`, the database with `0600`, and
   processes run with `umask 077`: profiles with live cookies, the WAL and VNC
-  passwords are not readable by other users of the host.
+  passwords are not readable by other users of the host. The VNC password is
+  wiped when the session stops, and its row is deleted after
+  `UWP_VNC_HISTORY_DAYS` (7 days).
+- **Cleanup.** The worker runs housekeeping on its first tick and then every
+  hour: it deletes expired disposable profiles, finished VNC rows older than
+  `UWP_VNC_HISTORY_DAYS` and excess `data/artifacts` directories. Reports beyond
+  the last 50 per site are trimmed on every write. What each pass touches is in
+  [`docs/README.md#what-the-worker-cleans-up`](docs/README.md#what-the-worker-cleans-up).
 - **The proxy bridge.** Chromium cannot send `Proxy-Authorization` in a
   `CONNECT` tunnel, so a bridge on `127.0.0.1` adds the password. It does not
   authenticate its client (Chromium could not present a password), so it refuses
