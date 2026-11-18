@@ -10,6 +10,7 @@ a pure function of (current, kind) and needs no repository.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -96,7 +97,7 @@ def test_the_script_has_an_escape_from_pushing():
 def test_the_script_refuses_a_release_with_no_commits():
     """Measured: `beta` right after a stable release had nothing to describe.
 
-    It wrote a 79-character note — «Новых коммитов с прошлого выпуска нет» —
+    It wrote a 79-character note — «No commits since the previous release.» —
     which `test_every_release_has_a_notes_file_named_after_its_tag` rejects as a
     stub, so the tag was blocked *after* the bump. The check belongs before the
     first write. A promotion is exempt: it is the same code by definition.
@@ -140,13 +141,13 @@ def test_a_promotion_repeats_the_beta_it_promotes():
     script = SCRIPT.read_text(encoding="utf-8")
 
     assert "_inherited_sections" in script
-    assert "Стабильная версия" in script
+    assert "Stable version" in script
     # The promotion branch has to be reachable from write_notes, not dead code.
     assert 'if [[ $kind == release ]]' in script
 
 
 def test_a_commit_lands_in_exactly_one_category():
-    """Measured: «Прочее» repeated every line already listed under «Служебное».
+    """Measured: «Other» repeated every line already listed under «Chores».
 
     `_commits` formatted its output (`- Ci: ...`) before the caller filtered for
     leftovers, so the `^(?!ci)` pattern never matched anything and the note page
@@ -173,6 +174,116 @@ def test_the_script_does_not_run_the_suite_with_the_system_interpreter():
     assert "RELEASE_PYTHON" in script
     assert "import pytest" in script
 
+
+
+def test_the_generated_notes_are_english():
+    """Measured on v0.1b2: «## Новое» sat above «A shell script that bumps…».
+
+    The page is published on GitHub next to an English README, and its body is
+    the commit subjects, which the project writes in English. The headings were
+    the only Russian left, so the release read as two languages at once. Written
+    by sourcing `write_notes` in a throwaway repository, because the output is
+    the contract — the titles live inside the function, not on a line a grep can
+    pin. The promotion branch is exercised too: it repeats the beta's sections
+    verbatim, so one Russian heading there would survive every future release.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "t@example.com"], cwd=root, check=True
+        )
+        subprocess.run(["git", "config", "user.name", "T"], cwd=root, check=True)
+        (root / "docs" / "releases").mkdir(parents=True)
+        (root / "docs" / "releases" / "v0.1b1.md").write_text("# v0.1b1\n")
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=root, check=True)
+        subprocess.run(["git", "tag", "-a", "v0.1b1", "-m", "v0.1b1"], cwd=root, check=True)
+        for subject in ("feat(bot): a switch", "fix(vnc): a port", "docs: a page"):
+            subprocess.run(
+                ["git", "commit", "-q", "--allow-empty", "-m", subject],
+                cwd=root,
+                check=True,
+            )
+
+        beta = _write_notes(root, "0.1b2", "v0.1b1", "", "beta")
+
+        # The promotion reads the beta's file back, so the beta has to be in the
+        # tree at the tag `git describe` would name.
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "chore: release 0.1b2"], cwd=root, check=True)
+        subprocess.run(["git", "tag", "-a", "v0.1b2", "-m", "v0.1b2"], cwd=root, check=True)
+        subprocess.run(
+            ["git", "commit", "-q", "--allow-empty", "-m", "test: a check"],
+            cwd=root,
+            check=True,
+        )
+
+        stable = _write_notes(root, "0.1", "v0.1b2", "0.1b2", "release")
+
+    assert not re.search(r"[А-Яа-яЁё]", beta), (
+        "the beta notes fall back to Russian somewhere:\n" + beta
+    )
+    headings = [line for line in beta.splitlines() if line.startswith("## ")]
+    assert headings == ["## New", "## Fixed", "## Documentation"], headings
+
+    assert not re.search(r"[А-Яа-яЁё]", stable), (
+        "the promotion notes fall back to Russian somewhere:\n" + stable
+    )
+    headings = [line for line in stable.splitlines() if line.startswith("## ")]
+    assert headings[-1] == "## Since the beta", headings
+    assert "## New" in headings, "the promotion dropped the beta's sections"
+
+
+def test_promoting_a_beta_written_in_russian_drops_its_version_line():
+    """A beta cut before the page became English says «Версия … Тег …».
+
+    `_inherited_sections` strips that line from the beta it repeats. Matching
+    only the English spelling left the old one in place, so the stable page
+    carried a stray «Версия `0.1b2`» three lines under its own English header.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "t@example.com"], cwd=root, check=True
+        )
+        subprocess.run(["git", "config", "user.name", "T"], cwd=root, check=True)
+        (root / "docs" / "releases").mkdir(parents=True)
+        (root / "docs" / "releases" / "v0.1b2.md").write_text(
+            "# v0.1b2\n\nВерсия `0.1b2`. Тег `v0.1b2`.\n\n## Новое\n\n- A switch\n"
+        )
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=root, check=True)
+
+        stable = _write_notes(root, "0.1", "v0.1b2", "0.1b2", "release")
+
+    assert "Версия `0.1b2`" not in stable, stable
+    assert stable.count("Version `0.1`") == 1, stable
+
+
+def _write_notes(root: Path, version: str, previous: str, current: str, kind: str) -> str:
+    """Run `write_notes` in `root` and return the file it wrote."""
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; write_notes "$2" "$3" "$4" "$5"',
+            "_",
+            str(SCRIPT),
+            version,
+            previous,
+            current,
+            kind,
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    return (root / "docs" / "releases" / f"v{version}.md").read_text(encoding="utf-8")
 
 
 def test_a_successful_run_exits_zero():

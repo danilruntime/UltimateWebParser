@@ -104,7 +104,15 @@ several decisions there are deliberate and counter-intuitive (for example why
   (`timeutil.to_db` / `from_db`). Convert to local only for display.
 - **Russian for anything a human reads**: bot texts, CLI output, `labels.py`,
   `.ods` headers, log messages. English for identifiers, docstrings and
-  comments. Match the surrounding file.
+  comments. Match the surrounding file. The one exception is the release page
+  (below).
+- **Release notes are English.** `docs/releases/v<version>.md` and the headings
+  `scripts/release.sh` writes into them are English, because the page is
+  published on GitHub next to the English `README.md` and the commit subjects
+  under those headings are English. Measured on `v0.1b2`: Russian headings over
+  English bullets read as two languages at once. Only the *page* is English —
+  the script's own terminal output stays Russian like the rest of the CLI, and
+  `v0.1b1` is left as the historical record it is.
 - **Every README comes in two languages.** `README.md` is English (GitHub renders
   it), `X.ru.md` is the Russian twin. Edit both in the same commit and keep the
   section order identical — `tests/unit/test_readme_translations.py` compares

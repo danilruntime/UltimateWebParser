@@ -97,7 +97,11 @@ python_bin() {
 
 # The notes are the release page's body, so they are written from the commits
 # that are actually in the tag. Grouped by Conventional Commit prefix, because
-# a flat list of 12 subjects reads as noise. Russian: a human reads it.
+# a flat list of 12 subjects reads as noise. English: the page sits on GitHub
+# next to the English README, and the subjects under the headings are English —
+# mixed headings read as two languages at once (measured on v0.1b2). Only the
+# page is English; the script's own output stays Russian, like the rest of the
+# CLI.
 #
 # A promotion (`0.1b2` -> `0.1`) is the same code as the beta with the label
 # taken off, so its page always repeats the beta's sections and then lists
@@ -119,26 +123,26 @@ write_notes() {
     {
         echo "# v$version"
         echo
-        echo "Версия \`$version\`. Тег \`v$version\`."
+        echo "Version \`$version\`. Tag \`v$version\`."
         echo
         if [[ $kind == release ]]; then
             # The beta's own sections are repeated as they are, so the new
             # commits go into one extra section. Grouping them the same way
-            # emitted `## Служебное` twice, which reads as a bug in the page.
+            # emitted `## Chores` twice, which reads as a bug in the page.
             _inherited_sections "$current" "$version" || true
             # A blank line, because the inherited body ends without one and
-            # `## Служебное` would otherwise sit flush against the previous item.
+            # `## Chores` would otherwise sit flush against the previous item.
             echo
-            _section "После беты" "$(_format_commits "$(_all_commits "$previous")")"
+            _section "Since the beta" "$(_format_commits "$(_all_commits "$previous")")"
         else
-            _section "Новое" "$feat"
-            _section "Исправлено" "$fix"
-            _section "Документация" "$docs"
-            _section "Тесты" "$test"
-            _section "Служебное" "$chore"
-            _section "Прочее" "$(_format_commits "$rest")"
+            _section "New" "$feat"
+            _section "Fixed" "$fix"
+            _section "Documentation" "$docs"
+            _section "Tests" "$test"
+            _section "Chores" "$chore"
+            _section "Other" "$(_format_commits "$rest")"
             if [[ -z $feat$fix$docs$test$chore$rest ]]; then
-                echo "Новых коммитов с прошлого выпуска нет."
+                echo "No commits since the previous release."
                 echo
             fi
         fi
@@ -153,11 +157,13 @@ write_notes() {
 _inherited_sections() {
     local source="$NOTES_DIR/v$1.md" version=$2
     [[ -f $source ]] || return 1
-    echo "Стабильная версия \`$version\` — это \`$1\` с тем же кодом. Изменения"
-    echo "ниже повторяют заметки к той бете:"
+    echo "Stable version \`$version\` is \`$1\` with the same code. The changes"
+    echo "below repeat the beta's notes:"
     echo
     tail -n +2 "$source" |
-        sed -E 's/^Версия `.*`\. Тег `.*`\.$//' |
+        # Both spellings: a beta cut before the notes became English still says
+        # «Версия … Тег …», and promoting it must not repeat that line either.
+        sed -E 's/^(Version|Версия) `.*`\. (Tag|Тег) `.*`\.$//' |
         sed -E '/./,$!d' |
         sed -e :a -e '/^\n*$/{$d;N;ba' -e '}'
 }
