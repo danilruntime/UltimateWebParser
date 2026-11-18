@@ -125,34 +125,37 @@ def test_both_versions_have_the_same_number_of_code_blocks(english: str, russian
     assert en == ru, f"{english} has {en} fences, {russian} has {ru}"
 
 
-def test_quoted_bot_labels_match_the_code():
-    """The English README quoting «🟢 Enable» would describe a bot that does not exist.
-
-    Measured: the first translation of this file translated the labels, and the
-    documented buttons no longer existed anywhere in the bot.
-
-    Until the README rewrite (Task 5) both files quote the Russian labels, so
-    this resolves the Russian side of the code and checks it twice. Task 5 flips
-    the English half to ``t(Lang.en, ...)``.
-    """
+def _quoted_labels(lang):
     from uwp.bot import keyboards, texts
-    from uwp.i18n import Lang
     from uwp.ods import new_column_title
 
-    labels = [
-        keyboards.BTN_SITES[Lang.ru],
-        keyboards.BTN_PROFILES[Lang.ru],
-        keyboards.BTN_PROXIES[Lang.ru],
-        keyboards.BTN_HELP[Lang.ru],
-        texts.add_site(Lang.ru),
-        texts.delete(Lang.ru),
-        texts.run_now(Lang.ru),
-        texts.settings(Lang.ru),
-        texts.toggle_off(Lang.ru),
-        texts.toggle_on(Lang.ru),
-        new_column_title(Lang.ru),
+    return [
+        keyboards.BTN_SITES[lang],
+        keyboards.BTN_PROFILES[lang],
+        keyboards.BTN_PROXIES[lang],
+        keyboards.BTN_HELP[lang],
+        keyboards.BTN_LANGUAGE[lang],
+        texts.add_site(lang),
+        texts.delete(lang),
+        texts.run_now(lang),
+        texts.settings(lang),
+        texts.toggle_off(lang),
+        texts.toggle_on(lang),
+        new_column_title(lang),
     ]
-    for name in ("README.md", "README.ru.md"):
+
+
+def test_quoted_bot_labels_match_the_code():
+    """A translated label describes a button that does not exist.
+
+    Measured: the first translation of this file translated the labels, and the
+    documented buttons no longer existed anywhere in the bot. The English page
+    therefore has to quote the English bot, and the Russian page the Russian
+    one: a label is a screenshot of the interface, not prose.
+    """
+    from uwp.i18n import Lang
+
+    for name, lang in (("README.md", Lang.en), ("README.ru.md", Lang.ru)):
         text = (ROOT / name).read_text(encoding="utf-8")
-        missing = [label for label in labels if label not in text]
+        missing = [label for label in _quoted_labels(lang) if label not in text]
         assert missing == [], f"{name} does not quote {missing}"
