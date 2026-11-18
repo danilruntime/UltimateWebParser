@@ -58,7 +58,9 @@ class SiteService:
         """
         parser = self.registry.get(parser_key)
         if parser is None:
-            raise ValueError(t(self.lang, "error.parser.unknown", parser=parser_key))
+            raise ValueError(
+                t(lang or self.lang, "error.parser.unknown", parser=parser_key)
+            )
         # The site name is data, but a default taken from the parser is a label:
         # an English admin adding Steam should not get a Russian site name.
         # The seeded row keeps its own literal in ``seed.py``.

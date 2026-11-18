@@ -135,6 +135,21 @@ async def test_a_duplicate_profile_name_is_refused_in_the_readers_language(env):
     assert "уже есть" in russian.answers[0]
 
 
+async def test_an_empty_profile_name_is_refused_in_the_readers_language(env):
+    router, _deps, _settings = env
+    handler = _message_handler(router, "create_profile")
+
+    english = _Message("   ")
+    await handler(english, state=_state(), lang=Lang.en)
+    russian = _Message("   ")
+    await handler(russian, state=_state(), lang=Lang.ru)
+
+    assert english.answers == [
+        "❌ " + texts.esc("the profile name cannot be empty")
+    ]
+    assert "не может быть пустым" in russian.answers[0]
+
+
 async def test_a_locked_profile_is_refused_in_the_readers_language(env):
     router, deps, _settings = env
     profile = await deps.profiles.create("A")

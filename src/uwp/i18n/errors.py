@@ -87,6 +87,9 @@ CATALOG: dict[Lang, dict[str, str]] = {
             "браузер fingerprint-chromium не найден: запустите "
             "«uwp browser install»"
         ),
+        "error.bridge.unavailable": (
+            "прокси-мост не загрузился: {detail}"
+        ),
     },
     Lang.en: {
         "error.proxy.bad_scheme": "unsupported proxy scheme: {scheme}",
@@ -150,6 +153,9 @@ CATALOG: dict[Lang, dict[str, str]] = {
         "error.browser.missing": (
             "the fingerprint-chromium browser is missing: run "
             "“uwp browser install”"
+        ),
+        "error.bridge.unavailable": (
+            "the proxy bridge did not load: {detail}"
         ),
     },
 }

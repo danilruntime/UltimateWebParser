@@ -132,6 +132,22 @@ async def test_the_unknown_parser_error_follows_the_deployment_language(env):
         await english.create("nope")
 
 
+async def test_the_unknown_parser_error_follows_the_admin_not_the_service(env):
+    """The bot builds one service per deployment; the admin in front of it differs.
+
+    Same half-fix as ``ProfilesService.create``: an explicit language must reach
+    the raise, otherwise a ``ru`` deployment shows a Russian refusal to an ``en``
+    admin who picked a parser the registry does not know.
+    """
+    _db, sites, jobs = env
+    service = SiteService(
+        sites, jobs, Scheduler(sites, jobs), registry=_registry(), lang=Lang.ru
+    )
+
+    with pytest.raises(ValueError, match="unknown parser: nope"):
+        await service.create("nope", lang=Lang.en)
+
+
 async def test_create_can_name_the_site_in_the_admins_language(env):
     """The bot's service is built for the deployment; the admin differs.
 

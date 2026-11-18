@@ -332,7 +332,10 @@ class Runner:
         try:
             return factory(proxy)
         except RuntimeError as exc:
-            raise _ConfigError(str(exc)) from exc
+            # The bridge is a package we ship: its sentence is ours to translate.
+            raise _ConfigError(
+                str(exc), "error.bridge.unavailable", detail=str(exc)
+            ) from exc
 
     def _context(
         self,

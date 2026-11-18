@@ -571,6 +571,8 @@ async def test_missing_proxy_bridge_is_config_error(env, monkeypatch):
     out = await runner.run(site, job, proxy=proxy)
     assert out.status == RunStatus.failed and out.error_kind == ErrorKind.config_error
     assert "proxy bridge unavailable" in out.error
+    # The bridge is our package: the chat gets a sentence, not this line.
+    assert out.error_code == "error.bridge.unavailable"
     assert launches == []
     assert (await ProfilesRepo(db).list())[0].status == ProfileStatus.expired
 
