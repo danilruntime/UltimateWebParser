@@ -22,7 +22,7 @@ from uwp.events import (
     VNC_STOPPED,
     EventBus,
 )
-from uwp.i18n import DEFAULT_LANG, Lang, normalize, t
+from uwp.i18n import DEFAULT_LANG, Lang, has_key, normalize, t
 from uwp.timeutil import utcnow
 
 log = logging.getLogger(__name__)
@@ -301,14 +301,25 @@ def _reason_for(payload: dict, lang: Lang) -> str:
     worse than showing them.
     """
     code = payload.get("error_code")
-    if code:
-        # ``detail`` can be a log tail or an OS error; the message is sent with
-        # HTML parsing on, so it is escaped like any other free-form text.
-        detail = {
-            key: _esc(str(value))
-            for key, value in (payload.get("error_detail") or {}).items()
-        }
-        return t(lang, code, **detail)
+    if isinstance(code, str) and code and has_key(lang, code):
+        # A third-party parser can put anything in ``error_code``, and both
+        # ``worker`` and ``vnc`` use ``getattr(exc, "detail", None)``. An unknown
+        # key raised ``KeyError`` and a string detail ``AttributeError`` inside
+        # ``tick``: the event stayed pending and was retried for its whole TTL,
+        # so the failure notice vanished. Fall through to the raw text instead.
+        detail = payload.get("error_detail")
+        values = (
+            {key: _esc(str(value)) for key, value in detail.items()}
+            if isinstance(detail, dict)
+            else {}
+        )
+        # The catalogue is checked above, but a template can still name a
+        # placeholder the sender did not fill; the raw text is better than a
+        # ``KeyError`` that loses the notice.
+        try:
+            return t(lang, code, **values)
+        except KeyError:
+            log.warning("error code %r is missing a value for %s", code, lang)
     return _esc(payload.get("text") or payload.get("error") or _unknown_error(lang))
 
 

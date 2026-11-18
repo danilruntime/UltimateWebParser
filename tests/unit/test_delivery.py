@@ -711,3 +711,59 @@ async def test_a_coded_reason_can_carry_its_detail(env):
     await delivery.tick()
 
     assert "pid 753" in bot.messages[0][1]
+
+
+async def test_an_unknown_reason_code_still_delivers_the_raw_text(env):
+    """A third-party parser may put its own identifier in ``error_code``.
+
+    An unknown code used to raise ``KeyError`` inside ``tick``; the event stayed
+    pending and was retried for its whole TTL, so the notice vanished and the
+    log filled with tracebacks.
+    """
+    settings, bus, _tmp_path = env
+    bot = FakeBot()
+
+    async def language_for(admin_id):
+        return "en"
+
+    delivery = EventDelivery(bot, bus, settings, language_for=language_for)
+    await bus.emit(
+        "run_failed",
+        payload={
+            "text": "playwright: net::ERR_NAME_NOT_RESOLVED",
+            "error_code": "error.from.some.library",
+            "site": "Steam",
+            "site_id": 5,
+        },
+    )
+
+    await delivery.tick()
+
+    assert [admin for admin, *_ in bot.messages] == [111, 222]
+    assert "net::ERR_NAME_NOT_RESOLVED" in bot.messages[0][1]
+
+
+async def test_a_non_dict_reason_detail_does_not_crash_delivery(env):
+    """``getattr(exc, "detail", None)`` can hand a parser's string to us."""
+    settings, bus, _tmp_path = env
+    bot = FakeBot()
+
+    async def language_for(admin_id):
+        return "en"
+
+    delivery = EventDelivery(bot, bus, settings, language_for=language_for)
+    await bus.emit(
+        "run_failed",
+        payload={
+            "text": "",
+            "error_code": "error.secret.wrong_key",
+            "error_detail": "not a dict",
+            "site": "Steam",
+            "site_id": 5,
+        },
+    )
+
+    await delivery.tick()
+
+    assert [admin for admin, *_ in bot.messages] == [111, 222]
+    assert "UWP_SECRET_KEY" in bot.messages[0][1]
