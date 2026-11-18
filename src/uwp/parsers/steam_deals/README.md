@@ -66,6 +66,10 @@ both languages points the keys at the catalogue:
 
 `Column("title", "Название", 40, title_key="parser.steam_deals.column.title")`
 
+The literal stays Russian because it is the author's fallback (`Column.title`,
+`src/uwp/parsers/base.py:32-39`), shown when no `title_key` resolves, and this
+parser was written for a Russian operator.
+
 ## Tests
 
 `.venv/bin/python -m pytest tests/unit/test_steam_parser.py -v`

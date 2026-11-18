@@ -69,9 +69,10 @@ docker compose -f compose.split.yaml -f compose.split.hostnet.yaml \
 
 `doctor` actually opens `api.telegram.org` through the proxy and prints the
 reason for failure (port, TLS timeout, wrong scheme). The password is masked in
-the output. The container healthcheck runs `doctor --offline`: it checks only
-the address format, because a third-party proxy may take 15 seconds to answer
-and must not flip a working container to `unhealthy`.
+the output. The container healthcheck runs `doctor --offline`, which validates
+only the address format: a full check can spend up to 12 seconds (a 10 s
+timeout plus a 2 s hard guard) on a slow third-party proxy, and that must not
+flip a working container to `unhealthy`.
 
 The output follows `UWP_DEFAULT_LANGUAGE`. With the default `ru` the label is
 «прокси Telegram», so `grep -i proxy` finds nothing and `grep -i прокси` does;
@@ -322,13 +323,18 @@ class MyParser(BaseParser):
         return ParseResult(rows=rows, meta={"pages": 1})
 ```
 
-`title`, `description`, the settings labels and the column headers are shown to
-humans, both in the bot and as `.ods` headers. A parser without keys works as
-written: its own `title`, `description` and `Column.title` are used. One that
-ships in this repository points `title_key`, `description_key`, `Column.title_key`
-and `Field(..., json_schema_extra={"title_key": ...})` at the catalogue
+The parser name, the settings labels and the column headers are rendered per
+language, both in the bot and as `.ods` headers; the description is carried along
+and will be shown when a screen needs it. A parser without keys works as written:
+its own `title`, `description` and `Column.title` are used. One that ships in this
+repository points `title_key`, `description_key`, `Column.title_key` and
+`Field(..., json_schema_extra={"title_key": ...})` at the catalogue
 (`uwp.i18n.parsers`) so those strings follow the report language, while the
-literal strings stay as the fallback. Code identifiers stay English.
+literal strings stay as the fallback. Code identifiers stay English. The
+`parser.my_site.*` keys in the sample do not exist yet — add them to
+`uwp.i18n.parsers` for both `ru` and `en` before pointing at them, or leave the
+`*_key` arguments out until you do, and the parser falls back to `title`,
+`description` and `Column.title` exactly as a third-party one does.
 
 3. Restart the service: `$COMPOSE restart worker`. The parser appears in
    `uwp parsers list` and in the bot («🌐 Sites» → «➕ Add site»).

@@ -9,7 +9,7 @@
 ## Как устроен
 
 - `build_search_url(settings, start)` собирает URL одной страницы результатов
-  (`filter`, `specials=1`, `cc=<регион>`, `l=<язык>`, `start=`).
+  (`filter`, `specials=1`, `cc=<region>`, `l=<language>`, `start=`).
 - `run(ctx)` идёт по страницам `start = 0, 50, 100, …` до `max_pages`, загружая
   каждую через `page.goto(url, wait_until="domcontentloaded")` и
   `page.content()`. Останавливается досрочно, если страница не дала строк.
@@ -66,6 +66,10 @@
 парсер, которому нужны оба языка, указывает ключи на каталог:
 
 `Column("title", "Название", 40, title_key="parser.steam_deals.column.title")`
+
+Литерал остаётся русским, потому что это запасной вариант автора (`Column.title`,
+`src/uwp/parsers/base.py:32-39`): он показывается, когда `title_key` не
+разрешился, а парсер писался для русского оператора.
 
 ## Тесты
 
