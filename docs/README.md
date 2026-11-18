@@ -11,6 +11,8 @@ numbers in them are the evidence for several rules in `AGENTS.md` — a future
 contributor who wants to "simplify" the VNC readiness check should be able to
 read why it exists.
 
+**Русская версия:** [`README.ru.md`](README.ru.md).
+
 ## Operating guide
 
 ### Permissions on `./data`
@@ -289,18 +291,26 @@ from uwp.parsers.base import BaseParser, Column, ParseContext, ParseResult
 
 
 class MySettings(BaseModel):
-    max_pages: int = Field(default=1, ge=1, le=5, description="How many pages")
+    max_pages: int = Field(
+        default=1,
+        ge=1,
+        le=5,
+        description="How many pages",
+        json_schema_extra={"title_key": "parser.my_site.field.max_pages"},
+    )
 
 
 class MyParser(BaseParser):
     key = "my_site"
     title = "My site"
     description = "What we collect"
+    title_key = "parser.my_site.title"
+    description_key = "parser.my_site.description"
     url = "https://example.com/"
     requires_login = False
     settings_model = MySettings
     columns: ClassVar[list[Column]] = [
-        Column("title", "Title", width=40),
+        Column("title", "Title", width=40, title_key="parser.my_site.column.title"),
         Column("url", "Link", width=60),
         Column("price", "Price", width=12, fmt="0.00"),
     ]
@@ -312,11 +322,13 @@ class MyParser(BaseParser):
         return ParseResult(rows=rows, meta={"pages": 1})
 ```
 
-`title`, `description` and the column headers are shown to humans, both in the
-bot and as `.ods` headers. A parser that ships inside this repository should
-point `title_key`, `description_key` and `Column.title_key` at the catalogue
-(`uwp.i18n.parsers`) so those strings follow the report language; the literal
-`title` stays as the fallback. Code identifiers stay English.
+`title`, `description`, the settings labels and the column headers are shown to
+humans, both in the bot and as `.ods` headers. A parser without keys works as
+written: its own `title`, `description` and `Column.title` are used. One that
+ships in this repository points `title_key`, `description_key`, `Column.title_key`
+and `Field(..., json_schema_extra={"title_key": ...})` at the catalogue
+(`uwp.i18n.parsers`) so those strings follow the report language, while the
+literal strings stay as the fallback. Code identifiers stay English.
 
 3. Restart the service: `$COMPOSE restart worker`. The parser appears in
    `uwp parsers list` and in the bot («🌐 Sites» → «➕ Add site»).

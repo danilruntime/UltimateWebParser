@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 PAIRS = [
     ("README.md", "README.ru.md"),
+    ("docs/README.md", "docs/README.ru.md"),
     ("docker/README-seccomp.md", "docker/README-seccomp.ru.md"),
     ("src/uwp/parsers/steam_deals/README.md", "src/uwp/parsers/steam_deals/README.ru.md"),
     ("SECURITY.md", "SECURITY.ru.md"),

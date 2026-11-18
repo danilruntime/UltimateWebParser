@@ -1,4 +1,4 @@
-# Third-party notices
+# Уведомления о сторонних компонентах
 
 UltimateWebParser распространяется под MIT (см. [`LICENSE`](LICENSE)). Часть
 файлов в этом репозитории написана не нами, и для них действуют другие условия.
@@ -30,7 +30,7 @@ UltimateWebParser распространяется под MIT (см. [`LICENSE`]
 | `clone3` | `SCMP_ACT_ERRNO`, `errnoRet: 38` | `SCMP_ACT_ALLOW` | тот же запрос приходит через `clone3` на современной glibc |
 
 Остальные правила не тронуты. Как пересобрать профиль из свежего стокового
-файла — в [`docker/README-seccomp.md`](docker/README-seccomp.md).
+файла — в [`docker/README-seccomp.ru.md`](docker/README-seccomp.ru.md).
 
 ### `tests/fixtures/steam_search.html`, `tests/fixtures/steam_search_ru.html`
 

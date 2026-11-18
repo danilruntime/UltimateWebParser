@@ -136,11 +136,10 @@ SQLite в режиме WAL с миграциями, которые только 
 который забрал бы очередь уведомлений, пометил бы все события доставленными и не
 отправил ничего.
 
-Две первые помехи — [права на `./data`](docs/README.md#permissions-on-data) и
-[как узнать свой Telegram id](docs/README.md#how-to-find-your-telegram-id) —
+Две первые помехи — [права на `./data`](docs/README.ru.md#permissions-on-data) и
+[как узнать свой Telegram id](docs/README.ru.md#how-to-find-your-telegram-id) —
 вместе с командами обслуживания, таблицей неполадок, CLI, написанием парсера и
-выпуском релиза живут в [`docs/README.md`](docs/README.md) (пока только
-по-английски).
+выпуском релиза живут в [`docs/README.ru.md`](docs/README.ru.md).
 
 ## Бот
 
@@ -187,7 +186,7 @@ SQLite в режиме WAL с миграциями, которые только 
 поэтому первая сессия получает 6001.
 
 Путь через CLI, доступ с другой машины и мелочи — в
-[`docs/README.md#vnc-sessions-in-detail`](docs/README.md#vnc-sessions-in-detail).
+[`docs/README.ru.md#vnc-sessions-in-detail`](docs/README.ru.md#vnc-sessions-in-detail).
 
 ## Отчёты
 
@@ -206,7 +205,7 @@ SQLite в режиме WAL с миграциями, которые только 
 в этом прогоне.
 
 Скачивание вручную, детали хранения и тексты ошибок — в
-[`docs/README.md#report-files`](docs/README.md#report-files).
+[`docs/README.ru.md#report-files`](docs/README.ru.md#report-files).
 
 ## Настройки
 
@@ -265,7 +264,7 @@ SQLite в режиме WAL с миграциями, которые только 
   `UWP_VNC_HISTORY_DAYS` и лишние каталоги `data/artifacts`. Отчёты сверх
   последних 50 на сайт подрезаются при каждой записи. Что именно делает каждый
   проход — в
-  [`docs/README.md`](docs/README.md#what-the-worker-cleans-up).
+  [`docs/README.ru.md`](docs/README.ru.md#what-the-worker-cleans-up).
 - **Мост прокси.** Chromium не умеет отправлять `Proxy-Authorization` в
   `CONNECT`-туннель, поэтому пароль добавляет мост на `127.0.0.1`. Клиента он не
   аутентифицирует (Chromium не смог бы предъявить пароль), поэтому отказывается

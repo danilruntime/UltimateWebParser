@@ -39,24 +39,32 @@ profile: `requires_login = False`.
 | Key | Title | Notes |
 | --- | --- | --- |
 | `app_id` | App ID | First id of `data-ds-appid` (before any comma) |
-| `title` | Название | `.title` |
-| `url` | Ссылка | Canonical `https://store.steampowered.com/app/<app_id>/` (query stripped) |
-| `discount_percent` | Скидка, % | `-75%` → `75` |
-| `price_original` | Цена без скидки | Float parsed from `$19.99` / `4,99€` |
-| `price_final` | Цена со скидкой | Float; falls back to `data-price-final` cents |
-| `currency` | Валюта | ISO code from the price symbol (`$` → USD, `€` → EUR, …) |
-| `review_summary` | Отзывы | First line of `data-tooltip-html` (e.g. `Overwhelmingly Positive`); empty when no reviews |
-| `review_percent` | Положительных, % | `volatile`; from `97% of the 147,599 user reviews`; `None` when absent |
-| `review_count` | Отзывов, шт | `volatile`; same tooltip; `None` when absent |
-| `release_date` | Дата выхода | `.search_released` as shown by Steam |
-| `platforms` | Платформы | `win mac linux` → `Windows, macOS, Linux` |
-| `image_url` | Обложка | Capsule `img src` |
+| `title` | Title | `.title` |
+| `url` | Link | Canonical `https://store.steampowered.com/app/<app_id>/` (query stripped) |
+| `discount_percent` | Discount, % | `-75%` → `75` |
+| `price_original` | Original price | Float parsed from `$19.99` / `4,99€` |
+| `price_final` | Final price | Float; falls back to `data-price-final` cents |
+| `currency` | Currency | ISO code from the price symbol (`$` → USD, `€` → EUR, …) |
+| `review_summary` | Reviews | First line of `data-tooltip-html` (e.g. `Overwhelmingly Positive`); empty when no reviews |
+| `review_percent` | Positive, % | `volatile`; from `97% of the 147,599 user reviews`; `None` when absent |
+| `review_count` | Review count | `volatile`; same tooltip; `None` when absent |
+| `release_date` | Release date | `.search_released` as shown by Steam |
+| `platforms` | Platforms | `win mac linux` → `Windows, macOS, Linux` |
+| `image_url` | Cover | Capsule `img src` |
 
 `volatile` columns are written to the report but excluded from change
 detection: Steam's review counters move every few minutes, so treating them as
 changes made `export_mode=changes` deliver a file on every run (measured: 43 of
 63 reports had zero new rows and differed only in these two columns).
 `review_summary` stays tracked on purpose — «Very Positive» → «Mixed» is news.
+
+The headers above are what the catalogue (`uwp.i18n.parsers`, keys
+`parser.steam_deals.*`) renders in English; a Russian report prints the same
+columns in Russian. A parser without keys still works — its own `title`,
+`description` and `Column.title` are shown as written — while one that wants
+both languages points the keys at the catalogue:
+
+`Column("title", "Название", 40, title_key="parser.steam_deals.column.title")`
 
 ## Tests
 

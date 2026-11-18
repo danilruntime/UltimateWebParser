@@ -59,6 +59,14 @@
 колонками). `review_summary` намеренно остаётся отслеживаемой — «Very Positive»
 → «Mixed» это новость.
 
+Заголовки в таблице выше — то, что каталог (`uwp.i18n.parsers`, ключи
+`parser.steam_deals.*`) отдаёт по-русски; в английском отчёте те же колонки
+называются `Title`, `Link` и так далее. Парсер без ключей работает как есть —
+его `title`, `description` и `Column.title` показываются как написаны, — а
+парсер, которому нужны оба языка, указывает ключи на каталог:
+
+`Column("title", "Название", 40, title_key="parser.steam_deals.column.title")`
+
 ## Тесты
 
 `.venv/bin/python -m pytest tests/unit/test_steam_parser.py -v`

@@ -6,7 +6,7 @@
 
 Файл распространяется под Apache-2.0 (Copyright Docker, Inc.) и является
 изменённой работой; атрибуция и полный текст лицензии — в
-[`../THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).
+[`../THIRD_PARTY_NOTICES.ru.md`](../THIRD_PARTY_NOTICES.ru.md).
 
 **English version:** [`README-seccomp.md`](README-seccomp.md).
 
