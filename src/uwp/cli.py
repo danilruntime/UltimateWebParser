@@ -15,7 +15,7 @@ from pathlib import Path
 
 from uwp.config import Settings, load_settings
 from uwp.env import hide_process_environment
-from uwp.i18n import DEFAULT_LANG, Lang, t
+from uwp.i18n import DEFAULT_LANG, Lang, has_key, t
 
 log = logging.getLogger(__name__)
 
@@ -603,7 +603,14 @@ def cmd_profile_list(settings: Settings) -> int:
             _print(t(lang, "cli.profile.empty"))
             return 0
         for profile in profiles:
-            _print(f"{profile.id:<4} {profile.name:<20} {profile.status:<8} {profile.user_data_dir}")
+            # Render first, pad second: the label is longer than the enum and
+            # `:<8` on `profile.status` would misalign the Russian column.
+            key = f"cli.profile.status.{profile.status}"
+            status = t(lang, key) if has_key(lang, key) else str(profile.status)
+            _print(
+                f"{profile.id:<4} {profile.name:<20} {status:<20} "
+                f"{profile.user_data_dir}"
+            )
         return 0
 
     return _settle(_with_db(settings, action))

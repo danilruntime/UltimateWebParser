@@ -150,8 +150,9 @@ in the inline menu; the choice is stored in `admins.language` and takes effect o
 the next tap. With no choice stored, a screen follows the Telegram client's
 `language_code`, then `UWP_DEFAULT_LANGUAGE`; a delivered report has no client
 update to read, so it falls back from the stored choice straight to
-`UWP_DEFAULT_LANGUAGE`. Each message is rendered for its recipient, so two
-admins can read the same report in different languages.
+`UWP_DEFAULT_LANGUAGE`. Each message and screen is rendered for its recipient,
+but the report itself is one file, written in the deployment's report language
+(`UWP_REPORT_LANGUAGE`, or `UWP_DEFAULT_LANGUAGE` when that is empty).
 
 The reply keyboard has five buttons: «🌐 Sites», «👤 Profiles», «🌍 Proxies»,
 «❓ Help», «🌐 Language».

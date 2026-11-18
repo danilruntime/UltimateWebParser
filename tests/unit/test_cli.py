@@ -387,3 +387,34 @@ def test_help_does_not_create_the_data_directory(capsys, monkeypatch, tmp_path):
 
     assert not (tmp_path / "data").exists()
     assert "usage: uwp" in capsys.readouterr().out
+
+
+def test_the_cli_profile_list_prints_the_status_in_its_own_language(
+    capsys, monkeypatch, tmp_path
+):
+    """The raw enum ``free`` leaked into both terminals; the bot translates it."""
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    main(["profile", "create", "Phone"])
+
+    assert main(["profile", "list"]) == 0
+    out = capsys.readouterr().out
+    assert "свободен" in out
+    assert "free" not in out
+
+    monkeypatch.setenv("UWP_DEFAULT_LANGUAGE", "en")
+    assert main(["profile", "list"]) == 0
+    out = capsys.readouterr().out
+    assert " free " in out
+    assert "свободен" not in out
+
+
+def test_the_cli_still_refuses_in_the_deployment_language(
+    capsys, monkeypatch, tmp_path
+):
+    """The CLI has no reader but the operator, so ``lang=None`` keeps today's text."""
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("UWP_DEFAULT_LANGUAGE", "en")
+    main(["proxy", "add", "DE-1", "http://1.2.3.4:8080"])
+
+    assert main(["proxy", "add", "DE-1", "http://1.2.3.4:8080"]) == 1
+    assert "already exists" in capsys.readouterr().out

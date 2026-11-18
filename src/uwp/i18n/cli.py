@@ -87,6 +87,12 @@ CATALOG: dict[Lang, dict[str, str]] = {
         "cli.profile.created": "Создан профиль {id} «{name}».",
         "cli.profile.deleted": "Профиль {id} удалён.",
         "cli.profile.not_found": "❌ Профиль {id} не найден.",
+        # The same four states the bot shows, in the same words: the CLI prints
+        # the label, never the raw enum (``free``/``locked``/``login``).
+        "cli.profile.status.free": "свободен",
+        "cli.profile.status.locked": "используется",
+        "cli.profile.status.login": "ожидает входа",
+        "cli.profile.status.expired": "истёк",
         "cli.profile.vnc_link": "Ссылка: {url}",
         "cli.profile.vnc_password": "Пароль: {password}",
         "cli.profile.vnc_hint": "Нажмите Ctrl+C, чтобы завершить сессию.",
@@ -224,6 +230,10 @@ CATALOG: dict[Lang, dict[str, str]] = {
         "cli.profile.created": "Created profile {id} “{name}”.",
         "cli.profile.deleted": "Profile {id} deleted.",
         "cli.profile.not_found": "❌ Profile {id} not found.",
+        "cli.profile.status.free": "free",
+        "cli.profile.status.locked": "in use",
+        "cli.profile.status.login": "waiting for login",
+        "cli.profile.status.expired": "expired",
         "cli.profile.vnc_link": "Link: {url}",
         "cli.profile.vnc_password": "Password: {password}",
         "cli.profile.vnc_hint": "Press Ctrl+C to end the session.",
