@@ -27,3 +27,23 @@ def test_to_db_converts_aware_datetime_to_utc():
 def test_from_db_returns_utc():
     dt = from_db("2026-11-13T01:20:05Z")
     assert dt.tzinfo is UTC
+
+
+def test_the_display_format_follows_the_reader_language():
+    """A dotted date is the Russian convention; English reads year first.
+
+    The chat prints ``format_local`` for run history and the next run, so
+    finding 13's rule (an English report gets an English date) applies here too.
+    Storage format is untouched: only the rendering differs.
+    """
+    dt = datetime(2026, 11, 12, 22, 20, tzinfo=UTC)
+
+    assert format_local(dt, "Europe/Moscow", "ru") == "13.11.2026 01:20"
+    assert format_local(dt, "Europe/Moscow", "en") == "2026-11-13 01:20"
+
+
+def test_the_display_format_defaults_to_russian():
+    """Without a language, the old dotted rendering must stay."""
+    dt = datetime(2026, 11, 12, 22, 20, tzinfo=UTC)
+
+    assert format_local(dt, "Europe/Moscow") == "13.11.2026 01:20"

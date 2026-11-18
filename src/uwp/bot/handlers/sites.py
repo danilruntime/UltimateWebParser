@@ -30,7 +30,9 @@ def build_router(settings, deps) -> Router:
         for site in sites:
             mark = "🟢" if site.enabled else "🔴"
             next_run = (
-                format_local(site.next_run_at, settings.tz) if site.next_run_at else "—"
+                format_local(site.next_run_at, settings.tz, lang)
+                if site.next_run_at
+                else "—"
             )
             lines.append(
                 f"{mark} <b>{texts.esc(site.name)}</b>"
@@ -155,7 +157,9 @@ def build_router(settings, deps) -> Router:
             await callback.answer(texts.site_not_found(lang), show_alert=True)
             return
         next_run = (
-            format_local(site.next_run_at, settings.tz) if site.next_run_at else None
+            format_local(site.next_run_at, settings.tz, lang)
+            if site.next_run_at
+            else None
         )
         await callback.message.edit_text(
             texts.site_card(lang, site, next_run),

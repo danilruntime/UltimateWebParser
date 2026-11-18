@@ -958,3 +958,37 @@ async def test_a_profile_that_cannot_open_is_answered_in_the_admin_language(
     (text, kwargs), = callback.answers
     assert text == expected
     assert kwargs["show_alert"] is True
+
+
+@pytest.mark.parametrize(
+    "lang, expected",
+    [(Lang.ru, "13.11.2026 01:20"), (Lang.en, "2026-11-13 01:20")],
+)
+async def test_the_site_list_prints_the_date_the_way_the_reader_writes_it(
+    lang, expected
+):
+    """The helper alone is not enough: the handler must pass the admin's language."""
+    from uwp.bot.handlers import sites as sites_handlers
+
+    class _Sites:
+        async def list(self):
+            return [_site(next_run_at=datetime(2026, 11, 12, 22, 20, tzinfo=UTC))]
+
+    class _Deps:
+        pass
+
+    deps = _Deps()
+    deps.sites = _Sites()
+    deps.registry = object()
+
+    class _Settings:
+        tz = "Europe/Moscow"
+
+    router = sites_handlers.build_router(_Settings(), deps)
+    handler = _callback_handler(router, "show_list")
+    callback = _Callback("sites:list")
+
+    await handler(callback, lang=lang)
+
+    (text,) = callback.message.edits
+    assert expected in text

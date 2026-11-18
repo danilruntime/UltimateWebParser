@@ -563,4 +563,3 @@ async def test_the_report_language_comes_from_the_deployment_setting(env, tmp_pa
     }
     assert "Data" in names and "Данные" not in names
     assert "Data" == data_sheet(runner.settings.report_lang)
-

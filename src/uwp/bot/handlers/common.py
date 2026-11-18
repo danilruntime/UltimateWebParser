@@ -60,7 +60,7 @@ def build_router(settings, deps) -> Router:
                 texts.run_line(
                     lang,
                     texts.status_mark(run.status),
-                    format_local(run.started_at, settings.tz),
+                    format_local(run.started_at, settings.tz, lang),
                     name,
                     texts.status_label(lang, run.status),
                     run.rows_count,
@@ -186,7 +186,7 @@ async def send_sites(message: Message, sites_service, settings, lang: Lang) -> N
         if site.next_run_at is not None:
             lines.append(
                 texts.sites_next_line(
-                    lang, format_local(site.next_run_at, settings.tz)
+                    lang, format_local(site.next_run_at, settings.tz, lang)
                 )
             )
     await message.answer(

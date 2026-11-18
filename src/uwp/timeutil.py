@@ -2,8 +2,13 @@
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
+from uwp.i18n import DEFAULT_LANG, Lang, normalize
+
 DB_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 DISPLAY_FORMAT = "%d.%m.%Y %H:%M"
+# ``13.11.2026`` reads as an ambiguous month/day to an English reader; the
+# report already switched to ISO (finding 13), and the chat must agree with it.
+DISPLAY_FORMAT_EN = "%Y-%m-%d %H:%M"
 
 
 def utcnow() -> datetime:
@@ -26,11 +31,17 @@ def from_db(s: str) -> datetime:
     return datetime.strptime(s, DB_FORMAT).replace(tzinfo=UTC)
 
 
-def format_local(dt: datetime, tz: str) -> str:
-    """Format a datetime in the given IANA timezone as ``DD.MM.YYYY HH:MM``.
+def display_format(lang: Lang | str = DEFAULT_LANG) -> str:
+    """The date pattern a reader of ``lang`` expects."""
+    return DISPLAY_FORMAT_EN if normalize(lang) is Lang.en else DISPLAY_FORMAT
 
-    Naive datetimes are assumed to already be UTC.
+
+def format_local(dt: datetime, tz: str, lang: Lang | str = DEFAULT_LANG) -> str:
+    """Format a datetime in the given IANA timezone for a reader of ``lang``.
+
+    Naive datetimes are assumed to already be UTC. Storage is unaffected: this
+    is the display half only.
     """
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
-    return dt.astimezone(ZoneInfo(tz)).strftime(DISPLAY_FORMAT)
+    return dt.astimezone(ZoneInfo(tz)).strftime(display_format(lang))

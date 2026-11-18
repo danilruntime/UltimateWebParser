@@ -472,7 +472,9 @@ def cmd_site_list(settings: Settings) -> int:
             )
             interval = f"{site.interval_min_min}–{site.interval_max_min}"
             next_run = (
-                format_local(site.next_run_at, settings.tz) if site.next_run_at else "—"
+                format_local(site.next_run_at, settings.tz, lang)
+                if site.next_run_at
+                else "—"
             )
             _print(
                 f"{site.slug:<20} {state:<10} {interval:<12} {next_run:<18} {site.parser_key}"

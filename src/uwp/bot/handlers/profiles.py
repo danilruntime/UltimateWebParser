@@ -318,7 +318,7 @@ def build_router(settings, deps) -> Router:
                 texts.run_history_line(
                     lang,
                     texts.status_mark(run.status),
-                    format_local(run.started_at, settings.tz),
+                    format_local(run.started_at, settings.tz, lang),
                     texts.status_label(lang, run.status),
                     run.rows_count,
                     run.new_count,
