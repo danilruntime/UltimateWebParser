@@ -21,9 +21,9 @@ docker compose -f compose.split.yaml -f compose.split.hostnet.yaml up -d --build
 ```
 
 Когда сборка закончится и оба контейнера поднимутся, напишите своему боту
-`/start`. База создастся, в ней появится выключенный сайт «Steam — скидки»;
-нажмите на его карточке «🟢 Включить» — первый прогон встанет в очередь сразу,
-и отчёт придёт в чат.
+`/start`. База создастся, в ней появится выключенный пример сайта — «Steam —
+скидки» на `ru`-развёртывании и «Steam — deals» на `en`; нажмите на его карточке
+«🟢 Включить» — первый прогон встанет в очередь сразу, и отчёт придёт в чат.
 
 [![tests](https://github.com/danilruntime/UltimateWebParser/actions/workflows/tests.yml/badge.svg)](https://github.com/danilruntime/UltimateWebParser/actions/workflows/tests.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)

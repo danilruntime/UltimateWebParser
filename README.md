@@ -21,9 +21,9 @@ docker compose -f compose.split.yaml -f compose.split.hostnet.yaml up -d --build
 ```
 
 When the build finishes and both containers are up, send `/start` to your bot.
-The database is created and a disabled site «Steam — скидки» is seeded; press
-«🟢 Enable» on its card and the first run is queued at once — the report arrives
-in the chat.
+The database is created and a disabled example site is seeded — «Steam — deals»
+on an `en` deployment, «Steam — скидки» on a `ru` one; press «🟢 Enable» on its
+card and the first run is queued at once, and the report arrives in the chat.
 
 [![tests](https://github.com/danilruntime/UltimateWebParser/actions/workflows/tests.yml/badge.svg)](https://github.com/danilruntime/UltimateWebParser/actions/workflows/tests.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
