@@ -46,6 +46,7 @@ def test_settings_kb_has_every_target():
     ]
 
     assert flat == [
+        "set:name:3",
         "set:interval:3",
         "set:profile:3",
         "set:proxy:3",

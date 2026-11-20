@@ -7,6 +7,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import User
 
 from uwp.bot import keyboards, texts
+from uwp.bot.handlers import settings as settings_handlers
 from uwp.bot.handlers import sites as sites_handlers
 from uwp.db.database import Database
 from uwp.db.repo.jobs import JobsRepo
@@ -112,13 +113,15 @@ async def bot():
     deps.sites = service
     deps.registry = service.registry
     try:
-        yield sites_handlers.build_router(_Settings(), deps), service, sites
+        sites_router = sites_handlers.build_router(_Settings(), deps)
+        settings_router = settings_handlers.build_router(_Settings(), deps)
+        yield (sites_router, settings_router), service, sites
     finally:
         await db.close()
 
 
 async def test_pressing_an_parser_asks_for_a_name_and_creates_nothing(bot):
-    router, _service, sites = bot
+    (router, _settings_router), _service, sites = bot
     state = _state()
     callback = _Callback("site:add:steam_deals")
 
@@ -136,7 +139,7 @@ async def test_pressing_an_parser_asks_for_a_name_and_creates_nothing(bot):
 
 
 async def test_a_typed_name_creates_the_site(bot):
-    router, _service, sites = bot
+    (router, _settings_router), _service, sites = bot
     state = _state()
     await _handler(router, "callback_query", "add_site")(
         _Callback("site:add:steam_deals"), state, lang=Lang.en
@@ -152,7 +155,7 @@ async def test_a_typed_name_creates_the_site(bot):
 
 
 async def test_a_blank_name_is_refused_and_the_wizard_stays_open(bot):
-    router, _service, sites = bot
+    (router, _settings_router), _service, sites = bot
     state = _state()
     await _handler(router, "callback_query", "add_site")(
         _Callback("site:add:steam_deals"), state, lang=Lang.ru
@@ -167,7 +170,7 @@ async def test_a_blank_name_is_refused_and_the_wizard_stays_open(bot):
 
 
 async def test_the_default_button_creates_the_parser_named_site_in_the_admins_language(bot):
-    router, _service, sites = bot
+    (router, _settings_router), _service, sites = bot
     state = _state()
     await _handler(router, "callback_query", "add_site")(
         _Callback("site:add:steam_deals"), state, lang=Lang.en
@@ -188,7 +191,7 @@ async def test_cancel_disarms_the_wizard_and_creates_nothing(bot):
     Otherwise the prompt's ``sites:list`` button leaves ``SiteNameInput`` armed
     and the admin's next typed message — even a menu word — becomes a site.
     """
-    router, _service, sites = bot
+    (router, _settings_router), _service, sites = bot
     state = _state()
     await _handler(router, "callback_query", "add_site")(
         _Callback("site:add:steam_deals"), state, lang=Lang.en
@@ -199,3 +202,35 @@ async def test_cancel_disarms_the_wizard_and_creates_nothing(bot):
 
     assert await state.get_state() is None
     assert await sites.list() == []
+
+
+async def test_the_name_button_asks_for_the_current_name(bot):
+    (_sites_router, router), service, _sites = bot
+    site = await service.create("steam_deals", name="Steam US")
+    state = _state()
+    callback = _Callback(f"set:name:{site.id}")
+
+    await _handler(router, "callback_query", "settings_ask_name")(
+        callback, state, lang=Lang.ru
+    )
+
+    assert "Steam US" in callback.message.answers[-1]
+    assert await state.get_state() == settings_handlers.RenameInput.waiting.state
+
+
+async def test_a_new_name_is_saved_and_the_settings_screen_comes_back(bot):
+    (_sites_router, router), service, _sites = bot
+    site = await service.create("steam_deals", name="Steam US")
+    state = _state()
+    await _handler(router, "callback_query", "settings_ask_name")(
+        _Callback(f"set:name:{site.id}"), state, lang=Lang.ru
+    )
+    message = _Message(text="Подарки")
+
+    await _handler(router, "message", "settings_save_name")(
+        message, state, lang=Lang.ru
+    )
+
+    assert (await service.get(site.id)).name == "Подарки"
+    assert message.answers[-1] == texts.site_name_saved(Lang.ru, "Подарки")
+    assert await state.get_state() is None

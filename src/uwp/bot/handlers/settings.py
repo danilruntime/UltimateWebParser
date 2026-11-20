@@ -33,6 +33,10 @@ class ParamInput(StatesGroup):
     waiting = State()
 
 
+class RenameInput(StatesGroup):
+    waiting = State()
+
+
 def parse_interval(text: str, lang: Lang = DEFAULT_LANG) -> tuple[int, int]:
     """Parse ``45-90``, ``45 90`` or ``60`` into ``(min, max)`` minutes."""
     match = _INTERVAL_RE.match(text or "")
@@ -53,6 +57,12 @@ def settings_kb(site: Site, lang: Lang = DEFAULT_LANG) -> InlineKeyboardMarkup:
     """One button per editable setting plus «back»."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=texts.name_button(lang),
+                    callback_data=f"set:name:{site.id}",
+                )
+            ],
             [
                 InlineKeyboardButton(
                     text=texts.interval_button(lang),
@@ -268,6 +278,40 @@ def build_router(settings, deps) -> Router:
         await state.update_data(site_id=site_id)
         await callback.message.answer(texts.ask_interval(lang))
         await callback.answer()
+
+    @router.callback_query(F.data.regexp(r"^set:name:\d+$"))
+    async def settings_ask_name(
+        callback: CallbackQuery, state: FSMContext, lang: Lang
+    ) -> None:
+        site_id = int(callback.data.rsplit(":", 1)[1])
+        site = await service.get(site_id)
+        if site is None:
+            await callback.answer(texts.site_not_found(lang), show_alert=True)
+            return
+        await state.set_state(RenameInput.waiting)
+        await state.update_data(site_id=site_id)
+        await callback.message.answer(texts.ask_site_name_rename(lang, site.name))
+        await callback.answer()
+
+    @router.message(RenameInput.waiting)
+    async def settings_save_name(
+        message: Message, state: FSMContext, lang: Lang
+    ) -> None:
+        data = await state.get_data()
+        try:
+            site = await service.rename(
+                data["site_id"], message.text or "", lang=lang
+            )
+        except ValueError as exc:
+            # Missing site and a rejected name both land here; ``coded_error``
+            # keeps a service sentence as it is and translates a catalogue code.
+            await message.answer(f"❌ {texts.esc(exc)}")
+            return
+        await state.clear()
+        await message.answer(
+            texts.site_name_saved(lang, site.name),
+            reply_markup=settings_kb(site, lang),
+        )
 
     @router.message(IntervalInput.waiting)
     async def save_interval(message: Message, state: FSMContext, lang: Lang) -> None:
