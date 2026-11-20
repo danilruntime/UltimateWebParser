@@ -737,7 +737,7 @@ async def test_adding_a_site_stores_the_name_in_the_admins_language():
     The service is built once from ``settings.default_language``; only the
     handler knows which admin is pressing. A service-level test that constructs
     the service with ``lang=Lang.en`` cannot see that wiring, so this one feeds
-    the real ``site:add:`` callback with a service built for Russian.
+    the real ``site:adddefault:`` callback with a service built for Russian.
     """
     from uwp.bot.handlers import sites as sites_handlers
     from uwp.db.repo.jobs import JobsRepo
@@ -769,10 +769,10 @@ async def test_adding_a_site_stores_the_name_in_the_admins_language():
             tz = "UTC"
 
         router = sites_handlers.build_router(_Settings(), deps)
-        handler = _callback_handler(router, "add_site")
-        callback = _Callback("site:add:steam_deals")
+        handler = _callback_handler(router, "add_site_default")
+        callback = _Callback("site:adddefault:steam_deals")
 
-        await handler(callback, lang=Lang.en)
+        await handler(callback, state=_state(), lang=Lang.en)
 
         (site,) = await sites.list()
         assert site.name == "Steam — deals"
@@ -988,7 +988,7 @@ async def test_the_site_list_prints_the_date_the_way_the_reader_writes_it(
     handler = _callback_handler(router, "show_list")
     callback = _Callback("sites:list")
 
-    await handler(callback, lang=lang)
+    await handler(callback, state=_state(), lang=lang)
 
     (text,) = callback.message.edits
     assert expected in text

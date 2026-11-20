@@ -193,7 +193,11 @@ def ask_site_name(lang, default) -> str:
 
 
 def keep_default_name(lang, default) -> str:
-    return t(lang, "bot.sites.name_default", name=esc(default))
+    """The inline-button label: a button is not HTML, so this one is not escaped.
+
+    ``esc`` here would turn an ``AT&T`` title into a visible ``AT&amp;T``.
+    """
+    return t(lang, "bot.sites.name_default", name=default)
 
 
 def site_name_saved(lang, name) -> str:

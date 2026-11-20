@@ -3,7 +3,9 @@
 import logging
 
 from aiogram import F, Router
-from aiogram.types import CallbackQuery
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import CallbackQuery, Message
 
 from uwp.bot import keyboards, texts
 from uwp.i18n import Lang
@@ -12,13 +14,21 @@ from uwp.timeutil import format_local, utcnow
 log = logging.getLogger(__name__)
 
 
+class SiteNameInput(StatesGroup):
+    waiting = State()
+
+
 def build_router(settings, deps) -> Router:
     router = Router(name="sites")
     sites_service = deps.sites
     registry = deps.registry
 
     @router.callback_query(F.data == "sites:list")
-    async def show_list(callback: CallbackQuery, lang: Lang) -> None:
+    async def show_list(callback: CallbackQuery, state: FSMContext, lang: Lang) -> None:
+        # Cancel on the name prompt points here. Clearing first is what disarms
+        # the wizard: a leftover state would turn the next typed message into a
+        # site, and a menu word is the most likely next message.
+        await state.clear()
         sites = await sites_service.list()
         if not sites:
             await callback.message.edit_text(
@@ -57,8 +67,50 @@ def build_router(settings, deps) -> Router:
         await callback.answer()
 
     @router.callback_query(F.data.startswith("site:add:"))
-    async def add_site(callback: CallbackQuery, lang: Lang) -> None:
+    async def add_site(callback: CallbackQuery, state: FSMContext, lang: Lang) -> None:
         key = callback.data.split(":", 2)[2]
+        parser = registry.get(key)
+        if parser is None:
+            # A stale picker from a deployment whose parser folder was removed.
+            await callback.answer(texts.parser_not_found(lang), show_alert=True)
+            return
+        await state.set_state(SiteNameInput.waiting)
+        await state.update_data(parser_key=key)
+        title = parser.title_for(lang)
+        await callback.message.edit_text(
+            texts.ask_site_name(lang, title),
+            reply_markup=keyboards.site_name_prompt_kb(key, title, lang),
+        )
+        await callback.answer()
+
+    @router.message(SiteNameInput.waiting)
+    async def save_site_name(
+        message: Message, state: FSMContext, lang: Lang
+    ) -> None:
+        data = await state.get_data()
+        try:
+            site = await sites_service.create(
+                data["parser_key"], name=message.text or "", lang=lang
+            )
+        except ValueError as exc:
+            parser = registry.get(data["parser_key"])
+            title = parser.title_for(lang) if parser else data["parser_key"]
+            await message.answer(
+                f"❌ {texts.esc(exc)}\n{texts.ask_site_name(lang, title)}"
+            )
+            return
+        await state.clear()
+        await message.answer(
+            texts.site_added(lang, site.name),
+            reply_markup=keyboards.site_card_kb(site, lang),
+        )
+
+    @router.callback_query(F.data.startswith("site:adddefault:"))
+    async def add_site_default(
+        callback: CallbackQuery, state: FSMContext, lang: Lang
+    ) -> None:
+        key = callback.data.split(":", 2)[2]
+        await state.clear()
         try:
             site = await sites_service.create(key, lang=lang)
         except ValueError as exc:
