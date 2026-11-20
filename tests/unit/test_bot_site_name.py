@@ -234,3 +234,76 @@ async def test_a_new_name_is_saved_and_the_settings_screen_comes_back(bot):
     assert (await service.get(site.id)).name == "Подарки"
     assert message.answers[-1] == texts.site_name_saved(Lang.ru, "Подарки")
     assert await state.get_state() is None
+    callbacks = [
+        button.callback_data
+        for row in message.markups[-1].inline_keyboard
+        for button in row
+    ]
+    assert f"set:name:{site.id}" in callbacks
+
+
+async def test_a_blank_name_is_refused_and_the_wizard_asks_again(bot):
+    """A refusal without a question is a dead end, as `save_interval` knew."""
+    (_sites_router, router), service, _sites = bot
+    site = await service.create("steam_deals", name="Steam US")
+    state = _state()
+    await _handler(router, "callback_query", "settings_ask_name")(
+        _Callback(f"set:name:{site.id}"), state, lang=Lang.ru
+    )
+    message = _Message(text="   ")
+
+    await _handler(router, "message", "settings_save_name")(
+        message, state, lang=Lang.ru
+    )
+
+    assert "пустым" in message.answers[-1]
+    assert texts.ask_site_name_rename(Lang.ru, "Steam US") in message.answers[-1]
+    assert (await service.get(site.id)).name == "Steam US"
+    assert await state.get_state() == settings_handlers.RenameInput.waiting.state
+
+
+async def test_a_name_over_the_limit_is_refused_and_the_site_keeps_its_name(bot):
+    (_sites_router, router), service, _sites = bot
+    site = await service.create("steam_deals", name="Steam US")
+    state = _state()
+    await _handler(router, "callback_query", "settings_ask_name")(
+        _Callback(f"set:name:{site.id}"), state, lang=Lang.ru
+    )
+    message = _Message(text="Ж" * 65)
+
+    await _handler(router, "message", "settings_save_name")(
+        message, state, lang=Lang.ru
+    )
+
+    assert "64" in message.answers[-1]
+    assert texts.ask_site_name_rename(Lang.ru, "Steam US") in message.answers[-1]
+    assert (await service.get(site.id)).name == "Steam US"
+    assert await state.get_state() == settings_handlers.RenameInput.waiting.state
+
+
+async def test_a_site_deleted_mid_wizard_clears_the_state_and_says_it_is_gone(bot):
+    """Otherwise every later message repeats «сайт N не найден» forever."""
+    (_sites_router, router), service, _sites = bot
+    site = await service.create("steam_deals", name="Steam US")
+    state = _state()
+    await _handler(router, "callback_query", "settings_ask_name")(
+        _Callback(f"set:name:{site.id}"), state, lang=Lang.ru
+    )
+    await service.delete(site.id)
+    message = _Message(text="Подарки")
+
+    await _handler(router, "message", "settings_save_name")(
+        message, state, lang=Lang.ru
+    )
+
+    assert await state.get_state() is None
+    assert texts.site_not_found(Lang.ru) in message.answers[-1]
+
+
+def test_the_rename_state_is_not_the_add_wizards_state():
+    """Both routers register a bare message handler for their own state.
+
+    One shared state would make a single typed message create a site *and*
+    rename one, so a refactor that merges them must fail here, loudly.
+    """
+    assert settings_handlers.RenameInput is not sites_handlers.SiteNameInput

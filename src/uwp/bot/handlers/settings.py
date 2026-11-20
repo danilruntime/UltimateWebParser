@@ -303,9 +303,22 @@ def build_router(settings, deps) -> Router:
                 data["site_id"], message.text or "", lang=lang
             )
         except ValueError as exc:
-            # Missing site and a rejected name both land here; ``coded_error``
-            # keeps a service sentence as it is and translates a catalogue code.
-            await message.answer(f"❌ {texts.esc(exc)}")
+            # ``texts.esc`` prints the service's own sentence: both a blank or
+            # over-long name and a vanished site arrive as a plain ``ValueError``,
+            # the second one in the deployment's language because no admin is in
+            # context there.  A rejected name is a question the admin still has
+            # to answer, so the prompt comes back under it; a deleted site is
+            # not, and the armed state would repeat the refusal for every later
+            # message.
+            site = await service.get(data["site_id"])
+            if site is None:
+                await state.clear()
+                await message.answer(texts.site_not_found(lang))
+                return
+            await message.answer(
+                f"❌ {texts.esc(exc)}\n"
+                f"{texts.ask_site_name_rename(lang, site.name)}"
+            )
             return
         await state.clear()
         await message.answer(
