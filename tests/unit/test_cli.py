@@ -462,3 +462,36 @@ def test_the_seeded_site_is_named_in_the_deployments_language(
     # The slug is a stable handle the docs and `uwp site enable` rely on.
     assert main(["site", "list"]) == 0
     assert "steam_skidki" in capsys.readouterr().out
+
+
+def test_site_rename_normalises_the_name(capsys, monkeypatch, tmp_path):
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    main(["init"])
+
+    assert main(["site", "set", "steam_skidki", "--name", "  Мой   Сайт "]) == 0
+    out = capsys.readouterr().out
+    assert "Мой Сайт" in out
+
+    # A second write re-reads the row and prints the stored name: the CLI list
+    # has never rendered ``sites.name``, so it cannot prove persistence.
+    assert main(["site", "set", "steam_skidki", "--interval", "30-40"]) == 0
+    assert "Мой Сайт" in capsys.readouterr().out
+
+
+def test_site_rename_refuses_an_empty_name(capsys, monkeypatch, tmp_path):
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    main(["init"])
+
+    assert main(["site", "set", "steam_skidki", "--name", "   "]) == 1
+
+    assert "пустым" in capsys.readouterr().out
+
+
+def test_site_rename_refuses_a_name_telegram_would_reject(capsys, monkeypatch, tmp_path):
+    """The CLI writes the same column the bot renders on a button."""
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    main(["init"])
+
+    assert main(["site", "set", "steam_skidki", "--name", "x" * 65]) == 1
+
+    assert "64" in capsys.readouterr().out

@@ -539,6 +539,7 @@ def cmd_site_toggle(settings: Settings, slug: str, enabled: bool) -> int:
 def cmd_site_set(settings: Settings, slug: str, interval: str | None, name: str | None) -> int:
     from uwp.bot.handlers.settings import parse_interval
     from uwp.db.repo.sites import SitesRepo
+    from uwp.services.sites import clean_site_name
 
     lang = _lang(settings)
 
@@ -552,7 +553,13 @@ def cmd_site_set(settings: Settings, slug: str, interval: str | None, name: str 
         fields["interval_min_min"] = low
         fields["interval_max_min"] = high
     if name is not None:
-        fields["name"] = name
+        try:
+            fields["name"] = clean_site_name(name, lang)
+        except ValueError as exc:
+            # The bot refuses the same names; the CLI must not be the back door
+            # that stores a button label Telegram would reject at render time.
+            _print(f"❌ {exc}")
+            return 1
     if not fields:
         _print(t(lang, "cli.site.nothing_to_change"))
         return 1
@@ -564,7 +571,13 @@ def cmd_site_set(settings: Settings, slug: str, interval: str | None, name: str 
             _print(t(lang, "cli.site.not_found", slug=slug))
             return 1
         await repo.update(site.id, **fields)
-        _print(t(lang, "cli.site.updated", name=site.name))
+        _print(
+            t(
+                lang,
+                "cli.site.updated",
+                name=fields.get("name", site.name),
+            )
+        )
         return 0
 
     return _settle(_with_db(settings, action))

@@ -16,6 +16,27 @@ log = logging.getLogger(__name__)
 
 _SLUG_SEPARATORS = re.compile(r"[^a-z0-9]+")
 
+# Zero-width and BOM characters are not whitespace to ``split()``, so a name made
+# only of them survives the empty check and renders as a blank button.
+_INVISIBLE = re.compile(r"[\u200b-\u200f\u2060\ufeff]")
+
+MAX_SITE_NAME = 64
+
+
+def clean_site_name(name: str, lang: Lang = DEFAULT_LANG) -> str:
+    """Trim, collapse any whitespace run to one space, then check the limits.
+
+    ``split()`` is deliberate: Telegram refuses ``\n`` in a button label and the
+    name sits on the site-list keyboard, so a pasted multi-line title has to
+    become one line here, not fail at render time.
+    """
+    cleaned = " ".join((name or "").split())
+    if not _INVISIBLE.sub("", cleaned):
+        raise ValueError(t(lang, "error.site.name_empty"))
+    if len(cleaned) > MAX_SITE_NAME:
+        raise ValueError(t(lang, "error.site.name_too_long", max=MAX_SITE_NAME))
+    return cleaned
+
 
 def slugify(name: str) -> str:
     """ASCII slug: lowercase, runs of non-alphanumerics collapsed to ``_``."""
@@ -64,7 +85,11 @@ class SiteService:
         # The site name is data, but a default taken from the parser is a label:
         # an English admin adding Steam should not get a Russian site name.
         # The seeded row keeps its own literal in ``seed.py``.
-        title = name or parser.title_for(lang or self.lang)
+        title = (
+            clean_site_name(name, lang or self.lang)
+            if name is not None
+            else parser.title_for(lang or self.lang)
+        )
         site = Site(
             slug=await self._unique_slug(slugify(title) or parser_key),
             name=title,
@@ -91,7 +116,23 @@ class SiteService:
         return await self.jobs.create(site_id, "manual", priority=10)
 
     async def update(self, site_id: int, **fields: object) -> Site:
+        """Every column but ``name``; the name has its own validated door.
+
+        ``name`` would otherwise reach ``SitesRepo`` unvalidated and store a
+        value Telegram's button rules reject, which is the bypass the spec
+        forbids.
+        """
+        if "name" in fields:
+            raise TypeError("use rename() for the site name")
         await self.sites.update(site_id, **fields)
+        return await self._require(site_id)
+
+    async def rename(
+        self, site_id: int, name: str, *, lang: Lang | None = None
+    ) -> Site:
+        """Change the display name; ``slug`` stays because reports live under it."""
+        await self._require(site_id)
+        await self.sites.update(site_id, name=clean_site_name(name, lang or self.lang))
         return await self._require(site_id)
 
     async def _require(self, site_id: int) -> Site:

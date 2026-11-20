@@ -145,6 +145,23 @@ def parsers_kb(parsers, lang) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def site_name_prompt_kb(
+    parser_key: str, default_title: str, lang
+) -> InlineKeyboardMarkup:
+    """The «keep the parser name» shortcut and a way out of the wizard."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=texts.keep_default_name(lang, default_title),
+                    callback_data=f"site:adddefault:{parser_key}",
+                )
+            ],
+            [InlineKeyboardButton(text=texts.cancel(lang), callback_data="sites:list")],
+        ]
+    )
+
+
 def menu_kb(lang) -> InlineKeyboardMarkup:
     """The main menu: everything an admin may open."""
     return InlineKeyboardMarkup(

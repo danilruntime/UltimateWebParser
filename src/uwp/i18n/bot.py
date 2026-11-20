@@ -91,6 +91,11 @@ CATALOG: dict[Lang, dict[str, str]] = {
         "bot.sites.profile.persistent": "постоянный (id {id})",
         "bot.sites.profile.persistent_plain": "постоянный",
         "bot.sites.profile.clean": "чистый (случайный отпечаток)",
+        "bot.sites.ask_name": (
+            "Как назвать сайт? Отправьте название сообщением или оставьте «{name}»."
+        ),
+        "bot.sites.name_default": "✅ Оставить «{name}»",
+        "bot.sites.name_saved": "✅ Название сайта: {name}.",
         # --- settings -----------------------------------------------------
         "bot.settings.title": "⚙️ <b>{name}</b>",
         "bot.settings.choose": "Выберите, что изменить:",
@@ -141,6 +146,8 @@ CATALOG: dict[Lang, dict[str, str]] = {
             "«Профили»."
         ),
         "bot.settings.clean_profile_button": "🧼 Чистый профиль",
+        "bot.settings.name_button": "✏️ Название",
+        "bot.settings.ask_name": "Отправьте новое название сайта (сейчас: «{name}»):",
         # --- profiles -----------------------------------------------------
         "bot.profiles.header": "👤 Профили для входа",
         "bot.profiles.empty": (
@@ -316,6 +323,11 @@ CATALOG: dict[Lang, dict[str, str]] = {
         "bot.sites.profile.persistent": "persistent (id {id})",
         "bot.sites.profile.persistent_plain": "persistent",
         "bot.sites.profile.clean": "clean (random fingerprint)",
+        "bot.sites.ask_name": (
+            "What should the site be called? Send a name or keep “{name}”."
+        ),
+        "bot.sites.name_default": "✅ Keep “{name}”",
+        "bot.sites.name_saved": "✅ Site name: {name}.",
         # --- settings -----------------------------------------------------
         "bot.settings.title": "⚙️ <b>{name}</b>",
         "bot.settings.choose": "Choose what to change:",
@@ -366,6 +378,8 @@ CATALOG: dict[Lang, dict[str, str]] = {
             "“Profiles”."
         ),
         "bot.settings.clean_profile_button": "🧼 Clean profile",
+        "bot.settings.name_button": "✏️ Name",
+        "bot.settings.ask_name": "Send a new name for the site (now: “{name}”):",
         # --- profiles -----------------------------------------------------
         "bot.profiles.header": "👤 Login profiles",
         "bot.profiles.empty": "No persistent profiles yet. Press “➕ New profile”.",

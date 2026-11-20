@@ -74,6 +74,8 @@ CATALOG: dict[Lang, dict[str, str]] = {
         ),
         # --- sites --------------------------------------------------------
         "error.site.not_found": "сайт {id} не найден",
+        "error.site.name_empty": "название сайта не может быть пустым",
+        "error.site.name_too_long": "название сайта длиннее {max} символов",
         "error.parser.unknown": "неизвестный парсер: {parser}",
         "error.parser.invalid_settings": (
             "нерабочие настройки парсера: {detail}"
@@ -144,6 +146,8 @@ CATALOG: dict[Lang, dict[str, str]] = {
             "x11vnc is not listening on port {port}: {detail}"
         ),
         "error.site.not_found": "site {id} not found",
+        "error.site.name_empty": "the site name cannot be empty",
+        "error.site.name_too_long": "the site name is longer than {max} characters",
         "error.parser.unknown": "unknown parser: {parser}",
         "error.parser.invalid_settings": "invalid parser settings: {detail}",
         "error.profile.none_assigned": (
