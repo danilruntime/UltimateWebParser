@@ -163,3 +163,57 @@ async def test_create_can_name_the_site_in_the_admins_language(env):
     site = await russian.create("steam_deals", lang=Lang.en)
 
     assert site.name == "Steam — deals"
+
+
+def test_clean_site_name_collapses_whitespace():
+    from uwp.services.sites import clean_site_name
+
+    assert clean_site_name("  Steam \n US\t(скидки) ") == "Steam US (скидки)"
+
+
+def test_clean_site_name_rejects_an_empty_name_in_english():
+    from uwp.services.sites import clean_site_name
+
+    with pytest.raises(ValueError, match="cannot be empty"):
+        clean_site_name("   \n ", Lang.en)
+
+
+def test_clean_site_name_rejects_a_name_over_the_button_limit():
+    from uwp.services.sites import MAX_SITE_NAME, clean_site_name
+
+    assert clean_site_name("x" * MAX_SITE_NAME) == "x" * MAX_SITE_NAME
+    with pytest.raises(ValueError, match="64"):
+        clean_site_name("x" * (MAX_SITE_NAME + 1))
+
+
+async def test_create_refuses_an_empty_explicit_name(env):
+    _db, sites, jobs = env
+    svc = SiteService(sites, jobs, Scheduler(sites, jobs), registry=_registry())
+
+    with pytest.raises(ValueError, match="пустым"):
+        await svc.create("steam_deals", name=" ")
+
+    assert await svc.list() == []
+
+
+async def test_create_stores_the_given_name(env):
+    _db, sites, jobs = env
+    svc = SiteService(sites, jobs, Scheduler(sites, jobs), registry=_registry())
+
+    site = await svc.create("steam_deals", name="  Мои   скидки ")
+
+    assert site.name == "Мои скидки"
+    assert site.slug == "steam_deals"
+
+
+async def test_rename_changes_the_name_and_keeps_the_slug(env):
+    _db, sites, jobs = env
+    svc = SiteService(sites, jobs, Scheduler(sites, jobs), registry=_registry())
+    site = await svc.create("steam_deals")
+    slug = site.slug
+
+    renamed = await svc.rename(site.id, "Подарки", lang=Lang.ru)
+
+    assert renamed.name == "Подарки"
+    assert renamed.slug == slug
+    assert (await sites.get(site.id)).name == "Подарки"
