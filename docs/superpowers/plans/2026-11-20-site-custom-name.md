@@ -23,7 +23,7 @@
 ## Review Focus
 
 - A name typed with a newline or tab: Telegram rejects `\n` in button text, so stored names must be single-line.
-- A name of 65+ characters: the list keyboard would fail with `TelegramBadRequest` instead of refusing the input.
+- A name of 65+ characters: the list button would overflow a phone screen. The 64 cap is this project's own choice, not a documented Bot API limit for inline-button text (`BUTTON_TEXT_INVALID` comes from `setBotMenuButton`).
 - Whitespace-only input (a stray space message): must re-ask, not create a site with an empty name.
 - A name containing `<b>&</b>`: it appears on the list, the card and the delete confirmation, all HTML.
 - Renaming an existing site: report folder (`data/exports/<slug>/`) must stay where it was, and the "default name" button must use the admin's language, not the deployment's.

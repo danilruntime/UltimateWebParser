@@ -96,7 +96,10 @@ def build_router(settings, deps) -> Router:
             parser = registry.get(data["parser_key"])
             title = parser.title_for(lang) if parser else data["parser_key"]
             await message.answer(
-                f"❌ {texts.esc(exc)}\n{texts.ask_site_name(lang, title)}"
+                f"❌ {texts.esc(exc)}\n{texts.ask_site_name(lang, title)}",
+                reply_markup=keyboards.site_name_prompt_kb(
+                    data["parser_key"], title, lang
+                ),
             )
             return
         await state.clear()

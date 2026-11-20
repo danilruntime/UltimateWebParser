@@ -93,8 +93,19 @@ async def test_update_and_delete(env):
     svc = SiteService(sites, jobs, Scheduler(sites, jobs), registry=_registry())
     site = await svc.create("steam_deals")
 
-    updated = await svc.update(site.id, name="Renamed")
-    assert updated.name == "Renamed"
+    # ``update`` is the settings screen's door to every column but ``name``:
+    # a bare ``**fields`` here would be an unvalidated second way to store a
+    # name Telegram's button rules reject, so it must refuse and point at
+    # ``rename``.
+    with pytest.raises(TypeError, match="rename"):
+        await svc.update(site.id, name="x")
+    assert (await sites.get(site.id)).name == site.name
+
+    updated = await svc.update(site.id, interval_min_min=10)
+    assert updated.interval_min_min == 10
+
+    renamed = await svc.rename(site.id, "Renamed")
+    assert renamed.name == "Renamed"
 
     await svc.delete(site.id)
     assert await sites.get(site.id) is None
@@ -176,6 +187,17 @@ def test_clean_site_name_rejects_an_empty_name_in_english():
 
     with pytest.raises(ValueError, match="cannot be empty"):
         clean_site_name("   \n ", Lang.en)
+
+
+def test_clean_site_name_rejects_a_name_that_is_only_invisible_characters():
+    """``\\u200b`` is not whitespace, so ``split()`` keeps it and ``not cleaned``
+    is false; a button would then read as an empty name."""
+    from uwp.services.sites import clean_site_name
+
+    with pytest.raises(ValueError, match="cannot be empty"):
+        clean_site_name("\u200b", Lang.en)
+    with pytest.raises(ValueError, match="cannot be empty"):
+        clean_site_name("  \ufeff  ", Lang.en)
 
 
 def test_clean_site_name_rejects_a_name_over_the_button_limit():

@@ -7,6 +7,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import User
 
 from uwp.bot import keyboards, texts
+from uwp.bot.handlers import common
 from uwp.bot.handlers import settings as settings_handlers
 from uwp.bot.handlers import sites as sites_handlers
 from uwp.db.database import Database
@@ -167,6 +168,14 @@ async def test_a_blank_name_is_refused_and_the_wizard_stays_open(bot):
     assert await sites.list() == []
     assert "пустым" in message.answers[-1]
     assert await state.get_state() == sites_handlers.SiteNameInput.waiting.state
+    # The retry still points at a button one message up, so it must carry that
+    # button too: a refusal without the shortcut is a dead end.
+    callbacks = [
+        button.callback_data
+        for row in message.markups[-1].inline_keyboard
+        for button in row
+    ]
+    assert "site:adddefault:steam_deals" in callbacks
 
 
 async def test_the_default_button_creates_the_parser_named_site_in_the_admins_language(bot):
@@ -298,6 +307,18 @@ async def test_a_site_deleted_mid_wizard_clears_the_state_and_says_it_is_gone(bo
 
     assert await state.get_state() is None
     assert texts.site_not_found(Lang.ru) in message.answers[-1]
+
+
+async def test_the_site_list_escapes_a_custom_name(bot):
+    """A custom name is user text on an HTML screen; ``<b>`` must not render."""
+    _routers, service, _sites = bot
+    await service.create("steam_deals", name="<b>A & B</b>")
+    message = _Message()
+
+    await common.send_sites(message, service, _Settings(), Lang.en)
+
+    assert "&lt;b&gt;A &amp; B&lt;/b&gt;" in message.answers[-1]
+    assert "<b>A & B</b>" not in message.answers[-1]
 
 
 def test_the_rename_state_is_not_the_add_wizards_state():
