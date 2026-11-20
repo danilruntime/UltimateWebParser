@@ -157,7 +157,9 @@ but the report itself is one file, written in the deployment's report language
 The reply keyboard has five buttons: «🌐 Sites», «👤 Profiles», «🌍 Proxies»,
 «❓ Help», «🌐 Language».
 
-- **🌐 Sites** — the list, plus «➕ Add site». Each card carries
+- **🌐 Sites** — the list, plus «➕ Add site»; adding asks for a name
+  («✅ Keep “Steam — deals”» keeps the parser's own), and «✏️ Name» on the
+  site's settings renames it later. Each card carries
   «🟢 Enable» / «🔴 Disable», «▶️ Run now», «⚙️ Settings», «📜 History» and
   «🗑 Delete»; a site with a profile also has «🖥 Log in to profile».
 - **⚙️ Settings** — interval (`45-90`), profile, proxy, report mode, parser
