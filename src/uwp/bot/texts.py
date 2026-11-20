@@ -188,6 +188,18 @@ def need_profile(lang) -> str:
     return t(lang, "bot.sites.need_profile")
 
 
+def ask_site_name(lang, default) -> str:
+    return t(lang, "bot.sites.ask_name", name=esc(default))
+
+
+def keep_default_name(lang, default) -> str:
+    return t(lang, "bot.sites.name_default", name=esc(default))
+
+
+def site_name_saved(lang, name) -> str:
+    return t(lang, "bot.sites.name_saved", name=esc(name))
+
+
 def site_not_found(lang) -> str:
     return t(lang, "bot.error.site_not_found")
 
@@ -366,6 +378,14 @@ def clean_profile_button(lang) -> str:
 
 def need_login_profile(lang) -> str:
     return t(lang, "bot.settings.need_login_profile")
+
+
+def name_button(lang) -> str:
+    return t(lang, "bot.settings.name_button")
+
+
+def ask_site_name_rename(lang, current) -> str:
+    return t(lang, "bot.settings.ask_name", name=esc(current))
 
 
 # --- interval and parameter validation ------------------------------------
