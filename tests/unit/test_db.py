@@ -239,7 +239,7 @@ async def test_site_due(db):
 
 
 async def test_sites_by_profile(db):
-    """"Log in with this profile" needs the sites that actually use it."""
+    """The sites this profile is attached to, ordered by id."""
     repo = SitesRepo(db)
     pid = await ProfilesRepo(db).create(make_profile("login"))
     mine = await repo.create(make_site("mine", profile_id=pid))
