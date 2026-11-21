@@ -160,10 +160,13 @@ async def test_request_from_a_profile_with_two_sites_is_refused(env):
     await sites.update(first, profile_id=pid)
     await sites.update(second, profile_id=pid)
     settings = load_settings({"UWP_DATA_DIR": str(tmp_path)})
-    svc = VncService(FakeManager(), profiles, sites, settings, sessions)
+    manager = FakeManager()
+    svc = VncService(manager, profiles, sites, settings, sessions)
 
     with pytest.raises(ValueError, match="нескольким сайтам"):
         await svc.request(pid)
+
+    assert manager.calls == []
 
 
 async def test_request_refuses_a_site_whose_parser_is_missing(env):
@@ -172,10 +175,13 @@ async def test_request_refuses_a_site_whose_parser_is_missing(env):
     pid = await _profile(profiles, tmp_path)
     sid = await _site(sites)
     settings = load_settings({"UWP_DATA_DIR": str(tmp_path)})
-    svc = VncService(FakeManager(), profiles, sites, settings, sessions)
+    manager = FakeManager()
+    svc = VncService(manager, profiles, sites, settings, sessions)
 
     with pytest.raises(ValueError, match="steam_deals"):
         await svc.request(pid, site_id=sid)
+
+    assert manager.calls == []
 
 
 async def test_request_refuses_an_unknown_site_id(env):
@@ -184,10 +190,13 @@ async def test_request_refuses_an_unknown_site_id(env):
     settings = load_settings(
         {"UWP_DATA_DIR": str(tmp_path), "UWP_DEFAULT_LANGUAGE": "en"}
     )
-    svc = VncService(FakeManager(), profiles, sites, settings, sessions)
+    manager = FakeManager()
+    svc = VncService(manager, profiles, sites, settings, sessions)
 
     with pytest.raises(ValueError, match="site 999 not found"):
         await svc.request(pid, site_id=999)
+
+    assert manager.calls == []
 
 
 async def test_request_passes_the_site_proxy_to_the_session(env):
