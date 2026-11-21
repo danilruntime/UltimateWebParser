@@ -20,9 +20,13 @@ from uwp.domain import (
 )
 from uwp.services.vnc import VncService
 from uwp.timeutil import utcnow
+from uwp.vnc import VncLoginError, VncManager
 
 
 class FakeManager:
+    # The real rule, so a test can prove the service consults it.
+    check_profile = staticmethod(VncManager.check_profile)
+
     def __init__(self):
         self.calls = []
         self.stopped = []
@@ -149,6 +153,49 @@ async def test_request_from_a_profile_without_a_site_is_refused(env):
     with pytest.raises(ValueError, match="не привязан"):
         await svc.request(pid)
 
+    assert manager.calls == []
+
+
+async def test_request_names_a_temporary_profile_before_it_looks_for_a_site(env):
+    """A clean profile was told to attach a site; it needs a persistent profile."""
+    _db, profiles, sites, sessions, tmp_path = env
+    pid = await profiles.create(
+        Profile(
+            name="c",
+            kind=ProfileKind.clean,
+            seed=2,
+            platform="windows",
+            brand="Chrome",
+            brand_version="150",
+            timezone="Europe/Moscow",
+            locale="ru-RU",
+            user_data_dir=str(tmp_path / "c"),
+            status=ProfileStatus.free,
+        )
+    )
+    settings = load_settings({"UWP_DATA_DIR": str(tmp_path)})
+    manager = FakeManager()
+    svc = VncService(manager, profiles, sites, settings, sessions)
+
+    with pytest.raises(VncLoginError) as caught:
+        await svc.request(pid)
+
+    assert caught.value.code == "error.vnc.profile_not_persistent"
+    assert manager.calls == []
+
+
+async def test_request_names_a_busy_profile_before_it_looks_for_a_site(env):
+    _db, profiles, sites, sessions, tmp_path = env
+    pid = await _profile(profiles, tmp_path)
+    await profiles.update(pid, status=ProfileStatus.login)
+    settings = load_settings({"UWP_DATA_DIR": str(tmp_path)})
+    manager = FakeManager()
+    svc = VncService(manager, profiles, sites, settings, sessions)
+
+    with pytest.raises(VncLoginError) as caught:
+        await svc.request(pid)
+
+    assert caught.value.code == "error.vnc.profile_busy"
     assert manager.calls == []
 
 

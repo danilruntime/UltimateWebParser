@@ -674,7 +674,7 @@ class VncManager:
         self._bridges: dict[int, Any] = {}
 
     @staticmethod
-    def _check_profile(profile: Profile) -> None:
+    def check_profile(profile: Profile) -> None:
         """Reject profiles a login session cannot use; the code reaches the chat."""
         if profile.kind != ProfileKind.persistent:
             raise VncLoginError(
@@ -711,7 +711,7 @@ class VncManager:
         ``requested`` row and the worker (same process in combined mode) picks
         it up and launches the browser.
         """
-        self._check_profile(profile)
+        self.check_profile(profile)
         port = free_port(
             self.settings.vnc_port_min,
             self.settings.vnc_port_max,

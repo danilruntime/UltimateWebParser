@@ -26,10 +26,14 @@ from uwp.profiles import ProfileManager
 from uwp.services.profiles import ProfilesService
 from uwp.services.proxies import ProxyService
 from uwp.services.vnc import VncService
+from uwp.vnc import VncManager
 
 
 class FakeManager:
     """The VNC stack is irrelevant here: only the service's own refusals are."""
+
+    # The real rule, so the service's profile check behaves as in production.
+    check_profile = staticmethod(VncManager.check_profile)
 
     async def reserve_and_launch(self, profile, url, started_by=None, proxy_id=None):
         return "info"

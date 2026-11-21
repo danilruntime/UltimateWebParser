@@ -941,7 +941,7 @@ async def test_the_site_login_alert_renders_an_unreadable_secret(lang, expected)
 async def test_a_profile_that_cannot_open_is_answered_in_the_admin_language(
     lang, expected
 ):
-    """``_check_profile`` used to raise English ``ValueError``s into this alert."""
+    """``check_profile`` used to raise English ``ValueError``s into this alert."""
     from uwp.bot.handlers import profiles as profiles_handlers
     from uwp.vnc import VncLoginError
 

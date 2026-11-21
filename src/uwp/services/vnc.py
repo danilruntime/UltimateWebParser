@@ -94,6 +94,10 @@ class VncService:
                     id=profile_id,
                 )
             )
+        # The manager's own rules come first: a temporary or busy profile has no
+        # login at all, and "attach it to a site" would send the admin to fix
+        # the wrong thing.
+        self.manager.check_profile(profile)
         site = await self._login_site(profile_id, site_id, reader)
         url = self.parser_auth_urls.get(site.parser_key)
         if url is None:
