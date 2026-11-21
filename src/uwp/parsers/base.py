@@ -88,6 +88,10 @@ class BaseParser(ABC):
     title: str
     description: str
     url: str
+    # The page a VNC login opens. Empty means "the parser has no login form of
+    # its own", and ``login_url`` then hands back the run URL. ``url`` itself
+    # must stay the run URL: it is what the report's ``URL`` row shows.
+    auth_url: str = ""
     requires_login: bool = False
     settings_model: type[BaseModel] = _EmptySettings
     columns: ClassVar[list[Column]] = []
@@ -105,6 +109,11 @@ class BaseParser(ABC):
         if self.description_key:
             return t(lang, self.description_key)
         return self.description
+
+    @property
+    def login_url(self) -> str:
+        """The page a VNC login opens: ``auth_url`` or the run ``url``."""
+        return self.auth_url or self.url
 
     @classmethod
     def default_settings(cls) -> dict:

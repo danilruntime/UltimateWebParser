@@ -100,6 +100,19 @@ def test_base_parser_defaults_without_settings_model():
     assert parser.default_settings() == {}
 
 
+def test_login_url_falls_back_to_the_run_url():
+    """A third-party parser written before ``auth_url`` must keep working."""
+    assert _MinimalParser().auth_url == ""
+    assert _MinimalParser().login_url == "https://example.com/"
+
+
+def test_login_url_prefers_the_declared_auth_page():
+    class WithLogin(_MinimalParser):
+        auth_url = "https://example.com/login"
+
+    assert WithLogin().login_url == "https://example.com/login"
+
+
 def test_parse_context_holds_callables(tmp_path: Path):
     ctx = ParseContext(
         page=object(),

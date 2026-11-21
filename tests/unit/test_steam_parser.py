@@ -321,6 +321,9 @@ def test_parser_metadata_and_columns():
     assert parser.key == "steam_deals"
     assert parser.title == "Steam — скидки"
     assert parser.url == "https://store.steampowered.com/search/"
+    # The VNC login must open the form, not the discounted search page.
+    assert parser.auth_url == "https://store.steampowered.com/login/"
+    assert parser.login_url == "https://store.steampowered.com/login/"
     assert parser.requires_login is False
     assert parser.settings_model is SteamSettings
     assert [c.key for c in parser.columns] == [

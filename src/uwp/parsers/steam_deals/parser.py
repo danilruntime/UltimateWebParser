@@ -340,6 +340,7 @@ class SteamDealsParser(BaseParser):
     title_key = "parser.steam_deals.title"
     description_key = "parser.steam_deals.description"
     url = SEARCH_URL
+    auth_url = "https://store.steampowered.com/login/"
     requires_login = False
     settings_model = SteamSettings
     # ``title`` stays the Russian fallback; ``title_key`` is what a screen or a

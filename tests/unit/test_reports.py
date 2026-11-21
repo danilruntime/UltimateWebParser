@@ -45,6 +45,13 @@ class KeyedParser(FakeParser):
     ]
 
 
+class LoginParser(FakeParser):
+    """Declares a login page; the report must still show the run URL."""
+
+    key = "login"
+    auth_url = "https://example.com/login"
+
+
 @pytest.fixture
 def settings(tmp_path):
     return load_settings({"UWP_DATA_DIR": str(tmp_path), "UWP_TZ": "Europe/Moscow"})
@@ -310,6 +317,23 @@ def test_meta_has_no_proxy_password_and_shows_the_local_time(settings):
     assert meta["Новых"] == "2" and meta["Изменённых"] == "1" and meta["Исчезло"] == "3"
     assert meta["changed_keys"] == "1"
     assert meta["Длительность"] == "2.5 с"
+    assert meta["URL"] == "https://example.com/list"
+
+
+def test_meta_url_stays_the_run_url_when_a_login_page_is_declared():
+    meta = report_meta(
+        site=_site(),
+        parser=LoginParser(),
+        profile=None,
+        proxy=None,
+        when=WHEN,
+        tz="Europe/Moscow",
+        duration_ms=1500,
+        rows=ROWS,
+        new_keys={"1"},
+        changed_keys=set(),
+    )
+
     assert meta["URL"] == "https://example.com/list"
 
 
