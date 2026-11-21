@@ -160,13 +160,20 @@ Sites with a login use a persistent profile. Create one and request a session:
 ```bash
 docker exec uwp-worker /entrypoint.sh profile create Steam-RU
 docker exec uwp-worker /entrypoint.sh profile list
-docker exec uwp-worker /entrypoint.sh profile login 1
+docker exec uwp-worker /entrypoint.sh profile login 1 --site steam_skidki
 ```
 
 `profile login` brings up the stack in this very process and holds it: the link
 and password are printed right away, and Ctrl+C closes the session. The bot is
 more convenient — the link arrives as a message, the worker owns the session,
 and there is nothing to interrupt.
+
+`--site` takes a slug or a numeric id and names the site whose login page the
+browser opens; a site's own proxy is used when it has one, otherwise the
+profile's. Without `--site` the profile must be attached to exactly one site —
+the service refuses a profile attached to none or to several, because their
+proxies can differ. That is the same rule the profile card's «🖥 Log in»
+follows.
 
 A link like `http://<UWP_PUBLIC_HOST>:6042/vnc.html#autoconnect=1` opens in a
 browser. The password travels in the fragment (`#password=...`) and is not sent
@@ -321,6 +328,7 @@ class MyParser(BaseParser):
     title_key = "parser.my_site.title"
     description_key = "parser.my_site.description"
     url = "https://example.com/"
+    auth_url = "https://example.com/login"
     requires_login = False
     settings_model = MySettings
     columns: ClassVar[list[Column]] = [
@@ -348,6 +356,10 @@ literal strings stay as the fallback. Code identifiers stay English. The
 `uwp.i18n.parsers` for both `ru` and `en` before pointing at them, or leave the
 `*_key` arguments out until you do, and the parser falls back to `title`,
 `description` and `Column.title` exactly as a third-party one does.
+
+`url` is the page the parser scrapes and the one the report's `URL` row shows;
+`auth_url` is the page a VNC login opens. Leave `auth_url` out and the login
+uses `url` — that is what a parser written before the attribute relies on.
 
 3. Restart the service: `$COMPOSE restart worker`. The parser appears in
    `uwp parsers list` and in the bot («🌐 Sites» → «➕ Add site»).
@@ -442,6 +454,7 @@ code. Russian-language; the reasoning is in the ordering of the arguments.
 | [`superpowers/specs/2026-11-14-persistent-menu-and-vnc-desktop-design.md`](superpowers/specs/2026-11-14-persistent-menu-and-vnc-desktop-design.md) | the reply keyboard and the full-size VNC desktop |
 | [`superpowers/specs/2026-11-21-vnc-kiosk-design.md`](superpowers/specs/2026-11-21-vnc-kiosk-design.md) | the VNC login as a kiosk: one window, no panel or menu, no DevTools |
 | [`superpowers/specs/2026-11-16-volatile-columns-in-changes-mode-design.md`](superpowers/specs/2026-11-16-volatile-columns-in-changes-mode-design.md) | why a drifting counter must not make `changes` fire every run |
+| [`superpowers/specs/2026-11-21-parser-auth-url-design.md`](superpowers/specs/2026-11-21-parser-auth-url-design.md) | the parser's login page as `auth_url`, separate from the run URL |
 
 ## Implementation plans
 
@@ -456,6 +469,7 @@ test-first; the measured symptom is quoted in the commit that closed it.
 | [`superpowers/plans/2026-11-15-returned-items-and-new-column.md`](superpowers/plans/2026-11-15-returned-items-and-new-column.md) | rows that vanish and come back, and the «Новое» column |
 | [`superpowers/plans/2026-11-15-sandbox-and-steam-regions.md`](superpowers/plans/2026-11-15-sandbox-and-steam-regions.md) | the three seccomp relaxations, and regional Steam parsing |
 | [`superpowers/plans/2026-11-16-volatile-columns-in-changes-mode.md`](superpowers/plans/2026-11-16-volatile-columns-in-changes-mode.md) | `Column(volatile=True)` |
+| [`superpowers/plans/2026-11-21-parser-auth-url.md`](superpowers/plans/2026-11-21-parser-auth-url.md) | `auth_url`, and a login that refuses an ambiguous profile |
 
 ## Elsewhere
 

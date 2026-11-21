@@ -177,10 +177,15 @@ Chat commands: `/start`, `/help`, `/id`, `/sites`, `/runs`, `/language`.
 
 ## Manual login over VNC
 
-A site with a login uses a persistent profile. In the bot: «👤 Profiles» → a
-profile → «🖥 Log in», or a site card → «🖥 Log in to profile» (the browser then
-opens the site's page and takes its proxy). The link and the password arrive as
-a message; log in, then press «✅ Done» and the profile is released.
+A site with a login uses a persistent profile. Attach the profile to the site
+in the site's settings first: the login then opens the login page the parser
+declares as `auth_url` (or its run page, when the parser declares none) and
+takes the site's proxy when the site has one. Start it from the site card
+(«🖥 Log in to profile») or from «👤 Profiles» → a profile → «🖥 Log in». A
+profile attached to no site is refused with a hint, and one attached to several
+sites is refused too — their proxies can differ, so start the login from the
+site card you need. The link and the password arrive as a message; log in,
+then press «✅ Done» and the profile is released.
 
 A session lives 60 minutes (the «⏱ +30 min» button extends it) and, once a
 client has connected, closes 20 minutes after the last one disconnects. Ports

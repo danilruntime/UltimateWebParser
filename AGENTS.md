@@ -158,6 +158,13 @@ gets one refusal and the handler never runs.
 for new/changed detection. `runner._row_key` raises `ValueError` without it.
 A row that vanishes and later returns is new again (`items.absent`).
 
+**`auth_url` is the login page, `url` is the run page.** The VNC browser opens
+`BaseParser.login_url` (`auth_url or url`), while `reports.report_meta` writes
+`parser.url`. Do not merge the two to "simplify": a report whose `URL` row is a
+login form points the reader at nothing. A login from the profile card resolves
+the site through `sites.profile_id` and refuses when zero or several sites
+match — guessing would spend the wrong proxy on a login.
+
 **A self-drifting column must be `volatile=True`.** `export_mode=changes`
 compares every non-volatile column, so a live counter (a review count, a viewer
 number) makes it fire on every run. `volatile` keeps the column in the report

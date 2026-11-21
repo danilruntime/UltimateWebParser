@@ -8,6 +8,8 @@ profile: `requires_login = False`.
 
 ## How it works
 
+- `auth_url` points at `https://store.steampowered.com/login/`: a VNC login
+  opens the form, while `url` stays the search page the report names.
 - `build_search_url(settings, start)` builds one results page URL
   (`filter`, `specials=1`, `cc=<region>`, `l=<language>`, `start=`).
 - `run(ctx)` walks pages `start = 0, 50, 100, …` up to `max_pages`, loading each

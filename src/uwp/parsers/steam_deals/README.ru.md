@@ -8,6 +8,9 @@
 
 ## Как устроен
 
+- `auth_url` указывает на `https://store.steampowered.com/login/`: вход через
+  VNC открывает форму, а `url` остаётся страницей поиска, которую называет
+  отчёт.
 - `build_search_url(settings, start)` собирает URL одной страницы результатов
   (`filter`, `specials=1`, `cc=<region>`, `l=<language>`, `start=`).
 - `run(ctx)` идёт по страницам `start = 0, 50, 100, …` до `max_pages`, загружая

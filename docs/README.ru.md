@@ -159,12 +159,19 @@ combined) действительно запускает всё в сети хо�
 ```bash
 docker exec uwp-worker /entrypoint.sh profile create Steam-RU
 docker exec uwp-worker /entrypoint.sh profile list
-docker exec uwp-worker /entrypoint.sh profile login 1
+docker exec uwp-worker /entrypoint.sh profile login 1 --site steam_skidki
 ```
 
 `profile login` поднимает стек в этом же процессе и держит его: ссылка и пароль
 печатаются сразу, а Ctrl+C закрывает сессию. Через бота удобнее — ссылка приходит
 сообщением, сессией владеет воркер, и прерывать нечего.
+
+`--site` принимает слаг или числовой id и называет сайт, чью страницу входа
+откроет браузер; если у сайта задан свой прокси, берётся он, иначе — прокси
+профиля. Без `--site` профиль должен быть привязан ровно к одному сайту: профиль
+без привязки и профиль, привязанный к нескольким сайтам, получают отказ — у
+сайтов могут быть разные прокси. По тому же правилу работает «🖥 Войти» с
+карточки профиля.
 
 Ссылка вида `http://<UWP_PUBLIC_HOST>:6042/vnc.html#autoconnect=1` открывается в
 браузере. Пароль передаётся во фрагменте (`#password=...`) и на сервер не уходит.
@@ -313,6 +320,7 @@ class MyParser(BaseParser):
     title_key = "parser.my_site.title"
     description_key = "parser.my_site.description"
     url = "https://example.com/"
+    auth_url = "https://example.com/login"
     requires_login = False
     settings_model = MySettings
     columns: ClassVar[list[Column]] = [
@@ -340,6 +348,11 @@ class MyParser(BaseParser):
 `ru` и `en`, прежде чем на них ссылаться, — а пока не добавили, уберите аргументы
 `*_key`, и парсер возьмёт `title`, `description` и `Column.title`, как и любой
 сторонний.
+
+`url` — это страница, которую парсер собирает, и та, что показана в строке `URL`
+отчёта; `auth_url` — страница, которую открывает вход через VNC. Не указывайте
+`auth_url` — и вход возьмёт `url`: на это рассчитывает парсер, написанный до
+появления атрибута.
 
 3. Перезапустите сервис: `$COMPOSE restart worker`. Парсер появится в
    `uwp parsers list` и в боте («🌐 Сайты» → «➕ Добавить сайт»).
@@ -435,6 +448,7 @@ README на новый файл заметок, пишет заметки из �
 | [`superpowers/specs/2026-11-14-persistent-menu-and-vnc-desktop-design.md`](superpowers/specs/2026-11-14-persistent-menu-and-vnc-desktop-design.md) | постоянная клавиатура и полноразмерный рабочий стол VNC |
 | [`superpowers/specs/2026-11-21-vnc-kiosk-design.md`](superpowers/specs/2026-11-21-vnc-kiosk-design.md) | VNC-вход как киоск: одно окно, без панели и меню, без DevTools |
 | [`superpowers/specs/2026-11-16-volatile-columns-in-changes-mode-design.md`](superpowers/specs/2026-11-16-volatile-columns-in-changes-mode-design.md) | почему дрейфующий счётчик не должен заставлять `changes` срабатывать каждый прогон |
+| [`superpowers/specs/2026-11-21-parser-auth-url-design.md`](superpowers/specs/2026-11-21-parser-auth-url-design.md) | страница входа парсера как `auth_url`, отдельно от URL прогона |
 
 ## <a id="implementation-plans"></a>Планы реализации
 
@@ -450,6 +464,7 @@ README на новый файл заметок, пишет заметки из �
 | [`superpowers/plans/2026-11-15-returned-items-and-new-column.md`](superpowers/plans/2026-11-15-returned-items-and-new-column.md) | строки, которые пропадают и возвращаются, и колонка «Новое» |
 | [`superpowers/plans/2026-11-15-sandbox-and-steam-regions.md`](superpowers/plans/2026-11-15-sandbox-and-steam-regions.md) | три послабления seccomp и региональный парсинг Steam |
 | [`superpowers/plans/2026-11-16-volatile-columns-in-changes-mode.md`](superpowers/plans/2026-11-16-volatile-columns-in-changes-mode.md) | `Column(volatile=True)` |
+| [`superpowers/plans/2026-11-21-parser-auth-url.md`](superpowers/plans/2026-11-21-parser-auth-url.md) | `auth_url` и вход, который отказывает при неоднозначном профиле |
 
 ## <a id="elsewhere"></a>В других файлах
 
