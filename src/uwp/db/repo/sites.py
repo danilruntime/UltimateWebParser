@@ -72,6 +72,13 @@ class SitesRepo:
         rows = await self.db.fetchall("SELECT * FROM sites ORDER BY id")
         return [_row_to_site(r) for r in rows]
 
+    async def by_profile(self, profile_id: int) -> list[Site]:
+        """Sites this profile is attached to; a login needs exactly one."""
+        rows = await self.db.fetchall(
+            "SELECT * FROM sites WHERE profile_id = ? ORDER BY id", (profile_id,)
+        )
+        return [_row_to_site(r) for r in rows]
+
     async def create(self, site: Site) -> int:
         return await self.db.execute(
             """INSERT INTO sites (slug, name, parser_key, parser_settings, enabled,

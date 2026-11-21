@@ -238,6 +238,18 @@ async def test_site_due(db):
     assert [s.id for s in await repo.due(NOW)] == [due]
 
 
+async def test_sites_by_profile(db):
+    """"Log in with this profile" needs the sites that actually use it."""
+    repo = SitesRepo(db)
+    pid = await ProfilesRepo(db).create(make_profile("login"))
+    mine = await repo.create(make_site("mine", profile_id=pid))
+    await repo.create(make_site("other"))
+    also = await repo.create(make_site("also-mine", profile_id=pid))
+
+    assert [s.id for s in await repo.by_profile(pid)] == [mine, also]
+    assert await repo.by_profile(9999) == []
+
+
 async def test_only_one_active_job_per_site(db):
     sites = SitesRepo(db)
     jobs = JobsRepo(db)
