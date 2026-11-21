@@ -170,10 +170,12 @@ and there is nothing to interrupt.
 
 `--site` takes a slug or a numeric id and names the site whose login page the
 browser opens; a site's own proxy is used when it has one, otherwise the
-profile's. Without `--site` the profile must be attached to exactly one site —
-the service refuses a profile attached to none or to several, because their
-proxies can differ. That is the same rule the profile card's «🖥 Log in»
-follows.
+profile's. Without `--site` the service resolves the profile's attachment:
+exactly one attached site gives both the login page and the proxy; none
+attached is refused because there is no site to take them from, and several
+are refused because they may use different proxies and a guess would log the
+account in from the wrong country. That is the same rule the profile card's
+«🖥 Log in» follows.
 
 A link like `http://<UWP_PUBLIC_HOST>:6042/vnc.html#autoconnect=1` opens in a
 browser. The password travels in the fragment (`#password=...`) and is not sent
