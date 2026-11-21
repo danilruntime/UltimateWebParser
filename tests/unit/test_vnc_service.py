@@ -78,11 +78,11 @@ async def _profile(repo, tmp_path):
     )
 
 
-async def _site(repo):
+async def _site(repo, slug="s"):
     return await repo.create(
         Site(
-            slug="s",
-            name="S",
+            slug=slug,
+            name=slug.upper(),
             parser_key="steam_deals",
             interval_min_min=1,
             interval_max_min=2,
@@ -90,7 +90,7 @@ async def _site(repo):
     )
 
 
-async def test_request_uses_the_parser_url(env):
+async def test_request_opens_the_parser_auth_url(env):
     _db, profiles, sites, sessions, tmp_path = env
     pid = await _profile(profiles, tmp_path)
     sid = await _site(sites)
@@ -102,25 +102,92 @@ async def test_request_uses_the_parser_url(env):
         sites,
         settings,
         sessions,
-        parser_urls={"steam_deals": "https://store.steampowered.com/"},
+        parser_auth_urls={"steam_deals": "https://store.steampowered.com/login/"},
     )
 
     info = await svc.request(pid, site_id=sid, started_by=7)
 
     assert info == "info"
-    assert manager.calls == [(pid, "https://store.steampowered.com/")]
+    assert manager.calls == [(pid, "https://store.steampowered.com/login/")]
 
 
-async def test_request_without_site_uses_example(env):
+async def test_request_from_a_profile_uses_its_single_site(env):
+    """The profile card has no site id: the attached site supplies page and proxy."""
+    _db, profiles, sites, sessions, tmp_path = env
+    pid = await _profile(profiles, tmp_path)
+    site = await _site(sites)
+    proxy = Proxy(name="P", scheme=ProxyScheme.http, host="127.0.0.1", port=3128)
+    from uwp.db.repo.proxies import ProxiesRepo
+
+    proxy_id = await ProxiesRepo(_db).create(proxy)
+    await sites.update(site, profile_id=pid, proxy_id=proxy_id)
+    settings = load_settings({"UWP_DATA_DIR": str(tmp_path)})
+    manager = FakeManager()
+    svc = VncService(
+        manager,
+        profiles,
+        sites,
+        settings,
+        sessions,
+        parser_auth_urls={"steam_deals": "https://store.steampowered.com/login/"},
+    )
+
+    await svc.request(pid)
+
+    assert manager.calls == [(pid, "https://store.steampowered.com/login/")]
+    assert manager.proxy_ids == [proxy_id]
+
+
+async def test_request_from_a_profile_without_a_site_is_refused(env):
+    """example.com told nobody which site to log in to, and the stack still ran."""
     _db, profiles, sites, sessions, tmp_path = env
     pid = await _profile(profiles, tmp_path)
     settings = load_settings({"UWP_DATA_DIR": str(tmp_path)})
     manager = FakeManager()
     svc = VncService(manager, profiles, sites, settings, sessions)
 
-    await svc.request(pid)
+    with pytest.raises(ValueError, match="не привязан"):
+        await svc.request(pid)
 
-    assert manager.calls == [(pid, "https://example.com")]
+    assert manager.calls == []
+
+
+async def test_request_from_a_profile_with_two_sites_is_refused(env):
+    _db, profiles, sites, sessions, tmp_path = env
+    pid = await _profile(profiles, tmp_path)
+    first = await _site(sites, "a")
+    second = await _site(sites, "b")
+    await sites.update(first, profile_id=pid)
+    await sites.update(second, profile_id=pid)
+    settings = load_settings({"UWP_DATA_DIR": str(tmp_path)})
+    svc = VncService(FakeManager(), profiles, sites, settings, sessions)
+
+    with pytest.raises(ValueError, match="нескольким сайтам"):
+        await svc.request(pid)
+
+
+async def test_request_refuses_a_site_whose_parser_is_missing(env):
+    """A removed or broken parser used to fall back to an unrelated page."""
+    _db, profiles, sites, sessions, tmp_path = env
+    pid = await _profile(profiles, tmp_path)
+    sid = await _site(sites)
+    settings = load_settings({"UWP_DATA_DIR": str(tmp_path)})
+    svc = VncService(FakeManager(), profiles, sites, settings, sessions)
+
+    with pytest.raises(ValueError, match="steam_deals"):
+        await svc.request(pid, site_id=sid)
+
+
+async def test_request_refuses_an_unknown_site_id(env):
+    _db, profiles, sites, sessions, tmp_path = env
+    pid = await _profile(profiles, tmp_path)
+    settings = load_settings(
+        {"UWP_DATA_DIR": str(tmp_path), "UWP_DEFAULT_LANGUAGE": "en"}
+    )
+    svc = VncService(FakeManager(), profiles, sites, settings, sessions)
+
+    with pytest.raises(ValueError, match="site 999 not found"):
+        await svc.request(pid, site_id=999)
 
 
 async def test_request_passes_the_site_proxy_to_the_session(env):
@@ -136,7 +203,14 @@ async def test_request_passes_the_site_proxy_to_the_session(env):
     await profiles.update(pid, proxy_id=None)
     settings = load_settings({"UWP_DATA_DIR": str(tmp_path)})
     manager = FakeManager()
-    svc = VncService(manager, profiles, sites, settings, sessions)
+    svc = VncService(
+        manager,
+        profiles,
+        sites,
+        settings,
+        sessions,
+        parser_auth_urls={"steam_deals": "https://store.steampowered.com/login/"},
+    )
 
     await svc.request(pid, site_id=site)
 
@@ -173,6 +247,18 @@ async def test_the_missing_session_error_follows_the_deployment_language(env):
 
     with pytest.raises(ValueError, match="session 5 not found"):
         await svc.extend(5)
+
+
+async def test_the_unattached_profile_refusal_follows_the_deployment_language(env):
+    _db, profiles, sites, sessions, tmp_path = env
+    pid = await _profile(profiles, tmp_path)
+    settings = load_settings(
+        {"UWP_DATA_DIR": str(tmp_path), "UWP_DEFAULT_LANGUAGE": "en"}
+    )
+    svc = VncService(FakeManager(), profiles, sites, settings, sessions)
+
+    with pytest.raises(ValueError, match="not attached to any site"):
+        await svc.request(pid)
 
 
 async def test_stop_delegates_to_the_manager(env):
@@ -213,15 +299,23 @@ async def test_deferred_request_only_books_a_session(env):
     """Split mode: the bot has no GUI stack and must not pretend to start one."""
     _db, profiles, sites, sessions, tmp_path = env
     pid = await _profile(profiles, tmp_path)
+    site = await _site(sites)
+    await sites.update(site, profile_id=pid)
     settings = load_settings({"UWP_DATA_DIR": str(tmp_path)})
     manager = FakeManager()
     svc = VncService(
-        manager, profiles, sites, settings, sessions, eager_launch=False
+        manager,
+        profiles,
+        sites,
+        settings,
+        sessions,
+        parser_auth_urls={"steam_deals": "https://store.steampowered.com/login/"},
+        eager_launch=False,
     )
 
     await svc.request(pid)
 
-    assert manager.calls == [(pid, "https://example.com")]
+    assert manager.calls == [(pid, "https://store.steampowered.com/login/")]
     assert manager.launched == []
 
 

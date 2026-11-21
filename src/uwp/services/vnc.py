@@ -9,7 +9,7 @@ from uwp.config import Settings
 from uwp.db.repo.profiles import ProfilesRepo
 from uwp.db.repo.sites import SitesRepo
 from uwp.db.repo.vnc import VncRepo
-from uwp.domain import VncSession
+from uwp.domain import Site, VncSession
 from uwp.i18n import Lang, t
 from uwp.timeutil import utcnow
 from uwp.vnc import VncInfo, VncManager
@@ -17,7 +17,6 @@ from uwp.vnc import VncInfo, VncManager
 log = logging.getLogger(__name__)
 
 EXTEND_MINUTES = 30
-FALLBACK_URL = "https://example.com"
 
 
 class VncService:
@@ -30,7 +29,7 @@ class VncService:
         sites: SitesRepo,
         settings: Settings,
         sessions: VncRepo,
-        parser_urls: dict[str, str] | None = None,
+        parser_auth_urls: dict[str, str] | None = None,
         eager_launch: bool = True,
     ) -> None:
         self.manager = manager
@@ -38,7 +37,8 @@ class VncService:
         self.sites = sites
         self.settings = settings
         self.sessions = sessions
-        self.parser_urls = parser_urls or {}
+        # The pages a VNC login opens, per parser key.
+        self.parser_auth_urls = parser_auth_urls or {}
         # In split mode the bot process has no GUI stack: it books the session
         # and the worker launches it on its next tick.
         self.eager_launch = eager_launch
@@ -47,6 +47,29 @@ class VncService:
     def lang(self) -> Lang:
         """The deployment language: the fallback when no reader is in context."""
         return Lang(self.settings.default_language)
+
+    async def _login_site(
+        self, profile_id: int, site_id: int | None, lang: Lang
+    ) -> Site:
+        """The site whose auth page the login opens.
+
+        A login started from a site card names it; the profile card does not,
+        so a profile attached to exactly one site lends that site's page and
+        proxy. Two attached sites are refused rather than guessed: their
+        proxies can differ, and a login through the wrong country looks like a
+        hijacked account.
+        """
+        if site_id is not None:
+            site = await self.sites.get(site_id)
+            if site is None:
+                raise ValueError(t(lang, "error.site.not_found", id=site_id))
+            return site
+        attached = await self.sites.by_profile(profile_id)
+        if not attached:
+            raise ValueError(t(lang, "error.vnc.profile_without_site"))
+        if len(attached) > 1:
+            raise ValueError(t(lang, "error.vnc.profile_many_sites"))
+        return attached[0]
 
     async def request(
         self,
@@ -61,23 +84,24 @@ class VncService:
         ``lang`` is the reader's language: the bot passes the admin's, while the
         CLI passes nothing and gets the deployment's.
         """
+        reader = lang or self.lang
         profile = await self.profiles.get(profile_id)
         if profile is None:
             raise ValueError(
                 t(
-                    lang or self.lang,
+                    reader,
                     "error.profile.not_found",
                     id=profile_id,
                 )
             )
-        url = FALLBACK_URL
-        proxy_id = profile.proxy_id
-        if site_id is not None:
-            site = await self.sites.get(site_id)
-            if site is not None:
-                url = self.parser_urls.get(site.parser_key, FALLBACK_URL)
-                # Site proxy wins over the profile's own, as the spec requires.
-                proxy_id = site.proxy_id or proxy_id
+        site = await self._login_site(profile_id, site_id, reader)
+        url = self.parser_auth_urls.get(site.parser_key)
+        if url is None:
+            raise ValueError(
+                t(reader, "error.vnc.site_parser_unavailable", parser=site.parser_key)
+            )
+        # Site proxy wins over the profile's own, as the spec requires.
+        proxy_id = site.proxy_id or profile.proxy_id
         if self.eager_launch:
             return await self.manager.reserve_and_launch(
                 profile, url, proxy_id=proxy_id, started_by=started_by

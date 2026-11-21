@@ -219,7 +219,7 @@ async def build_runtime(
         sites,
         settings,
         sessions,
-        parser_urls={p.key: p.url for p in registry.all()},
+        parser_auth_urls={p.key: p.login_url for p in registry.all()},
         eager_launch=eager_vnc,
     )
 

@@ -47,6 +47,15 @@ CATALOG: dict[Lang, dict[str, str]] = {
         ),
         # --- VNC ----------------------------------------------------------
         "error.vnc.session_not_found": "сессия {id} не найдена",
+        "error.vnc.profile_without_site": (
+            "профиль не привязан ни к одному сайту: привяжите его в настройках сайта"
+        ),
+        "error.vnc.profile_many_sites": (
+            "профиль привязан к нескольким сайтам: войдите с карточки нужного сайта"
+        ),
+        "error.vnc.site_parser_unavailable": (
+            "парсер сайта «{parser}» недоступен: обновите или включите его"
+        ),
         # A profile a login cannot use: ``vnc.py`` raises these as codes.
         "error.vnc.profile_not_persistent": (
             "для входа нужен постоянный профиль, а не временный"
@@ -122,6 +131,15 @@ CATALOG: dict[Lang, dict[str, str]] = {
             "cannot decrypt the stored secret: check UWP_SECRET_KEY"
         ),
         "error.vnc.session_not_found": "session {id} not found",
+        "error.vnc.profile_without_site": (
+            "the profile is not attached to any site: attach it in the site settings"
+        ),
+        "error.vnc.profile_many_sites": (
+            "the profile is attached to several sites: log in from the site you need"
+        ),
+        "error.vnc.site_parser_unavailable": (
+            "the site's parser “{parser}” is unavailable: update or enable it"
+        ),
         "error.vnc.profile_not_persistent": (
             "VNC login needs a persistent profile, not a temporary one"
         ),
