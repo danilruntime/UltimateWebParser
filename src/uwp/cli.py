@@ -675,11 +675,14 @@ def cmd_profile_delete(settings: Settings, profile_id: int) -> int:
     return _settle(_with_db(settings, action))
 
 
-def cmd_profile_login(settings: Settings, profile_id: int) -> int:
+def cmd_profile_login(
+    settings: Settings, profile_id: int, site_slug: str | None = None
+) -> int:
     from uwp.db.repo.profiles import ProfilesRepo
     from uwp.db.repo.proxies import ProxiesRepo
     from uwp.db.repo.sites import SitesRepo
     from uwp.db.repo.vnc import VncRepo
+    from uwp.parsers.registry import ParserRegistry
     from uwp.services.proxies import ProxyService
     from uwp.services.vnc import VncService
     from uwp.timeutil import utcnow
@@ -695,12 +698,34 @@ def cmd_profile_login(settings: Settings, profile_id: int) -> int:
         if profile is None:
             _print(t(lang, "cli.profile.not_found", id=profile_id))
             return 1
+        site = None
+        if site_slug is not None:
+            site = _find_site(await SitesRepo(db).list(), site_slug)
+            if site is None:
+                _print(t(lang, "cli.site.not_found", slug=site_slug))
+                return 1
         sessions = VncRepo(db)
         manager = VncManager(
             settings, repo, sessions, proxies=ProxyService(ProxiesRepo(db), settings)
         )
-        svc = VncService(manager, repo, SitesRepo(db), settings, sessions)
-        info = await svc.request(profile_id)
+        svc = VncService(
+            manager,
+            repo,
+            SitesRepo(db),
+            settings,
+            sessions,
+            parser_auth_urls={
+                parser.key: parser.login_url
+                for parser in ParserRegistry.discover().all()
+            },
+        )
+        try:
+            info = await svc.request(
+                profile_id, site_id=site.id if site is not None else None
+            )
+        except ValueError as exc:
+            _print(f"❌ {exc}")
+            return 1
         _print(t(lang, "cli.profile.vnc_link", url=info.url))
         _print(t(lang, "cli.profile.vnc_password", password=info.password))
         _print(t(lang, "cli.profile.vnc_hint"))
@@ -961,6 +986,9 @@ def build_parser(lang: Lang = DEFAULT_LANG) -> argparse.ArgumentParser:
     create.add_argument("name")
     gain = profile_sub.add_parser("login", help=tr("cli.help.profile_login"))
     gain.add_argument("profile_id", type=int)
+    gain.add_argument(
+        "--site", default=None, help=tr("cli.help.profile_login_site")
+    )
     drop = profile_sub.add_parser("delete", help=tr("cli.help.profile_delete"))
     drop.add_argument("profile_id", type=int)
 
@@ -1083,7 +1111,7 @@ def _dispatch_profile(settings: Settings, args) -> int:
     if args.profile_command == "create":
         return cmd_profile_create(settings, args.name)
     if args.profile_command == "login":
-        return cmd_profile_login(settings, args.profile_id)
+        return cmd_profile_login(settings, args.profile_id, args.site)
     if args.profile_command == "delete":
         return cmd_profile_delete(settings, args.profile_id)
     return 1

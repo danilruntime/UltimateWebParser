@@ -210,6 +210,27 @@ async def test_a_missing_login_profile_is_refused_in_the_readers_language(env):
     assert russian.answers[0][0] == "профиль 999 не найден"
 
 
+async def test_an_unattached_profile_login_is_refused_in_the_readers_language(env):
+    """The profile card used to open example.com instead of saying anything."""
+    router, deps, _settings = env
+    profile = await deps.profiles.create("Steam1")
+    handler = _callback(router, "start_login")
+
+    english = _Callback(f"profile:login:{profile.id}")
+    await handler(english, lang=Lang.en)
+    russian = _Callback(f"profile:login:{profile.id}")
+    await handler(russian, lang=Lang.ru)
+
+    assert english.answers[0] == (
+        "the profile is not attached to any site: attach it in the site settings",
+        {"show_alert": True},
+    )
+    assert russian.answers[0] == (
+        "профиль не привязан ни к одному сайту: привяжите его в настройках сайта",
+        {"show_alert": True},
+    )
+
+
 async def test_an_expired_extend_button_answers_instead_of_raising(env):
     """After the sweep the session is gone; the spinner used to time out.
 

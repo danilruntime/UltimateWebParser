@@ -448,6 +448,49 @@ def test_profile_create_reports_a_duplicate_instead_of_a_traceback(
     assert "already exists" in capsys.readouterr().out
 
 
+def test_profile_login_says_when_the_profile_has_no_site(capsys, monkeypatch, tmp_path):
+    """``uwp profile login`` opened example.com and never named the reason."""
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    main(["profile", "create", "Steam1"])
+
+    assert main(["profile", "login", "1"]) == 1
+    assert "не привязан" in capsys.readouterr().out
+
+
+def test_profile_login_rejects_an_unknown_site_slug(capsys, monkeypatch, tmp_path):
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    main(["profile", "create", "Steam1"])
+
+    assert main(["profile", "login", "1", "--site", "nope"]) == 1
+    out = capsys.readouterr().out
+    assert "не найден" in out
+    # The slug named the lookup, not just the parser: an accepted-but-ignored
+    # ``--site`` would fall back to the profile's own (absent) attachment.
+    assert "nope" in out
+
+
+def test_profile_login_forwards_the_site_to_the_service(capsys, monkeypatch, tmp_path):
+    """A lookup alone starts nothing: the resolved id must reach ``request``."""
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    main(["init"])
+    main(["profile", "create", "Steam1"])
+
+    seen: list[int | None] = []
+
+    async def fake_request(self, profile_id, site_id=None, **kwargs):
+        seen.append(site_id)
+        raise ValueError("refused for the test")
+
+    monkeypatch.setattr("uwp.services.vnc.VncService.request", fake_request)
+
+    assert main(["profile", "login", "1", "--site", "steam_skidki"]) == 1
+    # A numeric id is the same handle the rest of the CLI accepts.
+    assert main(["profile", "login", "1", "--site", "1"]) == 1
+
+    # The fresh database has exactly one site, the seeded one.
+    assert seen == [1, 1]
+
+
 def test_the_seeded_site_is_named_in_the_deployments_language(
     capsys, monkeypatch, tmp_path
 ):
