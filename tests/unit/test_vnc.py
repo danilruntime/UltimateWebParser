@@ -197,14 +197,18 @@ async def test_default_factory_builds_the_full_stack(tmp_path, monkeypatch):
         "websockify",
     ]
 
-    # The desktop is Windows 10 at 1080p: the screen is full size and the
-    # browser is pinned to the 1040-high work area left by the taskbar.
+    # The login desktop is a 1080p screen filled by one kiosk window, so the
+    # window is sized to the screen instead of a taskbar work area.
     xvfb = next(p.command for p in spawned if p.command[0] == "Xvfb")
     assert "1920x1080x24" in xvfb
     browser = next(
         p.command for p in spawned if p.command[0] == str(settings.browser_path)
     )
-    assert "--window-size=1920,1040" in browser
+    assert "--kiosk" in browser
+    assert browser[-1] == "https://example.com"
+    # Measured: with --fingerprint, kiosk alone lands a 945x1060 window in the
+    # corner; the screen size has to be pinned explicitly.
+    assert "--window-size=1920,1080" in browser
     assert "--window-position=0,0" in browser
     # Measured: --start-maximized breaks the size when --fingerprint is set.
     assert not any("--start-maximized" in p.command for p in spawned)
@@ -321,7 +325,7 @@ async def test_password_file_is_removed_when_the_wm_home_fails(tmp_path, monkeyp
             Path(command[-1]).write_text("stored-password")
         return FakeSpawned(command)
 
-    def broken_fluxbox_home(home, toolbar_height):
+    def broken_fluxbox_home(home):
         raise OSError("no space left on device")
 
     monkeypatch.setattr(vnc, "_spawn", fake_spawn)
@@ -679,28 +683,33 @@ async def test_client_count_reads_the_hook_marker(tmp_path):
     assert stack.client_count() == 0
 
 
-def test_desktop_geometry_matches_windows_10():
-    from uwp.vnc import DESKTOP_SIZE, TASKBAR_HEIGHT, WORKAREA
+def test_desktop_size_is_1080p():
+    from uwp.vnc import DESKTOP_SIZE
 
+    # Kiosk fills the screen; the old work area subtracted a taskbar height
+    # that no longer exists. The same tuple is passed as --window-size because
+    # --fingerprint ignores kiosk geometry (measured: 945x1060 in the corner).
     assert DESKTOP_SIZE == (1920, 1080)
-    # fluxbox adds 2 px of border, so 38 px renders a 40 px taskbar.
-    assert TASKBAR_HEIGHT == 38
-    assert WORKAREA == (1920, 1080 - 40)
 
 
-def test_fluxbox_home_sets_the_toolbar_and_strips_decorations(tmp_path):
+def test_fluxbox_home_hides_the_panel_and_the_menu(tmp_path):
     from uwp.vnc import _write_fluxbox_home
 
-    home = _write_fluxbox_home(tmp_path / "wm", toolbar_height=38)
+    home = _write_fluxbox_home(tmp_path / "wm")
 
     init = (home / ".fluxbox" / "init").read_text()
-    assert "session.screen0.toolbar.height: 38" in init
-    assert "session.screen0.toolbar.visible: true" in init
-    assert "session.screen0.toolbar.placement: BottomCenter" in init
+    assert "session.screen0.toolbar.visible: false" in init
+    assert "session.screen0.toolbar.height" not in init
+    assert "session.screen0.toolbar.tools" not in init
+    assert f"session.menuFile: {home}/.fluxbox/menu" in init
+    assert f"session.keyFile: {home}/.fluxbox/keys" in init
+    assert "session.screen0.workspaces: 1" in init
     # Measured in the image: the ``apps`` rule loses a race when fluxbox and
     # Chromium start back to back, leaving a 1/1/20/4 frame. ``defaultDeco``
     # is read from the config before any window is mapped, so it always wins.
     assert "session.screen0.defaultDeco: NONE" in init
+    # An empty menu file makes a right click on the desktop do nothing.
+    assert (home / ".fluxbox" / "menu").read_text() == ""
     apps = (home / ".fluxbox" / "apps").read_text()
     assert "[Deco] {NONE}" in apps
     assert "class=Chromium" in apps

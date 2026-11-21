@@ -82,22 +82,18 @@ UNSAFE_PORTS = frozenset(
     }
 )
 
-# The VNC desktop mimics Windows 10 at 1080p: a 40 px taskbar leaves a
-# 1920x1040 work area. fluxbox adds 2 px of border, hence 38.
+# The login desktop is a plain 1080p screen: kiosk fills it edge to edge, so the
+# window is pinned to the screen, not to a work area left by a taskbar.
 DESKTOP_SIZE = (1920, 1080)
-TASKBAR_HEIGHT = 38
-WORKAREA = (DESKTOP_SIZE[0], DESKTOP_SIZE[1] - TASKBAR_HEIGHT - 2)
 
 _FLUXBOX_INIT = """\
 session.styleFile: /usr/share/fluxbox/styles/Squared_for_Debian
 session.appsFile: {home}/.fluxbox/apps
+session.menuFile: {home}/.fluxbox/menu
+session.keyFile: {home}/.fluxbox/keys
 session.screen0.defaultDeco: NONE
-session.screen0.toolbar.height: {toolbar}
-session.screen0.toolbar.widthPercent: 100
-session.screen0.toolbar.placement: BottomCenter
-session.screen0.toolbar.visible: true
-session.screen0.toolbar.tools: workspacename, clock, iconbar, systemtray
-session.screen0.strftimeFormat: %H:%M
+session.screen0.toolbar.visible: false
+session.screen0.workspaces: 1
 """
 
 # Chromium draws its own tab strip, so a fluxbox frame is dead pixels. Without
@@ -114,20 +110,85 @@ _FLUXBOX_APPS = """\
 [end]
 """
 
+# An empty menu file: a right click on the desktop must not offer a terminal,
+# a file manager or a second browser.
+_FLUXBOX_MENU = ""
 
-def _write_fluxbox_home(home: Path, toolbar_height: int) -> Path:
+# Chords that must never reach Chromium. Measured in the image: kiosk mode
+# alone still opens a full 1050x760 window with the complete browser UI on
+# Ctrl+N, so the window manager grabs the chord first. Reload (F5, Ctrl+R) and
+# history (Alt+Left/Right) are deliberately absent: a half-finished login is
+# retried through them.
+_GRABBED_CHORDS = (
+    # Windows and tabs.
+    "Control n",
+    "Control Shift n",
+    "Control t",
+    "Control Shift t",
+    "Control w",
+    "Control Shift w",
+    "Control Shift q",
+    "Mod1 F4",
+    # DevTools and view-source.
+    "Control Shift i",
+    "Control Shift j",
+    "Control Shift c",
+    "F12",
+    "Control u",
+    # File dialogs, printing, downloads, history.
+    "Control s",
+    "Control p",
+    "Control o",
+    "Control h",
+    "Control j",
+    # Bookmarks.
+    "Control d",
+    "Control Shift o",
+    "Control Shift b",
+    # Location bar and search.
+    "Control l",
+    "Control k",
+    "Control e",
+    "Mod1 d",
+    "F6",
+    "Control f",
+    "F3",
+    "Control g",
+    # Window chrome and stored data.
+    "F11",
+    "F1",
+    "Control Shift Delete",
+    "Control Shift m",
+    # Context menu from the keyboard.
+    "Shift F10",
+    "Menu",
+    # Zoom and home.
+    "Control equal",
+    "Control minus",
+    "Control 0",
+    "Mod1 Home",
+)
+
+# ``:Exec true`` is the only no-op fluxbox accepts here: ``:Noop``, ``:None``
+# and ``:MacroCmd`` are rejected with "Invalid key/modifier" (measured), and a
+# rejected line is never grabbed at all.
+_FLUXBOX_KEYS = "".join(f"{chord} :Exec true\n" for chord in _GRABBED_CHORDS)
+
+
+def _write_fluxbox_home(home: Path) -> Path:
     """Write the WM config fluxbox reads from ``$HOME/.fluxbox``.
 
     fluxbox honours ``$HOME/.fluxbox/init``; ``-rc`` picks up ``appsFile`` but
-    silently ignores ``toolbar.height``, so the files must live here.
+    ignores the rest, so every file must live here. The keys file is what keeps
+    Ctrl+N and the DevTools shortcuts away from Chromium.
     """
     config = home / ".fluxbox"
     try:
         config.mkdir(parents=True, exist_ok=True)
         (config / "apps").write_text(_FLUXBOX_APPS)
-        (config / "init").write_text(
-            _FLUXBOX_INIT.format(home=home, toolbar=toolbar_height)
-        )
+        (config / "menu").write_text(_FLUXBOX_MENU)
+        (config / "keys").write_text(_FLUXBOX_KEYS)
+        (config / "init").write_text(_FLUXBOX_INIT.format(home=home))
     except BaseException:
         shutil.rmtree(home, ignore_errors=True)
         raise
@@ -440,7 +501,11 @@ def _default_process_factory(
                 proxy_url,
                 headless=False,
                 no_sandbox=settings.no_sandbox,
-                window_size=WORKAREA,
+                # Measured: kiosk alone with ``--fingerprint`` lands a
+                # 945x1060 window in the corner, exactly like
+                # ``--start-maximized``; the geometry has to be pinned. Kiosk
+                # then keeps it undecorated and full-screen.
+                window_size=DESKTOP_SIZE,
             )
             if not flag.startswith("--headless")
         ]
@@ -455,7 +520,11 @@ def _default_process_factory(
         commands = [
             ["Xvfb", screen, "-screen", "0", f"{DESKTOP_SIZE[0]}x{DESKTOP_SIZE[1]}x24"],
             ["fluxbox", "-display", screen],
-            [executable, *args, url],
+            # Kiosk: one full-screen window, no tab strip, no location bar and
+            # no context menu. It also refuses DevTools itself ("DevTools not
+            # allowed on this page", measured), which a policy cannot do
+            # without breaking Playwright.
+            [executable, *args, "--kiosk", url],
             [
                 "x11vnc",
                 "-display",
@@ -485,12 +554,11 @@ def _default_process_factory(
         websockify_process: asyncio.subprocess.Process | None = None
         stack: _Stack | None = None
         try:
-            # fluxbox reads its toolbar settings from ``$HOME/.fluxbox``, so it
-            # gets a throwaway HOME; the browser keeps the real one for its
-            # profile paths.
+            # fluxbox reads its config from ``$HOME/.fluxbox``, so it gets a
+            # throwaway HOME; the browser keeps the real one for its profile
+            # paths.
             wm_home = _write_fluxbox_home(
-                password_file.parent / f"wm-{profile.id or 'x'}-{port}",
-                TASKBAR_HEIGHT,
+                password_file.parent / f"wm-{profile.id or 'x'}-{port}"
             )
             wm_env = child_env(HOME=str(wm_home), DISPLAY=screen)
             stack = _Stack(

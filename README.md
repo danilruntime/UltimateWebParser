@@ -104,10 +104,11 @@ selector in a config file.
 *A report as Calc opens it: 50 rows, an autofilter on the header, links that
 resolve to the store page, numbers formatted, no truncated cells.*
 
-![The VNC desktop: Chromium on the Steam specials page, with the fluxbox panel below](docs/images/vnc-desktop.png)
+![The VNC kiosk: Chromium showing the Steam specials page full screen, no tabs, no panel](docs/images/vnc-desktop.png)
 
-*Manual login over VNC: Chromium on a virtual display behind noVNC, sandbox
-enabled. This is what the link in chat opens.*
+*Manual login over VNC: one kiosk window with the site, no tabs, no desktop
+panel and no DevTools, behind noVNC with the sandbox enabled. This is what the
+link in chat opens.*
 
 ## How it works
 
@@ -187,6 +188,13 @@ client has connected, closes 20 minutes after the last one disconnects. Ports
 plain HTTP; from another machine use an SSH tunnel or a TLS reverse proxy. Port
 6000 is never handed out — browsers treat it as unsafe (it is the X11 port) — so
 the first session gets 6001.
+
+The link opens a kiosk, not a desktop: one full-screen window with the site, no
+tab strip, no location bar, no desktop panel or menu, and no DevTools. Reload
+(`F5`, `Ctrl+R`) and history (`Alt+←`) still work, so a redirect after login can
+be retried; everything else is taken by the window manager before the browser
+sees it. This is a UI boundary, not a sandbox: the visitor still types into the
+page, and the worker's own secrets stay out of the browser environment.
 
 The CLI path, remote access and the small print are in
 [`docs/README.md#vnc-sessions-in-detail`](docs/README.md#vnc-sessions-in-detail).

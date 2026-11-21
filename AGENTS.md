@@ -178,6 +178,18 @@ recreated the lock names a dead host/pid. `clear_stale_singleton_lock` removes
 foreign-host locks unless the `SingletonSocket` still accepts, and same-host
 locks only when the pid does not own `--user-data-dir` in `/proc/<pid>/cmdline`.
 
+**The VNC login browser is a kiosk and fluxbox is its keyboard filter.** Kiosk
+mode alone gives one window, no tabs, no context menu and a refused DevTools
+(measured), but it still opens a full 1050×760 window on `Ctrl+N` and lands
+945×1060 with `--fingerprint` unless `--window-size` pins the screen. So
+`_GRABBED_CHORDS` in `vnc.py` must stay a data list, every grab must keep the
+`:Exec true` command (fluxbox drops a binding whose command it cannot parse —
+`:Noop` is rejected with "Invalid key/modifier"), and `F5`/`Ctrl+R`/`Alt+←` must
+stay out of it. The panel and root menu are off by design: `toolbar.visible:
+false` and an empty `menu` file. Chromium policies are not the tool here — a
+machine-wide `DeveloperToolsAvailability=2` makes `launch_persistent_context`
+time out after 180 s and stops every parser.
+
 ## Working on the code
 
 - Run one small thing before believing a change works:

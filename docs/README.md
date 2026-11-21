@@ -173,6 +173,19 @@ browser. The password travels in the fragment (`#password=...`) and is not sent
 to the server. Log in to the site and press «✅ Done»: the processes stop and
 the profile is released.
 
+The link opens a kiosk: one full-screen Chromium window with the site, no tab
+strip, no location bar, no desktop panel or menu, and no DevTools. Reload (`F5`,
+`Ctrl+R`) and history (`Alt+←`) are left to the page; every other browser chord
+is grabbed by `fluxbox` before Chromium sees it, because kiosk mode alone still
+opens a full window on `Ctrl+N` (measured). Chromium policy files are not used:
+`DeveloperToolsAvailability=2` makes `launch_persistent_context` time out after
+180 s and stops the parsers, and a policy is machine-wide rather than per
+profile.
+
+This is a UI boundary, not a sandbox. The visitor still types into the page; the
+worker's environment is hidden from the browser on another layer (`browser_env`
+allowlist and `PR_SET_DUMPABLE=0`).
+
 A session lives 60 minutes (extendable by 30) and, once a client has connected,
 closes 20 minutes after the last one disconnects. The password is 8 characters:
 RFB checks only the first eight anyway, and a longer string would display
@@ -413,10 +426,10 @@ own messages follow the admin's language, so the refusal above reads
 | File | What it shows |
 |---|---|
 | [`images/report.png`](images/report.png) | a real `.ods` report opened in LibreOffice Calc |
-| [`images/vnc-desktop.png`](images/vnc-desktop.png) | the VNC desktop with Chromium, sandbox enabled |
+| [`images/vnc-desktop.png`](images/vnc-desktop.png) | the VNC kiosk: one Chromium window, no panel or tabs, sandbox enabled |
 
 Both were captured from the running service, not drawn: the report from 50 rows
-of a real Steam run, the desktop from the same image the deployment uses.
+of a real Steam run, the kiosk from the same image the deployment uses.
 
 ## Design specs
 
@@ -427,6 +440,7 @@ code. Russian-language; the reasoning is in the ordering of the arguments.
 |---|---|
 | [`superpowers/specs/2026-11-13-ultimate-web-parser-design.md`](superpowers/specs/2026-11-13-ultimate-web-parser-design.md) | the whole service: database schema, worker loop, profiles, proxies, VNC, reports |
 | [`superpowers/specs/2026-11-14-persistent-menu-and-vnc-desktop-design.md`](superpowers/specs/2026-11-14-persistent-menu-and-vnc-desktop-design.md) | the reply keyboard and the full-size VNC desktop |
+| [`superpowers/specs/2026-11-21-vnc-kiosk-design.md`](superpowers/specs/2026-11-21-vnc-kiosk-design.md) | the VNC login as a kiosk: one window, no panel or menu, no DevTools |
 | [`superpowers/specs/2026-11-16-volatile-columns-in-changes-mode-design.md`](superpowers/specs/2026-11-16-volatile-columns-in-changes-mode-design.md) | why a drifting counter must not make `changes` fire every run |
 
 ## Implementation plans
@@ -438,6 +452,7 @@ test-first; the measured symptom is quoted in the commit that closed it.
 |---|---|
 | [`superpowers/plans/2026-11-13-ultimate-web-parser.md`](superpowers/plans/2026-11-13-ultimate-web-parser.md) | building the service from an empty repository |
 | [`superpowers/plans/2026-11-14-persistent-menu-and-vnc-desktop.md`](superpowers/plans/2026-11-14-persistent-menu-and-vnc-desktop.md) | the permanent menu, the VNC desktop, and seven deferred defects |
+| [`superpowers/plans/2026-11-21-vnc-kiosk.md`](superpowers/plans/2026-11-21-vnc-kiosk.md) | the kiosk browser, the grabbed chords, and the docs to match |
 | [`superpowers/plans/2026-11-15-returned-items-and-new-column.md`](superpowers/plans/2026-11-15-returned-items-and-new-column.md) | rows that vanish and come back, and the «Новое» column |
 | [`superpowers/plans/2026-11-15-sandbox-and-steam-regions.md`](superpowers/plans/2026-11-15-sandbox-and-steam-regions.md) | the three seccomp relaxations, and regional Steam parsing |
 | [`superpowers/plans/2026-11-16-volatile-columns-in-changes-mode.md`](superpowers/plans/2026-11-16-volatile-columns-in-changes-mode.md) | `Column(volatile=True)` |

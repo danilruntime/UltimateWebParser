@@ -171,6 +171,18 @@ docker exec uwp-worker /entrypoint.sh profile login 1
 Войдите на сайт и нажмите «✅ Готово»: процессы останавливаются, профиль
 освобождается.
 
+Ссылка открывает киоск: одно окно Chromium на весь экран с сайтом, без вкладок,
+адресной строки, панели и меню рабочего стола и без DevTools. Перезагрузка (`F5`,
+`Ctrl+R`) и история (`Alt+←`) остаются странице; все остальные сочетания браузера
+перехватывает `fluxbox` раньше, чем их увидит Chromium, потому что один только
+kiosk-режим на `Ctrl+N` открывает полноценное окно (замерено). Политики Chromium
+не используются: `DeveloperToolsAvailability=2` валит `launch_persistent_context`
+по таймауту 180 с и останавливает парсеры, а политика — машинная, не на профиль.
+
+Это граница интерфейса, а не песочница. Страница по-прежнему принимает ввод;
+окружение воркера скрыто от браузера другим слоем (allowlist `browser_env` и
+`PR_SET_DUMPABLE=0`).
+
 Сессия живёт 60 минут (кнопка «⏱ +30 мин» продлевает), а если клиент
 подключался — закрывается через 20 минут после отключения последнего. Пароль —
 8 символов: RFB всё равно проверяет только первые восемь, а более длинная строка
@@ -407,11 +419,10 @@ README на новый файл заметок, пишет заметки из �
 | Файл | Что показывает |
 |---|---|
 | [`images/report.png`](images/report.png) | настоящий отчёт `.ods`, открытый в LibreOffice Calc |
-| [`images/vnc-desktop.png`](images/vnc-desktop.png) | рабочий стол VNC с Chromium, песочница включена |
+| [`images/vnc-desktop.png`](images/vnc-desktop.png) | VNC-киоск: одно окно Chromium, без панели и вкладок, песочница включена |
 
 Оба сняты с работающего сервиса, а не нарисованы: отчёт — с 50 строк реального
-прогона по Steam, рабочий стол — с того же образа, который использует
-развёртывание.
+прогона по Steam, киоск — с того же образа, который использует развёртывание.
 
 ## <a id="design-specs"></a>Проектные спецификации
 
@@ -422,6 +433,7 @@ README на новый файл заметок, пишет заметки из �
 |---|---|
 | [`superpowers/specs/2026-11-13-ultimate-web-parser-design.md`](superpowers/specs/2026-11-13-ultimate-web-parser-design.md) | весь сервис: схема базы, цикл воркера, профили, прокси, VNC, отчёты |
 | [`superpowers/specs/2026-11-14-persistent-menu-and-vnc-desktop-design.md`](superpowers/specs/2026-11-14-persistent-menu-and-vnc-desktop-design.md) | постоянная клавиатура и полноразмерный рабочий стол VNC |
+| [`superpowers/specs/2026-11-21-vnc-kiosk-design.md`](superpowers/specs/2026-11-21-vnc-kiosk-design.md) | VNC-вход как киоск: одно окно, без панели и меню, без DevTools |
 | [`superpowers/specs/2026-11-16-volatile-columns-in-changes-mode-design.md`](superpowers/specs/2026-11-16-volatile-columns-in-changes-mode-design.md) | почему дрейфующий счётчик не должен заставлять `changes` срабатывать каждый прогон |
 
 ## <a id="implementation-plans"></a>Планы реализации
@@ -434,6 +446,7 @@ README на новый файл заметок, пишет заметки из �
 |---|---|
 | [`superpowers/plans/2026-11-13-ultimate-web-parser.md`](superpowers/plans/2026-11-13-ultimate-web-parser.md) | сборка сервиса из пустого репозитория |
 | [`superpowers/plans/2026-11-14-persistent-menu-and-vnc-desktop.md`](superpowers/plans/2026-11-14-persistent-menu-and-vnc-desktop.md) | постоянное меню, рабочий стол VNC и семь отложенных дефектов |
+| [`superpowers/plans/2026-11-21-vnc-kiosk.md`](superpowers/plans/2026-11-21-vnc-kiosk.md) | браузер-киоск, перехват сочетаний и правки документации |
 | [`superpowers/plans/2026-11-15-returned-items-and-new-column.md`](superpowers/plans/2026-11-15-returned-items-and-new-column.md) | строки, которые пропадают и возвращаются, и колонка «Новое» |
 | [`superpowers/plans/2026-11-15-sandbox-and-steam-regions.md`](superpowers/plans/2026-11-15-sandbox-and-steam-regions.md) | три послабления seccomp и региональный парсинг Steam |
 | [`superpowers/plans/2026-11-16-volatile-columns-in-changes-mode.md`](superpowers/plans/2026-11-16-volatile-columns-in-changes-mode.md) | `Column(volatile=True)` |
