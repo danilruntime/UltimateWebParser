@@ -321,7 +321,10 @@ def test_meta_has_no_proxy_password_and_shows_the_local_time(settings):
 
 
 def test_meta_url_stays_the_run_url_when_a_login_page_is_declared():
+    assert LoginParser().login_url == "https://example.com/login"
+
     meta = report_meta(
+        # ``_site`` hardcodes ``parser_key="fake"`` and takes no override.
         site=_site(),
         parser=LoginParser(),
         profile=None,
