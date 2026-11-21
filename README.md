@@ -33,7 +33,7 @@ card and the first run is queued at once, and the report arrives in the chat.
 > against a live Steam deployment, but the API and the database schema may still
 > change between beta releases. Migrations are append-only, so an upgrade never
 > loses rows; a downgrade is not supported. Known limitations are in
-> [`docs/releases/v0.1b2.md`](docs/releases/v0.1b2.md).
+> [`docs/releases/v0.1b3.md`](docs/releases/v0.1b3.md).
 
 **Русская версия:** [`README.ru.md`](README.ru.md).
 
