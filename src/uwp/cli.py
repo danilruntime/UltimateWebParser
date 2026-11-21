@@ -678,6 +678,7 @@ def cmd_profile_delete(settings: Settings, profile_id: int) -> int:
 def cmd_profile_login(
     settings: Settings, profile_id: int, site_slug: str | None = None
 ) -> int:
+    from uwp.bot.texts import coded_error
     from uwp.db.repo.profiles import ProfilesRepo
     from uwp.db.repo.proxies import ProxiesRepo
     from uwp.db.repo.sites import SitesRepo
@@ -724,7 +725,9 @@ def cmd_profile_login(
                 profile_id, site_id=site.id if site is not None else None
             )
         except ValueError as exc:
-            _print(f"❌ {exc}")
+            # ``VncLoginError.str()`` is an English line for the log; the CLI
+            # prints to a Russian terminal, so render its catalogue ``code``.
+            _print(f"❌ {coded_error(lang, exc)}")
             return 1
         _print(t(lang, "cli.profile.vnc_link", url=info.url))
         _print(t(lang, "cli.profile.vnc_password", password=info.password))

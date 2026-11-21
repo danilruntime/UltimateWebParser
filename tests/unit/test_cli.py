@@ -499,6 +499,26 @@ def test_profile_login_forwards_the_site_to_the_service(capsys, monkeypatch, tmp
     ]
 
 
+def test_profile_login_renders_a_coded_refusal_in_the_deployment_language(
+    capsys, monkeypatch, tmp_path
+):
+    """``VncLoginError.str()`` is an English line for the log, not for a chat."""
+    from uwp.vnc import VncLoginError
+
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    main(["profile", "create", "Steam1"])
+
+    async def busy(self, profile_id, site_id=None, **kwargs):
+        raise VncLoginError("profile is not free: login", "error.vnc.profile_busy")
+
+    monkeypatch.setattr("uwp.services.vnc.VncService.request", busy)
+
+    assert main(["profile", "login", "1"]) == 1
+    out = capsys.readouterr().out
+    assert "профиль уже занят" in out
+    assert "not free" not in out
+
+
 def test_the_seeded_site_is_named_in_the_deployments_language(
     capsys, monkeypatch, tmp_path
 ):
