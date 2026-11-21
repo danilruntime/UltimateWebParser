@@ -74,7 +74,6 @@ CATALOG: dict[Lang, dict[str, str]] = {
         "bot.sites.confirm_delete_yes": "🗑 Да, удалить",
         "bot.sites.empty": "Пока нет ни одного сайта. Нажмите «➕ Добавить сайт».",
         "bot.sites.next_line": "   следующий: {when}",
-        "bot.sites.list_suffix": " — след. {when}",
         "bot.sites.choose_parser": "Выберите парсер:",
         "bot.sites.need_profile": (
             "Сначала выберите постоянный профиль в настройках сайта."
@@ -306,7 +305,6 @@ CATALOG: dict[Lang, dict[str, str]] = {
         "bot.sites.confirm_delete_yes": "🗑 Yes, delete",
         "bot.sites.empty": "No sites yet. Press “➕ Add site”.",
         "bot.sites.next_line": "   next: {when}",
-        "bot.sites.list_suffix": " — next {when}",
         "bot.sites.choose_parser": "Choose a parser:",
         "bot.sites.need_profile": (
             "Choose a persistent profile in the site settings first."

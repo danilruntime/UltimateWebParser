@@ -15,6 +15,7 @@ from html import escape
 
 from uwp import labels
 from uwp.i18n import Lang, has_key, t
+from uwp.timeutil import format_local
 
 
 def esc(value) -> str:
@@ -176,8 +177,30 @@ def sites_next_line(lang, when) -> str:
     return t(lang, "bot.sites.next_line", when=when)
 
 
-def sites_list_suffix(lang, when) -> str:
-    return t(lang, "bot.sites.list_suffix", when=when)
+def sites_list(lang, sites, settings) -> str:
+    """The one site list: a bold name, then its next run on an indented line.
+
+    Both ways into the screen — the reply button and «⬅️ Назад» from a card —
+    must draw this text. Measured with two renderers: the back button appended
+    `` — след. …`` to the name and printed ``—`` for a site with no next run,
+    so the same list changed shape depending on how it was opened.
+
+    ``settings`` is read per row rather than up front: an empty screen has no
+    timestamps, and it must render without a configured clock.
+    """
+    if not sites:
+        return no_sites(lang)
+    lines = []
+    for site in sites:
+        mark = "🟢" if site.enabled else "🔴"
+        lines.append(f"{mark} <b>{esc(site.name)}</b>")
+        if site.next_run_at is not None:
+            lines.append(
+                sites_next_line(
+                    lang, format_local(site.next_run_at, settings.tz, lang)
+                )
+            )
+    return sites_header(lang) + "\n\n" + "\n".join(lines)
 
 
 def choose_parser(lang) -> str:

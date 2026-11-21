@@ -30,26 +30,8 @@ def build_router(settings, deps) -> Router:
         # site, and a menu word is the most likely next message.
         await state.clear()
         sites = await sites_service.list()
-        if not sites:
-            await callback.message.edit_text(
-                texts.no_sites(lang), reply_markup=keyboards.sites_list_kb(sites, lang)
-            )
-            await callback.answer()
-            return
-        lines = []
-        for site in sites:
-            mark = "🟢" if site.enabled else "🔴"
-            next_run = (
-                format_local(site.next_run_at, settings.tz, lang)
-                if site.next_run_at
-                else "—"
-            )
-            lines.append(
-                f"{mark} <b>{texts.esc(site.name)}</b>"
-                + texts.sites_list_suffix(lang, next_run)
-            )
         await callback.message.edit_text(
-            texts.sites_header(lang) + "\n\n" + "\n".join(lines),
+            texts.sites_list(lang, sites, settings),
             reply_markup=keyboards.sites_list_kb(sites, lang),
         )
         await callback.answer()

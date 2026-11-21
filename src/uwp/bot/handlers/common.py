@@ -173,23 +173,9 @@ def build_fallback_router() -> Router:
 
 
 async def send_sites(message: Message, sites_service, settings, lang: Lang) -> None:
-    """Render the site list, either as an edit or as a new message."""
+    """Render the site list as a new message (``/sites`` and the reply button)."""
     sites = await sites_service.list()
     markup = keyboards.sites_list_kb(sites, lang)
-    if not sites:
-        await message.answer(texts.no_sites(lang), reply_markup=markup)
-        return
-    lines = []
-    for site in sites:
-        mark = "🟢" if site.enabled else "🔴"
-        lines.append(f"{mark} <b>{texts.esc(site.name)}</b>")
-        if site.next_run_at is not None:
-            lines.append(
-                texts.sites_next_line(
-                    lang, format_local(site.next_run_at, settings.tz, lang)
-                )
-            )
     await message.answer(
-        texts.sites_header(lang) + "\n\n" + "\n".join(lines),
-        reply_markup=markup,
+        texts.sites_list(lang, sites, settings), reply_markup=markup
     )
