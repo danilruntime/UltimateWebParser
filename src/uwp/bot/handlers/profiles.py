@@ -179,12 +179,19 @@ def build_router(settings, deps) -> Router:
         )
         await callback.answer(texts.profile_deleted(lang))
 
-    @router.callback_query(F.data.regexp(r"^profile:login:\d+$"))
+    @router.callback_query(F.data.regexp(r"^profile:login:\d+(?::\d+)?$"))
     async def start_login(callback: CallbackQuery, lang: Lang) -> None:
-        profile_id = int(callback.data.rsplit(":", 1)[1])
+        parts = callback.data.split(":")
+        profile_id = int(parts[2])
+        # The delivery button knows the site that hit the wall; the profile card
+        # does not and leaves the service to resolve the attachment.
+        site_id = int(parts[3]) if len(parts) > 3 else None
         try:
             info = await vnc.request(
-                profile_id, started_by=callback.from_user.id, lang=lang
+                profile_id,
+                site_id=site_id,
+                started_by=callback.from_user.id,
+                lang=lang,
             )
         except ValueError as exc:
             # ``SecretUnreadable`` is a ``ValueError`` (the CLI and the worker

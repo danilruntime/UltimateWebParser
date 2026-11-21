@@ -355,6 +355,7 @@ async def test_only_recipients_get_the_report(env):
 
 
 async def test_a_login_wall_offers_the_profile_button(env):
+    """The button names the site too: the profile may be attached to several."""
     settings, bus, _tmp_path = env
     bot = FakeBot()
     delivery = EventDelivery(bot, bus, settings)
@@ -372,9 +373,33 @@ async def test_a_login_wall_offers_the_profile_button(env):
     await delivery.tick()
 
     buttons = bot.messages[0][2].inline_keyboard[0]
-    assert [b.callback_data for b in buttons] == ["profile:login:7", "run:retry:3"]
+    assert [b.callback_data for b in buttons] == [
+        "profile:login:7:3",
+        "run:retry:3",
+    ]
     # A parser's own words are data we cannot translate: passed through raw.
     assert "нужен вход" in bot.messages[0][1]
+
+
+async def test_a_login_wall_whose_run_knew_no_site_still_offers_a_button(env):
+    """A run that never resolved a site must not lose the login button."""
+    settings, bus, _tmp_path = env
+    bot = FakeBot()
+    delivery = EventDelivery(bot, bus, settings)
+    await bus.emit(
+        "run_failed",
+        payload={
+            "text": "нужен вход",
+            "error_kind": "login_required",
+            "profile_id": 7,
+            "site": "Steam",
+        },
+    )
+
+    await delivery.tick()
+
+    buttons = bot.messages[0][2].inline_keyboard[0]
+    assert [b.callback_data for b in buttons] == ["profile:login:7"]
 
 
 async def test_a_chat_not_found_is_dropped_not_retried_forever(env):

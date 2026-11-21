@@ -227,13 +227,22 @@ class EventDelivery:
                     callback_data=f"run:retry:{payload['site_id']}",
                 )
             )
-        # A login wall is fixed in the profile, not by retrying blindly.
+        # A login wall is fixed in the profile, not by retrying blindly. The
+        # site goes along when the run knew it: without it a profile attached to
+        # several sites answers that it cannot guess, about the very site this
+        # notification is for.
         if payload.get("error_kind") == "login_required" and payload.get("profile_id"):
+            profile_id = payload["profile_id"]
+            target = (
+                f"{profile_id}:{payload['site_id']}"
+                if payload.get("site_id") is not None
+                else f"{profile_id}"
+            )
             buttons.insert(
                 0,
                 InlineKeyboardButton(
                     text=texts.vnc_login_button(lang),
-                    callback_data=f"profile:login:{payload['profile_id']}",
+                    callback_data=f"profile:login:{target}",
                 ),
             )
         markup = InlineKeyboardMarkup(inline_keyboard=[buttons]) if buttons else None

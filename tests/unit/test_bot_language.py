@@ -960,6 +960,38 @@ async def test_a_profile_that_cannot_open_is_answered_in_the_admin_language(
     assert kwargs["show_alert"] is True
 
 
+async def test_the_login_button_of_a_failed_run_passes_its_site_to_the_service():
+    """The delivery button knows the site; a profile card does not.
+
+    Losing it turned the one button that names the site into the one refusal
+    that says the site cannot be guessed.
+    """
+    from uwp.bot.handlers import profiles as profiles_handlers
+
+    class _Vnc:
+        def __init__(self):
+            self.requests: list[tuple[int, int | None]] = []
+
+        async def request(self, profile_id, site_id=None, **kwargs):
+            self.requests.append((profile_id, site_id))
+            return VncInfo(
+                session_id=1,
+                port=6100,
+                password="pw",
+                url="http://127.0.0.1:6100/vnc.html",
+                expires_at=datetime.now(UTC),
+            )
+
+    vnc = _Vnc()
+    router = profiles_handlers.build_router(_Settings(), _login_deps(vnc))
+    handler = _callback_handler(router, "start_login")
+
+    await handler(_Callback("profile:login:7:3"), lang=Lang.ru)
+    await handler(_Callback("profile:login:7"), lang=Lang.ru)
+
+    assert vnc.requests == [(7, 3), (7, None)]
+
+
 @pytest.mark.parametrize(
     "lang, expected",
     [(Lang.ru, "13.11.2026 01:20"), (Lang.en, "2026-11-13 01:20")],
