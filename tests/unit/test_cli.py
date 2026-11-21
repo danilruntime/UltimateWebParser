@@ -476,9 +476,11 @@ def test_profile_login_forwards_the_site_to_the_service(capsys, monkeypatch, tmp
     main(["profile", "create", "Steam1"])
 
     seen: list[int | None] = []
+    pages: list[str | None] = []
 
     async def fake_request(self, profile_id, site_id=None, **kwargs):
         seen.append(site_id)
+        pages.append(self.parser_auth_urls.get("steam_deals"))
         raise ValueError("refused for the test")
 
     monkeypatch.setattr("uwp.services.vnc.VncService.request", fake_request)
@@ -489,6 +491,12 @@ def test_profile_login_forwards_the_site_to_the_service(capsys, monkeypatch, tmp
 
     # The fresh database has exactly one site, the seeded one.
     assert seen == [1, 1]
+    # Without this the CLI could lose the registry wiring and still look fine:
+    # every real login would then refuse with "parser unavailable".
+    assert pages == [
+        "https://store.steampowered.com/login/",
+        "https://store.steampowered.com/login/",
+    ]
 
 
 def test_the_seeded_site_is_named_in_the_deployments_language(
