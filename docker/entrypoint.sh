@@ -29,9 +29,13 @@ if [ "$(id -u)" = "0" ]; then
     prepare_data_dir
     # Only walk the tree when a top-level entry is not ours: the healthcheck
     # calls this script every minute and a recursive chown must not run then.
+    # The list must match ``prepare_data_dir``: ``.cache`` and ``.config`` are
+    # created right above, so leaving them out hands Chromium a root-owned
+    # ``XDG_CACHE_HOME`` it cannot write — measured as a bare
+    # ``TargetClosedError`` from Playwright with no clue in the log.
     needs_chown=0
     for path in "$DATA_DIR" "$DATA_DIR/profiles" "$DATA_DIR/exports" \
-                "$DATA_DIR/artifacts"; do
+                "$DATA_DIR/artifacts" "$DATA_DIR/.cache" "$DATA_DIR/.config"; do
         if [ "$(stat -c '%u' "$path")" != "$UWP_UID" ]; then
             needs_chown=1
         fi
