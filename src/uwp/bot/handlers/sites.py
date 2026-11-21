@@ -163,7 +163,7 @@ def build_router(settings, deps) -> Router:
     @router.callback_query(F.data.startswith("site:login:"))
     async def login_from_site(callback: CallbackQuery, lang: Lang) -> None:
         # A login started from the site card must open the site's own page and
-        # honour the site's proxy, not the neutral fallback URL.
+        # honour the site's proxy.
         site_id = int(callback.data.rsplit(":", 1)[1])
         site = await sites_service.get(site_id)
         if site is None:

@@ -106,9 +106,10 @@ resolve to the store page, numbers formatted, no truncated cells.*
 
 ![The VNC kiosk: Chromium showing the Steam specials page full screen, no tabs, no panel](docs/images/vnc-desktop.png)
 
-*Manual login over VNC: one kiosk window with the site, no tabs, no desktop
-panel and no DevTools, behind noVNC with the sandbox enabled. This is what the
-link in chat opens.*
+*Manual login over VNC: one kiosk window, no tabs, no desktop panel and no
+DevTools, behind noVNC with the sandbox enabled. The link in chat opens this
+kiosk and loads the page the parser declares for signing in; the picture shows
+the same kiosk on the Steam deals page.*
 
 ## How it works
 

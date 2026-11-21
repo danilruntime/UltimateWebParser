@@ -191,7 +191,7 @@ def test_the_bot_has_no_proxy_by_default():
 
 
 async def test_runtime_feeds_the_login_pages_to_vnc(tmp_path):
-    """The bot and the worker are wired separately; this is the bot's half."""
+    """The bot and the worker are wired separately; this is the worker's half."""
     rt = await _runtime(tmp_path)
     try:
         assert rt.deps.vnc.parser_auth_urls["steam_deals"] == (
