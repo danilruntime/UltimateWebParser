@@ -146,6 +146,33 @@ def test_entrypoint_execs_the_cli():
     assert "is not writable by uid" in text
 
 
+def test_entrypoint_chowns_every_directory_it_creates_as_root():
+    """Measured: a `.cache` created by root and left out of the chown walk killed
+    every run with ``TargetClosedError``.
+
+    The entrypoint runs as root when ``./data`` is a fresh bind mount, so
+    ``prepare_data_dir`` creates ``.cache`` and ``.config`` as root. Chromium
+    then runs as uid 1000 with ``XDG_CACHE_HOME`` pointing there, cannot create
+    its cache, and Playwright reports only "browser has been closed". The
+    ownership check must cover the same list it creates — a directory that is
+    created but not repaired is unreadable by the process that needs it.
+    """
+    text = (ROOT / "docker" / "entrypoint.sh").read_text(encoding="utf-8")
+    created = _entrypoint_paths(text, "prepare_data_dir", "for path in")
+    checked = _entrypoint_paths(text, "needs_chown", "for path in")
+
+    assert created
+    assert created <= checked, f"created but never chowned: {created - checked}"
+
+
+def _entrypoint_paths(text: str, marker: str, loop: str) -> set[str]:
+    """The ``$DATA_DIR/...`` list of the ``for`` loop that follows ``marker``."""
+    start = text.index(marker)
+    loop_at = text.index(loop, start)
+    end = text.index("do", loop_at)
+    return set(re.findall(r'"\$DATA_DIR(/[^"]*)?"', text[loop_at:end]))
+
+
 def test_env_example_lists_the_required_variables():
     text = (ROOT / ".env.example").read_text(encoding="utf-8")
 
