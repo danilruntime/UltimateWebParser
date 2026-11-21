@@ -273,6 +273,65 @@ async def test_request_passes_the_site_proxy_to_the_session(env):
     assert manager.proxy_ids == [proxy_id]
 
 
+async def test_the_site_proxy_beats_the_profile_proxy(env):
+    """Both are set: a regression to ``profile.proxy_id or site.proxy_id`` fails."""
+    _db, profiles, sites, sessions, tmp_path = env
+    pid = await _profile(profiles, tmp_path)
+    site = await _site(sites)
+    from uwp.db.repo.proxies import ProxiesRepo
+
+    proxies = ProxiesRepo(_db)
+    profile_proxy = await proxies.create(
+        Proxy(name="profile", scheme=ProxyScheme.http, host="127.0.0.1", port=3128)
+    )
+    site_proxy = await proxies.create(
+        Proxy(name="site", scheme=ProxyScheme.http, host="127.0.0.1", port=3129)
+    )
+    await profiles.update(pid, proxy_id=profile_proxy)
+    await sites.update(site, proxy_id=site_proxy)
+    settings = load_settings({"UWP_DATA_DIR": str(tmp_path)})
+    manager = FakeManager()
+    svc = VncService(
+        manager,
+        profiles,
+        sites,
+        settings,
+        sessions,
+        parser_auth_urls={"steam_deals": "https://store.steampowered.com/login/"},
+    )
+
+    await svc.request(pid, site_id=site)
+
+    assert manager.proxy_ids == [site_proxy]
+
+
+async def test_a_site_without_a_proxy_falls_back_to_the_profile_one(env):
+    """The READMEs promise this fallback: the site has no proxy of its own."""
+    _db, profiles, sites, sessions, tmp_path = env
+    pid = await _profile(profiles, tmp_path)
+    site = await _site(sites)
+    from uwp.db.repo.proxies import ProxiesRepo
+
+    profile_proxy = await ProxiesRepo(_db).create(
+        Proxy(name="profile", scheme=ProxyScheme.http, host="127.0.0.1", port=3128)
+    )
+    await profiles.update(pid, proxy_id=profile_proxy)
+    settings = load_settings({"UWP_DATA_DIR": str(tmp_path)})
+    manager = FakeManager()
+    svc = VncService(
+        manager,
+        profiles,
+        sites,
+        settings,
+        sessions,
+        parser_auth_urls={"steam_deals": "https://store.steampowered.com/login/"},
+    )
+
+    await svc.request(pid, site_id=site)
+
+    assert manager.proxy_ids == [profile_proxy]
+
+
 async def test_request_rejects_a_missing_profile(env):
     _db, profiles, sites, sessions, tmp_path = env
     settings = load_settings({"UWP_DATA_DIR": str(tmp_path)})
