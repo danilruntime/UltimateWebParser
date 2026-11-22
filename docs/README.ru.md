@@ -366,6 +366,11 @@ class MyParser(BaseParser):
 `auth_url` — и вход возьмёт `url`: на это рассчитывает парсер, написанный до
 появления атрибута.
 
+В репозитории два парсера: `steam_deals` разбирает DOM через `BeautifulSoup`, а
+`soundcloud_trending` показывает другую частую форму — страница сама забирает
+свой JSON, поэтому парсер перехватывает ответ и берёт точные значения вместо
+округлённого текста в DOM.
+
 3. Перезапустите сервис: `$COMPOSE restart worker`. Парсер появится в
    `uwp parsers list` и в боте («🌐 Сайты» → «➕ Добавить сайт»).
 
@@ -461,6 +466,7 @@ README на новый файл заметок, пишет заметки из �
 | [`superpowers/specs/2026-11-21-vnc-kiosk-design.md`](superpowers/specs/2026-11-21-vnc-kiosk-design.md) | VNC-вход как киоск: одно окно, без панели и меню, без DevTools |
 | [`superpowers/specs/2026-11-16-volatile-columns-in-changes-mode-design.md`](superpowers/specs/2026-11-16-volatile-columns-in-changes-mode-design.md) | почему дрейфующий счётчик не должен заставлять `changes` срабатывать каждый прогон |
 | [`superpowers/specs/2026-11-21-parser-auth-url-design.md`](superpowers/specs/2026-11-21-parser-auth-url-design.md) | страница входа парсера как `auth_url`, отдельно от URL прогона |
+| [`superpowers/specs/2026-11-22-soundcloud-parser-design.md`](superpowers/specs/2026-11-22-soundcloud-parser-design.md) | второй парсер: точные счётчики из API самой страницы и почему запасного DOM-пути нет |
 
 ## <a id="implementation-plans"></a>Планы реализации
 
@@ -477,6 +483,7 @@ README на новый файл заметок, пишет заметки из �
 | [`superpowers/plans/2026-11-15-sandbox-and-steam-regions.md`](superpowers/plans/2026-11-15-sandbox-and-steam-regions.md) | три послабления seccomp и региональный парсинг Steam |
 | [`superpowers/plans/2026-11-16-volatile-columns-in-changes-mode.md`](superpowers/plans/2026-11-16-volatile-columns-in-changes-mode.md) | `Column(volatile=True)` |
 | [`superpowers/plans/2026-11-21-parser-auth-url.md`](superpowers/plans/2026-11-21-parser-auth-url.md) | `auth_url` и вход, который отказывает при неоднозначном профиле |
+| [`superpowers/plans/2026-11-22-soundcloud-trending-parser.md`](superpowers/plans/2026-11-22-soundcloud-trending-parser.md) | парсер SoundCloud: hydration, перехват ответов, частичные прогоны |
 
 ## <a id="elsewhere"></a>В других файлах
 

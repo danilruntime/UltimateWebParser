@@ -229,7 +229,7 @@ time out after 180 s and stops every parser.
 
 | Task | File |
 | --- | --- |
-| Add a parser | `parsers/steam_deals/` + `README.md` in that folder |
+| Add a parser | `parsers/steam_deals/` (DOM) or `parsers/soundcloud_trending/` (intercepted API), with the README in that folder |
 | Change scheduling | `scheduler.py`, `services/sites.py` |
 | Change run/retry behaviour | `worker.py`, `runner.py` |
 | Bot screen or button | `bot/handlers/`, `bot/keyboards.py`, `bot/texts.py` |

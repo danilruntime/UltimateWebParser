@@ -374,6 +374,11 @@ literal strings stay as the fallback. Code identifiers stay English. The
 `auth_url` is the page a VNC login opens. Leave `auth_url` out and the login
 uses `url` — that is what a parser written before the attribute relies on.
 
+The repository ships two parsers: `steam_deals` reads a DOM with
+`BeautifulSoup`, and `soundcloud_trending` shows the other common shape — a page
+that already fetches its own JSON, so the parser intercepts the response and
+reads exact values instead of the rounded text in the DOM.
+
 3. Restart the service: `$COMPOSE restart worker`. The parser appears in
    `uwp parsers list` and in the bot («🌐 Sites» → «➕ Add site»).
 
@@ -468,6 +473,7 @@ code. Russian-language; the reasoning is in the ordering of the arguments.
 | [`superpowers/specs/2026-11-21-vnc-kiosk-design.md`](superpowers/specs/2026-11-21-vnc-kiosk-design.md) | the VNC login as a kiosk: one window, no panel or menu, no DevTools |
 | [`superpowers/specs/2026-11-16-volatile-columns-in-changes-mode-design.md`](superpowers/specs/2026-11-16-volatile-columns-in-changes-mode-design.md) | why a drifting counter must not make `changes` fire every run |
 | [`superpowers/specs/2026-11-21-parser-auth-url-design.md`](superpowers/specs/2026-11-21-parser-auth-url-design.md) | the parser's login page as `auth_url`, separate from the run URL |
+| [`superpowers/specs/2026-11-22-soundcloud-parser-design.md`](superpowers/specs/2026-11-22-soundcloud-parser-design.md) | a second parser: exact counters from the page's own API, and why there is no DOM fallback |
 
 ## Implementation plans
 
@@ -483,6 +489,7 @@ test-first; the measured symptom is quoted in the commit that closed it.
 | [`superpowers/plans/2026-11-15-sandbox-and-steam-regions.md`](superpowers/plans/2026-11-15-sandbox-and-steam-regions.md) | the three seccomp relaxations, and regional Steam parsing |
 | [`superpowers/plans/2026-11-16-volatile-columns-in-changes-mode.md`](superpowers/plans/2026-11-16-volatile-columns-in-changes-mode.md) | `Column(volatile=True)` |
 | [`superpowers/plans/2026-11-21-parser-auth-url.md`](superpowers/plans/2026-11-21-parser-auth-url.md) | `auth_url`, and a login that refuses an ambiguous profile |
+| [`superpowers/plans/2026-11-22-soundcloud-trending-parser.md`](superpowers/plans/2026-11-22-soundcloud-trending-parser.md) | the SoundCloud parser: hydration, response interception, partial runs |
 
 ## Elsewhere
 
