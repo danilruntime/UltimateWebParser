@@ -21,6 +21,10 @@ PAIRS = [
     ("docs/README.md", "docs/README.ru.md"),
     ("docker/README-seccomp.md", "docker/README-seccomp.ru.md"),
     ("src/uwp/parsers/steam_deals/README.md", "src/uwp/parsers/steam_deals/README.ru.md"),
+    (
+        "src/uwp/parsers/soundcloud_trending/README.md",
+        "src/uwp/parsers/soundcloud_trending/README.ru.md",
+    ),
     ("SECURITY.md", "SECURITY.ru.md"),
     ("THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.ru.md"),
 ]
