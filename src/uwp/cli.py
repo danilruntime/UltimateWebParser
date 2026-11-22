@@ -398,10 +398,13 @@ def cmd_browser_install(
     finally:
         archive.unlink(missing_ok=True)
     executable = target / "chrome"
-    # A layout change upstream must fail here, not in the reader's next command.
+    # A layout or permission change upstream must fail here, not in the reader's
+    # next command. ``is_file`` alone reported a 0o644 binary as installed; the
+    # image's Dockerfile chmods it explicitly, so this path does too.
     if not executable.is_file():
         _print(t(lang, "cli.browser.missing_chrome", path=executable))
         return 1
+    executable.chmod(executable.stat().st_mode | 0o111)
     _print(t(lang, "cli.browser.installed", path=executable))
     _print(t(lang, "cli.browser.export_hint", path=executable))
     return 0
@@ -435,17 +438,27 @@ def _safe_extract(archive: Path, target: Path, lang: Lang = DEFAULT_LANG) -> Non
             member_path = Path(member.name)
             if member_path.is_absolute() or ".." in member_path.parts:
                 raise ValueError(t(lang, "cli.browser.unsafe_path", path=member.name))
-        roots = {Path(member.name).parts[0] for member in members if member.name}
-        nested = any(len(Path(member.name).parts) > 1 for member in members)
+        # ``Path("./").parts`` is empty, and GNU ``tar -c .`` emits exactly that
+        # member; indexing ``parts[0]`` on it raised IndexError on an archive
+        # that used to extract fine.
+        roots = {Path(m.name).parts[0] for m in members if Path(m.name).parts}
+        nested = any(len(Path(m.name).parts) > 1 for m in members)
         if len(roots) == 1 and nested:
             (root,) = roots
+            stripped: list = []
             for member in members:
                 # A hard link names its target, not just itself: leaving the
                 # target prefixed would point outside the stripped layout.
                 if member.islnk() and member.linkname.startswith(f"{root}/"):
                     member.linkname = member.linkname[len(root) + 1 :]
-                member.name = str(Path(*Path(member.name).parts[1:]))
-            members = [m for m in members if m.name]
+                parts = Path(member.name).parts
+                # The wrapper's own entry (``wrapper`` or ``./``) shrinks to
+                # nothing; ``target`` already exists, so it is dropped rather
+                # than extracted as an empty directory beside the real files.
+                if len(parts) > 1:
+                    member.name = str(Path(*parts[1:]))
+                    stripped.append(member)
+            members = stripped
         tar.extractall(target, members=members, filter="data")
 
 
@@ -1082,9 +1095,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         # version, installed an unverified archive under a new name.
         sha256 = args.sha256 or settings.browser_sha256
         # ``--url`` can be paired with ``UWP_BROWSER_SHA256`` in the environment
-        # (a mirror is a deployment-wide choice), but ``--version`` names a
-        # release whose hash the environment cannot know.
-        if args.version and args.sha256 is None:
+        # (a mirror is a deployment-wide choice), but another *version* names a
+        # release whose hash the environment cannot know. Asking for the
+        # configured version is covered by that same hash, so it is allowed.
+        if (
+            args.version
+            and args.sha256 is None
+            and args.version != settings.browser_version
+        ):
             _print(t(_lang(settings), "cli.browser.sha_required"))
             return 2
         return cmd_browser_install(

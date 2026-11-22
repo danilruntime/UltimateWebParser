@@ -1,4 +1,6 @@
 """Tests for the command line interface."""
+import os
+
 import pytest
 
 from uwp.cli import main
@@ -618,6 +620,9 @@ def test_browser_install_puts_chrome_where_it_says_it_does(capsys, monkeypatch, 
     assert code == 0
     assert (dest / "chrome").is_file()
     assert (dest / "icudtl.dat").is_file()
+    # The wrapper's own entry must not survive as an empty directory beside the
+    # real files; measured on the real asset before this guard.
+    assert sorted(p.name for p in dest.iterdir()) == ["chrome", "icudtl.dat"]
     out = capsys.readouterr().out
     assert str(dest / "chrome") in out
 
@@ -639,6 +644,103 @@ def test_browser_install_refuses_to_guess_a_sha_for_another_version(
     assert code == 2
     assert "--sha256" in capsys.readouterr().out
     assert not (tmp_path / "browser" / "chrome").exists()
+
+
+def test_browser_install_accepts_the_configured_version_without_a_sha(
+    capsys, monkeypatch, tmp_path
+):
+    """Asking for the pinned version is not "another release".
+
+    The environment already holds the hash of the configured build, so requiring
+    ``--sha256`` there refuses a request the deployment can verify. Measured:
+    ``--version 148.0.7778.215`` exited 2 before this guard was narrowed.
+    """
+    import hashlib
+
+    from uwp.config import BROWSER_VERSION
+
+    archive, digest = _release_archive(tmp_path)
+    dest = tmp_path / "browser"
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("UWP_BROWSER_SHA256", digest)
+
+    code = main(
+        [
+            "browser",
+            "install",
+            "--version",
+            BROWSER_VERSION,
+            "--url",
+            archive.as_uri(),
+            "--dest",
+            str(dest),
+        ]
+    )
+
+    assert code == 0
+    assert hashlib.sha256(archive.read_bytes()).hexdigest() == digest
+    assert (dest / "chrome").is_file()
+
+
+def test_browser_install_accepts_a_dot_prefixed_archive(capsys, monkeypatch, tmp_path):
+    """``tar -cJf x.tar.xz .`` emits a ``./`` member, and that is a normal archive.
+
+    Measured: ``Path("./").parts`` is empty, so the wrapper detection indexed an
+    empty tuple and raised IndexError before extracting — an archive the code
+    handled before the strip was added. An operator mirroring the release with
+    ``tar -c .`` must get an install, not a traceback.
+    """
+    import hashlib
+    import io
+    import tarfile
+
+    archive = tmp_path / "dot.tar.xz"
+    with tarfile.open(archive, "w:xz") as tar:
+        for name in ("./", "./locales/"):
+            info = tarfile.TarInfo(name)
+            info.type = tarfile.DIRTYPE
+            tar.addfile(info)
+        for name, body in (("./chrome", b"#!/bin/sh\n"), ("./locales/ru.pak", b"pak")):
+            info = tarfile.TarInfo(name)
+            info.size = len(body)
+            tar.addfile(info, io.BytesIO(body))
+    dest = tmp_path / "browser"
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("UWP_BROWSER_SHA256", hashlib.sha256(archive.read_bytes()).hexdigest())
+
+    code = main(["browser", "install", "--url", archive.as_uri(), "--dest", str(dest)])
+
+    assert code == 0
+    assert (dest / "chrome").is_file()
+    assert (dest / "locales" / "ru.pak").is_file()
+
+
+def test_browser_install_makes_chrome_runnable(capsys, monkeypatch, tmp_path):
+    """A non-executable ``chrome`` used to be reported as installed.
+
+    Measured: an archive whose ``chrome`` is ``0o644`` exited 0 and printed
+    "Браузер установлен", then the next command failed on permissions — the
+    same lie I2 removed, one attribute away. The image's Dockerfile chmods the
+    binary explicitly, so this path does too instead of refusing the archive.
+    """
+    import hashlib
+    import io
+    import tarfile
+
+    archive = tmp_path / "noexec.tar.xz"
+    with tarfile.open(archive, "w:xz") as tar:
+        info = tarfile.TarInfo("chrome")
+        info.size = 2
+        info.mode = 0o644
+        tar.addfile(info, io.BytesIO(b"x\n"))
+    dest = tmp_path / "browser"
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("UWP_BROWSER_SHA256", hashlib.sha256(archive.read_bytes()).hexdigest())
+
+    code = main(["browser", "install", "--url", archive.as_uri(), "--dest", str(dest)])
+
+    assert code == 0
+    assert os.access(dest / "chrome", os.X_OK)
 
 
 def test_browser_install_keeps_a_flat_archive_flat(capsys, monkeypatch, tmp_path):
@@ -667,6 +769,7 @@ def test_browser_install_keeps_a_flat_archive_flat(capsys, monkeypatch, tmp_path
     assert code == 0
     assert (dest / "chrome").is_file()
     assert (dest / "locales" / "ru.pak").is_file()
+    assert sorted(p.name for p in dest.iterdir()) == ["chrome", "locales"]
 
 
 def test_browser_install_refuses_an_archive_without_chrome(capsys, monkeypatch, tmp_path):
