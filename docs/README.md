@@ -425,10 +425,17 @@ the wheel, run the suite on the tagged commit, and publish the GitHub release
 page from `docs/releases/v<version>.md`. No token is needed locally.
 
 ```bash
-./scripts/release.sh beta      # 0.1b1 -> 0.1b2   next beta on the same line
-./scripts/release.sh release   # 0.1b1 -> 0.1     drop the beta label
-./scripts/release.sh minor     # 0.1b1 -> 0.2b1   start a new line
+./scripts/release.sh beta      # 1.0.1b1 -> 1.0.1b2  next beta on the same line
+./scripts/release.sh release   # 1.0.0b1 -> 1.0.0    drop the beta label
+./scripts/release.sh patch     # 1.0.0 -> 1.0.1b1    a fix line, as a beta
+./scripts/release.sh minor     # 1.0.0 -> 1.1.0b1    a feature line
+./scripts/release.sh major     # 0.1b3 -> 1.0.0      a new major line, stable
 ```
+
+`major` is the only kind that ships a stable version straight away: the beta
+below it was the beta of that same code, so a `1.0.0b1` in between would describe
+nothing. `patch` needs a three-part version — `0.1` has no patch number, and the
+script refuses rather than inventing one.
 
 The script bumps `pyproject.toml` and `src/uwp/__init__.py` (the version lives
 in both, and a test fails if they drift), points both READMEs at the new notes

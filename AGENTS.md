@@ -117,7 +117,14 @@ several decisions there are deliberate and counter-intuitive (for example why
 - **Every README comes in two languages.** `README.md` is English (GitHub renders
   it), `X.ru.md` is the Russian twin. Edit both in the same commit and keep the
   section order identical — `tests/unit/test_readme_translations.py` compares
-  section counts and cross-links, so a one-sided edit fails the suite.
+  section counts and cross-links, so a one-sided edit fails the suite. The same
+  rule covers `docs/install.md`, `DISCLAIMER.md`, `SECURITY.md`,
+  `THIRD_PARTY_NOTICES.md` and both parser READMEs; the list of pairs lives in
+  `PAIRS` in that test file, so a new twin has to be registered there.
+- **Releases are `beta|release|minor|patch|major`.** `scripts/release.sh`
+  parses `X.Y` and `X.Y.Z` with an optional `bN`, and `tests/unit/test_release_script.py`
+  pins every transition. `major` ships stable straight away (`0.1b3 -> 1.0.0`);
+  `patch` refuses a two-part version rather than inventing a patch number.
 - **No `--no-sandbox`.** The sandbox works through `docker/seccomp-uwp.json`.
   `UWP_NO_SANDBOX` is an operator escape hatch, never a default.
 - **Commits** use Conventional Commit prefixes (`fix(vnc): ...`,
@@ -238,3 +245,6 @@ time out after 180 s and stops every parser.
 | Report contents | `ods.py`, `reports.py` |
 | Schema change | `migrations/`, then the matching `db/repo/` |
 | Deployment | `compose*.yaml`, `Dockerfile`, `docker/entrypoint.sh` |
+| Install instructions | `docs/install.md` + `install.ru.md` (Windows, WSL 2, why native is unsupported) |
+| Lawful use | `DISCLAIMER.md` + `DISCLAIMER.ru.md`, quoted by the READMEs and the bot's `/help` |
+| Documentation links | `scripts/check_markdown_links.py`, run by CI and `tests/unit/test_markdown_links.py` |
