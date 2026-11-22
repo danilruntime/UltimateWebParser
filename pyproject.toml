@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ultimate-web-parser"
-version = "0.1b3"
+version = "1.0.0"
 description = "UltimateWebParser: Playwright-based site scraper controlled by a Telegram bot"
 readme = "README.md"
 license = { file = "LICENSE" }

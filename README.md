@@ -29,11 +29,12 @@ card and the first run is queued at once, and the report arrives in the chat.
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![python: 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
 
-> **Status: 0.1 beta.** The service runs end to end and has been measured
-> against a live Steam deployment, but the API and the database schema may still
-> change between beta releases. Migrations are append-only, so an upgrade never
-> loses rows; a downgrade is not supported. Known limitations are in
-> [`docs/releases/v0.1b3.md`](docs/releases/v0.1b3.md).
+> **Status: 1.0.** The service runs end to end and has been measured against a
+> live Steam deployment and a live SoundCloud page. From here the version
+> follows semantic versioning: a breaking change to the API or the schema gets a
+> new major number. Migrations are append-only, so an upgrade never loses rows;
+> a downgrade is not supported. Known limitations are in
+> [`docs/releases/v1.0.0.md`](docs/releases/v1.0.0.md).
 
 **Русская версия:** [`README.ru.md`](README.ru.md).
 
