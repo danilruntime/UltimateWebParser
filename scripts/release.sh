@@ -14,6 +14,8 @@
 #   ./scripts/release.sh beta      # 0.1b1 -> 0.1b2   (next beta)
 #   ./scripts/release.sh release   # 0.1b1 -> 0.1     (promote to stable)
 #   ./scripts/release.sh minor     # 0.1b1 -> 0.2b1   (new line, as a beta)
+#   ./scripts/release.sh patch     # 1.0.0 -> 1.0.1b1 (a fix line, as a beta)
+#   ./scripts/release.sh major     # 0.1b3 -> 1.0.0   (new major line, stable)
 set -euo pipefail
 
 readonly PYPROJECT="pyproject.toml"
@@ -27,37 +29,45 @@ die() {
     exit 1
 }
 
-# `0.1b1` -> line `0.1`, serial `1`, beta. `0.1` -> line `0.1`, no beta.
-# Anything the regex rejects (`0.1 beta`, `v0.1`, `0.1.0b1`) is refused rather
-# than guessed at: pip would reject it too, or read it as a different version.
+# `0.1b1` -> line `0.1`, serial `1`. `1.0.0` -> line `1.0.0`, no beta.
+# The line keeps the number of parts it was written with: `release` turns
+# `1.0.0b1` into `1.0.0`, never into `1.0`, because that would be a different
+# version to pip. Anything the regex rejects (`0.1 beta`, `v0.1`, `1`,
+# `0.1.0.0`) is refused rather than guessed at.
 parse_version() {
     local version=$1
-    [[ $version =~ ^([0-9]+\.[0-9]+)(b([0-9]+))?$ ]] ||
-        die "не понимаю версию '$version': ожидаю 0.1 или 0.1b2"
+    [[ $version =~ ^([0-9]+\.[0-9]+(\.[0-9]+)?)(b([0-9]+))?$ ]] ||
+        die "не понимаю версию '$version': ожидаю 0.1, 0.1b2 или 1.0.0"
     LINE=${BASH_REMATCH[1]}
-    SERIAL=${BASH_REMATCH[3]:-}
+    SERIAL=${BASH_REMATCH[4]:-}
 }
 
 # A pure function: reads no files, writes nothing. Printed on stdout so the
 # tests can pin the whole table without touching a repository.
 compute_next() {
     local current=$1 kind=$2
-    local line serial major minor
+    local line serial major minor rest patch
 
     parse_version "$current"
     line=$LINE
     serial=$SERIAL
+    major=${line%%.*}
+    rest=${line#*.}
+    minor=${rest%%.*}
+    patch=""
+    [[ $rest == *.* ]] && patch=${rest#*.}
 
     case $kind in
     beta)
-        # A beta behind its own stable release is a downgrade: `0.1` has
-        # shipped, so the next beta belongs to a line nobody has seen.
-        if [[ -z $serial ]]; then
-            major=${line%%.*}
-            minor=${line#*.}
-            echo "$major.$((minor + 1))b1"
-        else
+        # A beta behind its own stable release is a downgrade: that line has
+        # shipped, so the next beta belongs to a line nobody has seen. The new
+        # line keeps the shape the old one was written with.
+        if [[ -n $serial ]]; then
             echo "${line}b$((serial + 1))"
+        elif [[ -n $patch ]]; then
+            echo "$major.$minor.$((patch + 1))b1"
+        else
+            echo "$major.$((minor + 1))b1"
         fi
         ;;
     release)
@@ -65,12 +75,25 @@ compute_next() {
         echo "$line"
         ;;
     minor)
-        major=${line%%.*}
-        minor=${line#*.}
-        echo "$major.$((minor + 1))b1"
+        if [[ -n $patch ]]; then
+            echo "$major.$((minor + 1)).0b1"
+        else
+            echo "$major.$((minor + 1))b1"
+        fi
+        ;;
+    patch)
+        # `0.1` has no patch number, and inventing one silently would produce a
+        # version the operator never asked for.
+        [[ -z $patch ]] && die "версия $line без номера патча; patch требует X.Y.Z"
+        echo "$major.$minor.$((patch + 1))b1"
+        ;;
+    major)
+        # Ships stable straight away: the beta underneath it was the beta of
+        # exactly this code, so a `1.0.0b1` in between would describe nothing.
+        echo "$((major + 1)).0.0"
         ;;
     *)
-        die "неизвестный тип выпуска '$kind': ожидаю beta, release или minor"
+        die "неизвестный тип выпуска '$kind': ожидаю beta, release, minor, patch или major"
         ;;
     esac
 }
@@ -206,11 +229,13 @@ _section() {
 
 usage() {
     cat <<'EOF'
-использование: scripts/release.sh {beta|release|minor} [--dry-run] [--no-push]
+использование: scripts/release.sh {beta|release|minor|patch|major} [--dry-run] [--no-push]
 
-  beta     следующая бета той же линии    0.1b1 -> 0.1b2
-  release  снять бету                     0.1b1 -> 0.1
-  minor    новая линия, бетой             0.1b1 -> 0.2b1
+  beta     следующая бета той же линии        1.0.1b1 -> 1.0.1b2
+  release  снять бету                         1.0.1b1 -> 1.0.1
+  minor    новая минорная линия, бетой        1.2.3b1 -> 1.3.0b1
+  patch    новая патч-линия, бетой            1.0.0 -> 1.0.1b1
+  major    новая мажорная линия, стабильная   0.1b3 -> 1.0.0
 
   --dry-run  показать, что изменится, и ничего не писать
   --no-push  сделать коммит и тег, но не отправлять их

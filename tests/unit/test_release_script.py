@@ -43,15 +43,25 @@ def test_the_script_exists_and_is_executable():
         ("0.1b1", "beta", "0.1b2"),
         ("0.1b9", "beta", "0.1b10"),
         ("0.2b1", "beta", "0.2b2"),
-        # Promoting a beta keeps the line it belongs to.
+        ("1.0.0b1", "beta", "1.0.0b2"),
+        # Promoting a beta keeps the line it belongs to, parts included.
         ("0.1b1", "release", "0.1"),
         ("0.2b7", "release", "0.2"),
+        ("1.0.0b1", "release", "1.0.0"),
         # A new line always starts as a beta, from a beta or from a stable.
         ("0.1b1", "minor", "0.2b1"),
         ("0.1", "minor", "0.2b1"),
+        ("1.2.3b1", "minor", "1.3.0b1"),
+        ("1.0.0", "patch", "1.0.1b1"),
+        ("1.0.1b2", "patch", "1.0.2b1"),
+        # A major release is the one line that ships stable straight away: it
+        # is what the beta under it was beta for.
+        ("0.1b3", "major", "1.0.0"),
+        ("1.2.3", "major", "2.0.0"),
         # A beta behind its own stable release would be a downgrade, so it
         # moves to the next line instead.
         ("0.1", "beta", "0.2b1"),
+        ("1.0.1", "beta", "1.0.2b1"),
     ],
 )
 def test_the_next_version(current: str, kind: str, expected: str):
@@ -59,6 +69,14 @@ def test_the_next_version(current: str, kind: str, expected: str):
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == expected
+
+
+def test_patch_needs_a_version_that_has_a_patch_number():
+    """``0.1`` has no third number; inventing one silently is worse than a refusal."""
+    result = _compute("0.1", "patch")
+
+    assert result.returncode != 0
+    assert result.stderr.strip()
 
 
 def test_a_stable_release_is_not_promoted_twice():
@@ -69,9 +87,14 @@ def test_a_stable_release_is_not_promoted_twice():
     assert "уже" in result.stderr.lower() or "already" in result.stderr.lower()
 
 
-@pytest.mark.parametrize("current", ["0.1 beta", "v0.1", "", "1", "0.1.0b1"])
+@pytest.mark.parametrize("current", ["0.1 beta", "v0.1", "", "1", "1.0.0.0", "1.0.0b"])
 def test_an_unparsable_version_is_refused(current: str):
-    """``v0.1`` is what a tag looks like, not what pyproject may hold."""
+    """``v0.1`` is what a tag looks like, not what pyproject may hold.
+
+    ``0.1.0b1`` used to be on this list while the grammar was two-part; a
+    three-part line is legitimate now, so the refusal list names what the
+    grammar still cannot represent: a fourth number and a beta without one.
+    """
     result = _compute(current, "beta")
 
     assert result.returncode != 0
