@@ -7,18 +7,43 @@ dates, so the data comes from the page's own JSON: the server-rendered
 sees neither fails ``blocked`` instead of writing approximate numbers (see
 ``docs/superpowers/specs/2026-11-22-soundcloud-parser-design.md``).
 """
+import asyncio
 import json
 import re
+import time
 from dataclasses import dataclass
 from typing import ClassVar, Literal
 
 from pydantic import BaseModel, Field
 
-from uwp.parsers.base import BaseParser, Column, ParseContext, ParseResult
+from uwp.domain import ErrorKind
+from uwp.parsers.base import BaseParser, Column, ParseContext, ParseError, ParseResult
 
 DISCOVER_URL = "https://soundcloud.com/discover"
 SIGNIN_URL = "https://soundcloud.com/signin"
 TRENDING_URL = "https://soundcloud.com/discover/sets/trending-by-genre:{genre}"
+
+# The page's own batch request usually lands within a second; the window only
+# covers a slow response before the single ``fetch`` fallback below.
+_COLLECT_TIMEOUT_S = 10.0
+_POLL_INTERVAL_S = 0.25
+
+_API_TRACKS = "api-v2.soundcloud.com/tracks?"
+
+_NO_PLAYLIST = "SoundCloud returned no playlist (geo block or markup change?)"
+_NO_TRACKS = "SoundCloud returned no tracks (geo block, captcha or API change?)"
+
+# The page's own call, repeated from the page: same endpoint, same session, so
+# a rotated ``client_id`` is the only thing that can make it fail.
+_FETCH_TRACKS = """
+async ({ids, clientId}) => {
+  const url = "https://api-v2.soundcloud.com/tracks?ids="
+    + ids.join("%2C") + "&client_id=" + encodeURIComponent(clientId);
+  const response = await fetch(url, {credentials: "include"});
+  if (!response.ok) return [];
+  return await response.json();
+}
+"""
 
 _HYDRATION_RE = re.compile(
     r"window\.__sc_hydration\s*=\s*(\[.*?\]);\s*</script>", re.DOTALL
@@ -230,5 +255,99 @@ class SoundcloudTrendingParser(BaseParser):
         ),
     ]
 
-    async def run(self, ctx: ParseContext) -> ParseResult:  # pragma: no cover
-        raise NotImplementedError
+    async def run(self, ctx: ParseContext) -> ParseResult:
+        settings: SoundcloudSettings = ctx.settings  # type: ignore[assignment]
+        url = build_playlist_url(settings)
+        collector = _TrackCollector()
+        # Subscribed before ``goto``: the page's own ``/tracks`` request can
+        # finish before ``domcontentloaded``, and a listener added afterwards
+        # would miss it.
+        ctx.page.on("response", collector.handle)
+        await ctx.page.goto(url, wait_until="domcontentloaded")
+        html = await ctx.page.content()
+
+        playlist = parse_hydration(html)
+        if playlist is None or not playlist.ids:
+            ctx.save_artifact("empty.html", html.encode())
+            raise ParseError(kind=ErrorKind.blocked, message=_NO_PLAYLIST)
+
+        await _collect_missing(collector, playlist, ctx.page)
+        rows = track_rows(playlist.ids, collector.objects)
+        if not rows:
+            ctx.save_artifact("empty.html", html.encode())
+            raise ParseError(kind=ErrorKind.blocked, message=_NO_TRACKS)
+
+        if len(rows) < len(playlist.ids):
+            ctx.log.warning(
+                "SoundCloud returned %s of %s tracks; missing: %s",
+                len(rows),
+                len(playlist.ids),
+                ", ".join(
+                    str(track_id) for track_id in _missing(collector, playlist.ids)
+                ),
+            )
+            # ``partial_rows`` makes the runner save with ``complete=False``, so
+            # the tracks that did not arrive are not marked absent and the next
+            # full run does not report them all as new.
+            raise ParseError(
+                kind=ErrorKind.blocked,
+                partial_rows=rows,
+                message=f"SoundCloud returned {len(rows)} of {len(playlist.ids)} tracks",
+            )
+
+        return ParseResult(
+            rows=rows,
+            meta={
+                "playlist": playlist.title,
+                "url": url,
+                "objects": len(collector.objects),
+            },
+        )
+
+
+class _TrackCollector:
+    """Collects full track objects from the page's own ``api-v2`` responses."""
+
+    def __init__(self) -> None:
+        self.objects: dict[int, dict] = {}
+
+    async def handle(self, response) -> None:
+        # ``/tracks?ids=`` is the batch call; ``/tracks/<id>/comments`` and the
+        # other per-track endpoints are not track lists.
+        if _API_TRACKS not in response.url:
+            return
+        try:
+            payload = await response.json()
+        except Exception:  # noqa: BLE001 - a body the page already dropped
+            return
+        self.remember(payload)
+
+    def remember(self, payload) -> None:
+        if not isinstance(payload, list):
+            return
+        for track in payload:
+            if isinstance(track, dict) and isinstance(track.get("id"), int):
+                self.objects.setdefault(track["id"], track)
+
+
+def _missing(collector: _TrackCollector, ids: list[int]) -> list[int]:
+    return [track_id for track_id in ids if track_id not in collector.objects]
+
+
+async def _collect_missing(
+    collector: _TrackCollector, playlist: Playlist, page
+) -> None:
+    """Wait for the page's request, then ask the same endpoint once for the rest."""
+    deadline = time.monotonic() + _COLLECT_TIMEOUT_S
+    while time.monotonic() < deadline and _missing(collector, playlist.ids):
+        await asyncio.sleep(_POLL_INTERVAL_S)
+    missing = _missing(collector, playlist.ids)
+    if not missing or not playlist.client_id:
+        return
+    try:
+        payload = await page.evaluate(
+            _FETCH_TRACKS, {"ids": missing, "clientId": playlist.client_id}
+        )
+    except Exception:  # noqa: BLE001 - the fetch is a second chance only
+        return
+    collector.remember(payload)

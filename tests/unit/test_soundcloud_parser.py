@@ -5,12 +5,17 @@ The fixtures are real: ``soundcloud_playlist.html`` is server HTML captured with
 real track objects in the API's order, which deliberately differs from the
 playlist's order.
 """
+import asyncio
 import json
+import logging
 from pathlib import Path
 
 import pytest
 
+import uwp.parsers.soundcloud_trending.parser as soundcloud
+from uwp.domain import ErrorKind
 from uwp.i18n import Lang
+from uwp.parsers.base import ParseContext, ParseError
 from uwp.parsers.registry import ParserRegistry
 from uwp.parsers.soundcloud_trending.parser import (
     DISCOVER_URL,
@@ -266,3 +271,262 @@ def test_parser_is_discovered_with_the_example_still_present():
     assert registry.broken() == {}
     assert registry.get("steam_deals") is not None
     assert registry.get("soundcloud_trending") is not None
+
+
+TRACKS_URL = "https://api-v2.soundcloud.com/tracks?ids=1%2C2"
+
+
+def _playlist_html(ids, *, title="All Genres", client_id="CLIENT"):
+    """The smallest page that carries a usable hydration block."""
+    entries = [
+        {"hydratable": "apiClient", "data": {"id": client_id, "isExpiring": True}},
+        {
+            "hydratable": "systemPlaylist",
+            "data": {
+                "title": title,
+                "tracks": [{"id": track_id, "kind": "track"} for track_id in ids],
+            },
+        },
+    ]
+    return "<script>window.__sc_hydration = " + json.dumps(entries) + ";</script>"
+
+
+def _track(track_id, **extra):
+    track = {
+        "id": track_id,
+        "title": f"Track {track_id}",
+        "permalink_url": f"https://soundcloud.com/a/t{track_id}",
+        "genre": "House",
+        "duration": 137331,
+        "created_at": "2026-11-12T21:17:35Z",
+        "playback_count": 10,
+        "likes_count": 20,
+        "reposts_count": 30,
+        "comment_count": 40,
+        "user": {"username": "A", "permalink_url": "https://soundcloud.com/a"},
+    }
+    track.update(extra)
+    return track
+
+
+class _FakeResponse:
+    def __init__(self, url, payload):
+        self.url = url
+        self._payload = payload
+
+    async def json(self):
+        return self._payload
+
+
+class _FakePage:
+    """Plays back hydration HTML and fires ``response`` handlers like the browser."""
+
+    def __init__(self, html, *, responses=(), evaluate=None):
+        self.html = html
+        self.responses = list(responses)
+        self._evaluate = evaluate
+        self.calls: list[str] = []
+        self.goto_calls: list[tuple[str, str | None]] = []
+        self.evaluate_calls: list[tuple[str, dict]] = []
+        self.handlers: dict[str, object] = {}
+
+    async def goto(self, url, wait_until=None):
+        self.goto_calls.append((url, wait_until))
+        for payload in self.responses:
+            await self.emit(TRACKS_URL, payload)
+
+    async def content(self):
+        return self.html
+
+    def on(self, event, handler):
+        self.calls.append(f"on:{event}")
+        self.handlers[event] = handler
+
+    async def emit(self, url, payload):
+        handler = self.handlers["response"]
+        await handler(_FakeResponse(url, payload))
+
+    async def evaluate(self, expression, arg=None):
+        self.evaluate_calls.append((expression, arg))
+        if self._evaluate is None:
+            return []
+        return self._evaluate(arg)
+
+
+@pytest.fixture(autouse=True)
+def _no_waiting(monkeypatch):
+    """The collection window is wall-clock; a unit test must not spend 10 s in it.
+
+    ``raising=False`` so a missing constant fails the test body with the real
+    error instead of every test erroring in setup.
+    """
+    monkeypatch.setattr(soundcloud, "_COLLECT_TIMEOUT_S", 0.0, raising=False)
+
+
+def _ctx(page, tmp_path):
+    saved: list[tuple[str, bytes]] = []
+    ctx = ParseContext(
+        page=page,
+        context=None,
+        settings=SoundcloudSettings(),
+        log=logging.getLogger("test.soundcloud"),
+        artifacts_dir=tmp_path,
+        site=None,
+        profile=None,
+        known_keys=lambda: set(),
+        save_artifact=lambda name, data: saved.append((name, data)) or tmp_path / name,
+    )
+    return ctx, saved
+
+
+async def test_run_takes_the_rows_from_the_pages_own_api_response(tmp_path):
+    page = _FakePage(_playlist_html([1, 2]), responses=[[_track(1), _track(2)]])
+    ctx, _ = _ctx(page, tmp_path)
+
+    result = await SoundcloudTrendingParser().run(ctx)
+
+    # Subscribed before ``goto``: the page's request can land before
+    # ``domcontentloaded``, and a listener added later would miss it.
+    assert page.calls == ["on:response"]
+    assert page.goto_calls == [
+        (
+            "https://soundcloud.com/discover/sets/trending-by-genre:all-genres",
+            "domcontentloaded",
+        )
+    ]
+    assert [row["external_key"] for row in result.rows] == ["1", "2"]
+    assert page.evaluate_calls == []
+    assert result.meta == {
+        "playlist": "All Genres",
+        "url": "https://soundcloud.com/discover/sets/trending-by-genre:all-genres",
+        "objects": 2,
+    }
+
+
+async def test_run_requests_the_missing_ids_from_the_same_endpoint(tmp_path):
+    """No interception and a live ``client_id``: one fetch fills the gap."""
+    page = _FakePage(
+        _playlist_html([1, 2]),
+        evaluate=lambda arg: [_track(arg["ids"][0]), _track(arg["ids"][1])],
+    )
+    ctx, _ = _ctx(page, tmp_path)
+
+    result = await SoundcloudTrendingParser().run(ctx)
+
+    assert len(page.evaluate_calls) == 1
+    _expression, arg = page.evaluate_calls[0]
+    assert arg == {"ids": [1, 2], "clientId": "CLIENT"}
+    assert [row["external_key"] for row in result.rows] == ["1", "2"]
+
+
+async def test_run_waits_for_a_response_that_lands_after_the_navigation(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(soundcloud, "_COLLECT_TIMEOUT_S", 2.0)
+    monkeypatch.setattr(soundcloud, "_POLL_INTERVAL_S", 0.01)
+    page = _FakePage(_playlist_html([1, 2]))
+    ctx, _ = _ctx(page, tmp_path)
+
+    async def late():
+        await asyncio.sleep(0.05)
+        await page.emit(TRACKS_URL, [_track(1), _track(2)])
+
+    task = asyncio.create_task(late())
+    result = await SoundcloudTrendingParser().run(ctx)
+    await task
+
+    assert [row["external_key"] for row in result.rows] == ["1", "2"]
+    assert page.evaluate_calls == []
+
+
+async def test_run_fails_blocked_and_saves_the_page_when_there_is_no_playlist(tmp_path):
+    page = _FakePage("<html><body>captcha</body></html>")
+    ctx, saved = _ctx(page, tmp_path)
+
+    with pytest.raises(ParseError) as excinfo:
+        await SoundcloudTrendingParser().run(ctx)
+
+    assert excinfo.value.kind is ErrorKind.blocked
+    assert excinfo.value.message == (
+        "SoundCloud returned no playlist (geo block or markup change?)"
+    )
+    assert excinfo.value.partial_rows == []
+    assert saved and saved[0][0] == "empty.html"
+    assert b"captcha" in saved[0][1]
+
+
+async def test_run_fails_blocked_when_neither_path_returned_an_object(tmp_path):
+    page = _FakePage(_playlist_html([1, 2]), evaluate=lambda arg: [])
+    ctx, saved = _ctx(page, tmp_path)
+
+    with pytest.raises(ParseError) as excinfo:
+        await SoundcloudTrendingParser().run(ctx)
+
+    assert excinfo.value.kind is ErrorKind.blocked
+    assert excinfo.value.message == (
+        "SoundCloud returned no tracks (geo block, captcha or API change?)"
+    )
+    assert saved and saved[0][0] == "empty.html"
+
+
+async def test_run_saves_a_partial_answer_as_partial_rows(tmp_path):
+    """``partial_rows`` makes the runner store with ``complete=False``.
+
+    Without it the tracks the API failed to return would be marked absent, and
+    the next full run would report them all as new.
+    """
+    page = _FakePage(_playlist_html([1, 2, 3]), responses=[[_track(1), _track(3)]])
+    ctx, saved = _ctx(page, tmp_path)
+
+    with pytest.raises(ParseError) as excinfo:
+        await SoundcloudTrendingParser().run(ctx)
+
+    assert excinfo.value.kind is ErrorKind.blocked
+    assert excinfo.value.message == "SoundCloud returned 2 of 3 tracks"
+    assert [row["external_key"] for row in excinfo.value.partial_rows] == ["1", "3"]
+    assert saved == []
+
+
+async def test_run_without_a_client_id_only_reports_what_it_intercepted(tmp_path):
+    """A missing ``apiClient`` is not a reason to fail: rows we have are exact."""
+    page = _FakePage(_playlist_html([1, 2], client_id=""), responses=[[_track(1)]])
+    ctx, _ = _ctx(page, tmp_path)
+
+    with pytest.raises(ParseError) as excinfo:
+        await SoundcloudTrendingParser().run(ctx)
+
+    assert page.evaluate_calls == []
+    assert excinfo.value.message == "SoundCloud returned 1 of 2 tracks"
+
+
+async def test_the_collector_reads_a_batch_track_response():
+    collector = soundcloud._TrackCollector()
+
+    await collector.handle(_FakeResponse(TRACKS_URL, [_track(1), _track(2)]))
+
+    assert sorted(collector.objects) == [1, 2]
+
+
+async def test_the_collector_ignores_per_track_endpoints_and_error_bodies():
+    """``/tracks/<id>/comments`` is not a track list and a 401 body is a dict."""
+    collector = soundcloud._TrackCollector()
+
+    await collector.handle(
+        _FakeResponse(
+            "https://api-v2.soundcloud.com/tracks/1/comments?client_id=x", [_track(1)]
+        )
+    )
+    await collector.handle(
+        _FakeResponse(TRACKS_URL, {"errors": [{"error_message": "401"}]})
+    )
+
+    assert collector.objects == {}
+
+
+async def test_the_collector_keeps_the_first_object_for_an_id():
+    collector = soundcloud._TrackCollector()
+
+    await collector.handle(_FakeResponse(TRACKS_URL, [_track(1, title="first")]))
+    await collector.handle(_FakeResponse(TRACKS_URL, [_track(1, title="second")]))
+
+    assert collector.objects[1]["title"] == "first"
