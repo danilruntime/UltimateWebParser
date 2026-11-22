@@ -486,6 +486,34 @@ async def test_a_skipped_export_in_changes_mode_is_silent(env):
     assert await bus.pending(111, NOW) == []
 
 
+async def test_a_partial_run_is_announced_even_when_the_export_was_skipped(env):
+    """A truncated run is not "nothing changed", so silence would hide data loss.
+
+    Measured before the fix: ``export_mode=changes`` with no new keys gave
+    ``PENDING EVENTS: []`` while ``site.last_status`` was ``partial`` and
+    ``consecutive_failures`` stayed 0 — the admin only learned about the missing
+    rows by opening the site card.
+    """
+    db, sites, jobs, sid = env
+    settings = Settings()
+    bus = EventBus(EventsRepo(db), AdminsRepo(db), settings)
+    await sites.update(sid, export_mode="changes")
+    outcome = RunOutcome(
+        status=RunStatus.partial,
+        rows=[{"external_key": "1", "title": "x"}],
+        report_status="skipped",
+    )
+    worker = _worker(settings, db, jobs, sites, FakeRunner(outcome))
+    worker.bus = bus
+    await jobs.create(sid, "scheduled")
+
+    await worker.process_one(NOW)
+
+    events = await bus.pending(111, NOW)
+    assert [event.kind for event in events] == ["run_finished"]
+    assert events[0].payload["status"] == "partial"
+
+
 async def test_an_unknown_failure_leaves_the_sentence_to_delivery(env):
     """The worker has no admin in front of it, so it must not write one.
 

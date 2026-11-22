@@ -189,7 +189,14 @@ class Worker:
             if outcome.status in (RunStatus.ok, RunStatus.partial):
                 # ``changes``/``never`` without a file must stay silent; the
                 # admin only hears about an export that was expected and broke.
-                if outcome.report_status == "skipped" and site.export_mode != "always":
+                # A *partial* run is the exception: rows were lost even though
+                # the export was skipped, so silence would hide the loss until
+                # someone opened the site card.
+                if (
+                    outcome.report_status == "skipped"
+                    and site.export_mode != "always"
+                    and outcome.status != RunStatus.partial
+                ):
                     return
                 payload = dict(
                     base,
