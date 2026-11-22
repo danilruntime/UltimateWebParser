@@ -295,3 +295,17 @@ def test_no_vnc_port_is_published_on_all_interfaces():
         assert vnc, name
         for port in vnc:
             assert str(port).startswith("127.0.0.1:"), f"{name}: {port}"
+
+
+def test_the_image_healthcheck_does_not_probe_the_telegram_proxy():
+    """Compose passes ``--offline``; the image's own HEALTHCHECK must agree.
+
+    The online probe crosses a third-party proxy and was measured at ~12 s;
+    with ``--interval=60s`` one slow probe marks a healthy container unhealthy,
+    and ``docs/README.md`` already promises the offline form.
+    """
+    text = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    check = next(line for line in text.splitlines() if "doctor" in line and "CMD" in line)
+
+    assert "--offline" in check
+    assert "--quiet" in check

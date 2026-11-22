@@ -84,7 +84,7 @@ EXPOSE 6000-6100
 
 # Through the entrypoint so the check runs as uid 1000, not as root.
 HEALTHCHECK --interval=60s --timeout=30s --start-period=30s --retries=3 \
-    CMD ["/entrypoint.sh", "doctor", "--quiet"]
+    CMD ["/entrypoint.sh", "doctor", "--offline", "--quiet"]
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/entrypoint.sh"]
 CMD ["run"]
