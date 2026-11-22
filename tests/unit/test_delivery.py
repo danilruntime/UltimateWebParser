@@ -315,7 +315,39 @@ async def test_a_failed_export_is_reported_not_silenced(env):
     assert bot.documents == []
 
 
-async def test_a_partial_run_says_so_and_lists_the_notes(env):
+async def test_a_partial_run_without_a_report_still_reaches_the_admin(env):
+    """Partial + skipped export is the shape the worker now emits on purpose.
+
+    ``export_mode=changes`` with a truncated scrape sends no file, so the
+    caption has to stand alone: it must say the run was partial, count the rows,
+    and not claim a report is missing. Measured before this test: the shape was
+    covered only at the worker layer, so a change to the ``skipped`` branch could
+    have silenced it without any test failing.
+    """
+    settings, bus, tmp_path = env
+    bot = FakeBot()
+    delivery = EventDelivery(bot, bus, settings)
+    await bus.emit(
+        "run_finished",
+        payload={
+            "site": "SoundCloud",
+            "rows": 47,
+            "new": 0,
+            "status": "partial",
+            "notes": "",
+            "report_path": "",
+            "report_status": "skipped",
+        },
+    )
+
+    await delivery.tick()
+
+    assert bot.documents == []
+    chat, text, *_ = bot.messages[0]
+    assert chat == 111
+    assert "47" in text
+    assert "Отчёт не создан" not in text
+
     settings, bus, tmp_path = env
     report = tmp_path / "report.ods"
     report.write_bytes(b"data")
