@@ -70,7 +70,8 @@ src/uwp/
   migrations/*.sql  append-only, numbered
   parsers/base.py   BaseParser, Column, ParseContext, ParseResult, ParseError
   parsers/registry.py  plug-in discovery; a broken parser is recorded, not raised
-  parsers/steam_deals/ reference parser with its own README
+  parsers/steam_deals/ reference DOM parser with its own README
+  parsers/soundcloud_trending/ reference intercepted-API parser, own README
 docker/             Dockerfile assets: entrypoint.sh, seccomp profile, docs
 docs/superpowers/   design docs and implementation plans (historical record)
 tests/unit/         everything runs offline

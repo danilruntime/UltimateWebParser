@@ -272,7 +272,9 @@ many rows did not appear in this particular run.
 If the mode says no file is needed (`changes` with no changes, `never`), the
 bot stays silent. If a report was supposed to appear but writing failed, you
 get «⚠️ Report not created» with the reason. A partial run is marked
-«⚠️ Partial run» and lists what could not be collected.
+«⚠️ Partial run» and is always reported, even when the export mode would
+otherwise keep quiet — rows were lost, and that must not look like "nothing
+changed". The ids that did not arrive stay in the worker log.
 
 Downloading a report by hand:
 
@@ -397,7 +399,8 @@ Rules:
   counting as a change for the "changes only" mode.
 - A broken parser does not take the service down: it is marked `broken` and
   stays visible in the list.
-- Write a README next to the parser — as in `src/uwp/parsers/steam_deals/`.
+- Write a README next to the parser — as in `src/uwp/parsers/steam_deals/`
+  (DOM) or `src/uwp/parsers/soundcloud_trending/` (intercepted API).
 
 A screenshot for investigating problems: `ctx.save_artifact("screenshot.png", data)`.
 
