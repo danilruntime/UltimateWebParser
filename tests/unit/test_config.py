@@ -81,15 +81,51 @@ def test_explicit_env_overrides_defaults(tmp_path):
     assert s.secret_key == "k" * 32
 
 
-def test_browser_constraints(tmp_path):
-    """150 crashes the renderer on SoundCloud's trending page, so 148 is pinned.
+def test_overriding_the_browser_version_moves_the_url_with_it(tmp_path):
+    """``UWP_BROWSER_VERSION`` alone must not verify the old release's hash.
 
-    Measured in the container: with ``--fingerprint=<any seed>`` the renderer of
-    150.0.7871.186 dies within a second on
+    Measured before the fix: ``UWP_BROWSER_VERSION=150.0.7871.186`` kept the 148
+    URL and the 148 sha, so the installer downloaded 148, verified 148, and
+    reported success for a version it never fetched. ``--version`` has the
+    mirror problem: it changes the URL and keeps the sha, so every rollback
+    dies on a mismatch. The version and the URL must move together.
+    """
+    s = load_settings(
+        {"UWP_DATA_DIR": str(tmp_path), "UWP_BROWSER_VERSION": "150.0.7871.186"}
+    )
+
+    assert s.browser_version == "150.0.7871.186"
+    assert "150.0.7871.186/ungoogled-chromium-150.0.7871.186" in s.browser_url
+    # The sha still belongs to the pinned build, so the download is refused
+    # rather than installed under a misleading name.
+    assert s.browser_sha256 != ""
+
+
+def test_an_explicit_browser_url_is_left_alone(tmp_path):
+    """An archive mirror is a deliberate override; do not rewrite it."""
+    s = load_settings(
+        {
+            "UWP_DATA_DIR": str(tmp_path),
+            "UWP_BROWSER_VERSION": "150.0.7871.186",
+            "UWP_BROWSER_URL": "https://mirror.example/148.tar.xz",
+        }
+    )
+
+    assert s.browser_url == "https://mirror.example/148.tar.xz"
+
+
+def test_browser_constraints(tmp_path):
+    """The browser is pinned to the build whose renderer survives SoundCloud.
+
+    Measured in the container: with ``--fingerprint=<seed>`` the patched
+    150.0.7871.186 renderer intermittently dies on
     ``/discover/sets/trending-by-genre:all-genres`` (``Page.content: Target
-    crashed``), while the same page renders on the unpatched code path and every
-    other SoundCloud page survives. The same build without the pin renders it
-    fine, which is why the version, not the parser, carries the fix.
+    crashed``, observed after the page's hydration block arrived and before its
+    ``/tracks?`` request; 2 of 6 runs failed in the review's sample, 1 of 10 in
+    an earlier one), while every other SoundCloud page survives and the same
+    build without the flag renders it. 148.0.7778.215 rendered it in 3 of 3
+    review runs and in the shipped 148 container runs. The fix belongs to the
+    version, not to the parser.
     """
     s = load_settings({"UWP_DATA_DIR": str(tmp_path)})
     assert s.browser_version == "148.0.7778.215"

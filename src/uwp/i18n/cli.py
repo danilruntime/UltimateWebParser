@@ -54,9 +54,14 @@ CATALOG: dict[Lang, dict[str, str]] = {
         "cli.browser.downloading": "Скачиваю {url}",
         "cli.browser.sha_mismatch": "❌ sha256 не совпал: {digest}",
         "cli.browser.sha_ok": "sha256 совпал, распаковываю.",
+        "cli.browser.missing_chrome": "❌ в архиве нет chrome: {path}",
         "cli.browser.installed": "Браузер установлен: {path}",
         "cli.browser.export_hint": "Добавьте в окружение UWP_BROWSER_PATH={path}",
         "cli.browser.unsafe_path": "небезопасный путь в архиве: {path}",
+        "cli.browser.sha_required": (
+            "--version указывает на другой архив: укажите --sha256, иначе"
+            " загрузку нечем проверить."
+        ),
         # --- parsers -----------------------------------------------------
         "cli.parsers.login_required": " (нужен вход)",
         # --- site --------------------------------------------------------
@@ -126,6 +131,7 @@ CATALOG: dict[Lang, dict[str, str]] = {
         "cli.help.browser_version": "версия (по умолчанию из настроек)",
         "cli.help.browser_url": "URL архива; проверяется sha256",
         "cli.help.browser_dest": "каталог установки",
+        "cli.help.browser_sha": "sha256 архива; обязателен вместе с --version или --url",
         "cli.help.parsers": "парсеры",
         "cli.help.parsers_list": "список парсеров",
         "cli.help.site": "сайты",
@@ -198,9 +204,14 @@ CATALOG: dict[Lang, dict[str, str]] = {
         "cli.browser.downloading": "Downloading {url}",
         "cli.browser.sha_mismatch": "❌ sha256 mismatch: {digest}",
         "cli.browser.sha_ok": "sha256 matches, extracting.",
+        "cli.browser.missing_chrome": "❌ the archive has no chrome: {path}",
         "cli.browser.installed": "Browser installed: {path}",
         "cli.browser.export_hint": "Add UWP_BROWSER_PATH={path} to the environment",
         "cli.browser.unsafe_path": "unsafe path in the archive: {path}",
+        "cli.browser.sha_required": (
+            "--version names another archive: pass --sha256, or the download"
+            " cannot be verified."
+        ),
         "cli.parsers.login_required": " (login required)",
         "cli.site.empty": "No sites. Run `uwp init`.",
         "cli.site.col_slug": "slug",
@@ -265,6 +276,7 @@ CATALOG: dict[Lang, dict[str, str]] = {
         "cli.help.browser_version": "version (defaults to the settings)",
         "cli.help.browser_url": "archive URL; checked with sha256",
         "cli.help.browser_dest": "installation directory",
+        "cli.help.browser_sha": "archive sha256; required with --version or --url",
         "cli.help.parsers": "parsers",
         "cli.help.parsers_list": "list parsers",
         "cli.help.site": "sites",

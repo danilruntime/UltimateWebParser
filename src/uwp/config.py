@@ -4,7 +4,7 @@ import os
 from collections.abc import Mapping
 from pathlib import Path
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
     DotEnvSettingsSource,
@@ -17,10 +17,17 @@ from uwp.i18n import Lang, normalize
 
 BROWSER_VERSION = "148.0.7778.215"
 BROWSER_SHA256 = "70d239830332e5820aa34dfcb284161cac0429eee25da642830afe04bda717f4"
-BROWSER_URL = (
-    "https://github.com/adryfish/fingerprint-chromium/releases/download/"
-    f"{BROWSER_VERSION}/ungoogled-chromium-{BROWSER_VERSION}-1-x86_64_linux.tar.xz"
-)
+
+
+def browser_url_for(version: str) -> str:
+    """The release archive URL of a fingerprint-chromium version."""
+    return (
+        "https://github.com/adryfish/fingerprint-chromium/releases/download/"
+        f"{version}/ungoogled-chromium-{version}-1-x86_64_linux.tar.xz"
+    )
+
+
+BROWSER_URL = browser_url_for(BROWSER_VERSION)
 
 
 class _CsvEnvSource(EnvSettingsSource):
@@ -96,6 +103,20 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [part.strip() for part in value.split(",") if part.strip()]
         return value
+
+    @model_validator(mode="after")
+    def _browser_url_follows_the_version(self) -> "Settings":
+        """Keep the archive URL and the version in step.
+
+        ``UWP_BROWSER_VERSION`` used to move the version alone, so the
+        installer downloaded the pinned 148 archive, verified the pinned 148
+        hash and printed 150 — a success message for a build it never fetched.
+        A URL that still equals the default follows the version; any other URL
+        is a deliberate mirror override and is left alone.
+        """
+        if self.browser_version != BROWSER_VERSION and self.browser_url == BROWSER_URL:
+            self.browser_url = browser_url_for(self.browser_version)
+        return self
 
     @field_validator("public_scheme", mode="before")
     @classmethod

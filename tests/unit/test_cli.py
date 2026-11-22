@@ -566,3 +566,143 @@ def test_site_rename_refuses_a_name_telegram_would_reject(capsys, monkeypatch, t
     assert main(["site", "set", "steam_skidki", "--name", "x" * 65]) == 1
 
     assert "64" in capsys.readouterr().out
+
+
+def _release_archive(tmp_path, top="ungoogled-chromium-148.0.7778.215-1-x86_64_linux"):
+    """Build a tarball shaped like the upstream release: one wrapper directory.
+
+    Measured against the real 141 MB asset: every member is prefixed with
+    ``ungoogled-chromium-<version>-1-x86_64_linux/`` and ``chrome`` lives inside
+    it. The Dockerfile therefore extracts with ``--strip-components=1``; the
+    installer must arrive at the same layout.
+    """
+    import hashlib
+    import io
+    import tarfile
+
+    path = tmp_path / "release.tar.xz"
+    with tarfile.open(path, "w:xz") as tar:
+        wrapper = tarfile.TarInfo(top)
+        wrapper.type = tarfile.DIRTYPE
+        wrapper.mode = 0o755
+        tar.addfile(wrapper)
+        for name, body, mode in (
+            (f"{top}/chrome", b"#!/bin/sh\necho Chromium\n", 0o755),
+            (f"{top}/icudtl.dat", b"data", 0o644),
+        ):
+            info = tarfile.TarInfo(name)
+            info.size = len(body)
+            info.mode = mode
+            tar.addfile(info, io.BytesIO(body))
+    return path, hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_browser_install_puts_chrome_where_it_says_it_does(capsys, monkeypatch, tmp_path):
+    """A success message must name a file that exists.
+
+    Measured with the real 148 asset: the tar carries one wrapper directory, so
+    extracting it as-is left ``<dest>/chrome`` missing while ``uwp browser
+    install`` printed it — and the README tells the reader to export exactly that
+    path, so the next command failed with "browser not found" after a claimed
+    success.
+    """
+    archive, digest = _release_archive(tmp_path)
+    dest = tmp_path / "browser"
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("UWP_BROWSER_SHA256", digest)
+
+    code = main(
+        ["browser", "install", "--url", archive.as_uri(), "--dest", str(dest)]
+    )
+
+    assert code == 0
+    assert (dest / "chrome").is_file()
+    assert (dest / "icudtl.dat").is_file()
+    out = capsys.readouterr().out
+    assert str(dest / "chrome") in out
+
+
+def test_browser_install_refuses_to_guess_a_sha_for_another_version(
+    capsys, monkeypatch, tmp_path
+):
+    """``--version`` without ``--sha256`` used to verify the pinned release.
+
+    Measured: ``uwp browser install --version 150.0.7871.186`` changed the URL
+    but kept the 148 sha, so the rollback the pin documents always died on
+    "sha256 does not match". Guessing a hash would be worse: it would install an
+    unverified 300 MB binary.
+    """
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+
+    code = main(["browser", "install", "--version", "150.0.7871.186"])
+
+    assert code == 2
+    assert "--sha256" in capsys.readouterr().out
+    assert not (tmp_path / "browser" / "chrome").exists()
+
+
+def test_browser_install_keeps_a_flat_archive_flat(capsys, monkeypatch, tmp_path):
+    """Only a single shared wrapper directory is stripped, nothing else.
+
+    An archive whose members sit at the root must not lose its first path
+    component; the strip is conditional because the release layout is upstream's
+    business, not a guarantee.
+    """
+    import hashlib
+    import io
+    import tarfile
+
+    archive = tmp_path / "flat.tar.xz"
+    with tarfile.open(archive, "w:xz") as tar:
+        for name, body in (("chrome", b"#!/bin/sh\n"), ("locales/ru.pak", b"pak")):
+            info = tarfile.TarInfo(name)
+            info.size = len(body)
+            tar.addfile(info, io.BytesIO(body))
+    dest = tmp_path / "browser"
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("UWP_BROWSER_SHA256", hashlib.sha256(archive.read_bytes()).hexdigest())
+
+    code = main(["browser", "install", "--url", archive.as_uri(), "--dest", str(dest)])
+
+    assert code == 0
+    assert (dest / "chrome").is_file()
+    assert (dest / "locales" / "ru.pak").is_file()
+
+
+def test_browser_install_refuses_an_archive_without_chrome(capsys, monkeypatch, tmp_path):
+    """A layout change upstream must fail loudly, not print a missing path."""
+    import hashlib
+    import io
+    import tarfile
+
+    archive = tmp_path / "nested.tar.xz"
+    with tarfile.open(archive, "w:xz") as tar:
+        wrapper = tarfile.TarInfo("wrapper")
+        wrapper.type = tarfile.DIRTYPE
+        tar.addfile(wrapper)
+        info = tarfile.TarInfo("wrapper/somewhere/chrome")
+        info.size = 1
+        tar.addfile(info, io.BytesIO(b"x"))
+    dest = tmp_path / "browser"
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("UWP_BROWSER_SHA256", hashlib.sha256(archive.read_bytes()).hexdigest())
+
+    code = main(["browser", "install", "--url", archive.as_uri(), "--dest", str(dest)])
+
+    assert code == 1
+    assert not (dest / "chrome").exists()
+    assert "chrome" in capsys.readouterr().out
+
+
+def test_browser_install_refuses_an_archive_with_the_wrong_sha(capsys, monkeypatch, tmp_path):
+    archive, _digest = _release_archive(tmp_path)
+    dest = tmp_path / "browser"
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("UWP_BROWSER_SHA256", "0" * 64)
+
+    code = main(
+        ["browser", "install", "--url", archive.as_uri(), "--dest", str(dest)]
+    )
+
+    assert code == 1
+    assert not (dest / "chrome").exists()

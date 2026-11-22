@@ -13,7 +13,7 @@ import urllib.request
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 
-from uwp.config import Settings, load_settings
+from uwp.config import Settings, browser_url_for, load_settings
 from uwp.env import hide_process_environment
 from uwp.i18n import DEFAULT_LANG, Lang, has_key, t
 
@@ -378,14 +378,6 @@ def cmd_doctor(
     return 1 if failed else 0
 
 
-def browser_url_for(version: str) -> str:
-    """The release URL of a fingerprint-chromium version."""
-    return (
-        "https://github.com/adryfish/fingerprint-chromium/releases/download/"
-        f"{version}/ungoogled-chromium-{version}-1-x86_64_linux.tar.xz"
-    )
-
-
 def cmd_browser_install(
     settings: Settings, version: str, url: str, dest: Path | None, sha256: str
 ) -> int:
@@ -406,6 +398,10 @@ def cmd_browser_install(
     finally:
         archive.unlink(missing_ok=True)
     executable = target / "chrome"
+    # A layout change upstream must fail here, not in the reader's next command.
+    if not executable.is_file():
+        _print(t(lang, "cli.browser.missing_chrome", path=executable))
+        return 1
     _print(t(lang, "cli.browser.installed", path=executable))
     _print(t(lang, "cli.browser.export_hint", path=executable))
     return 0
@@ -420,13 +416,37 @@ def _sha256(path: Path) -> str:
 
 
 def _safe_extract(archive: Path, target: Path, lang: Lang = DEFAULT_LANG) -> None:
-    """Extract a tar archive, refusing absolute paths and ``..`` escapes."""
+    """Extract a release tarball into ``target``, refusing unsafe members.
+
+    The upstream archive wraps everything in one directory
+    (``ungoogled-chromium-<version>-1-x86_64_linux/``), which is why the
+    Dockerfile passes ``--strip-components=1``. Measured with the real asset:
+    extracting as-is leaves ``<target>/chrome`` missing, so the installer used to
+    print a path that did not exist and the next command said "browser not
+    found". The wrapper is stripped here for the same layout the image has, and
+    only when every member shares it — an archive without one is extracted as is.
+    The measured 148 asset has no symlinks; a hard link names its target
+    explicitly, so that target is rewritten too rather than left pointing at a
+    directory that no longer exists.
+    """
     with tarfile.open(archive) as tar:
-        for member in tar.getmembers():
+        members = tar.getmembers()
+        for member in members:
             member_path = Path(member.name)
             if member_path.is_absolute() or ".." in member_path.parts:
                 raise ValueError(t(lang, "cli.browser.unsafe_path", path=member.name))
-        tar.extractall(target, filter="data")
+        roots = {Path(member.name).parts[0] for member in members if member.name}
+        nested = any(len(Path(member.name).parts) > 1 for member in members)
+        if len(roots) == 1 and nested:
+            (root,) = roots
+            for member in members:
+                # A hard link names its target, not just itself: leaving the
+                # target prefixed would point outside the stripped layout.
+                if member.islnk() and member.linkname.startswith(f"{root}/"):
+                    member.linkname = member.linkname[len(root) + 1 :]
+                member.name = str(Path(*Path(member.name).parts[1:]))
+            members = [m for m in members if m.name]
+        tar.extractall(target, members=members, filter="data")
 
 
 def cmd_parsers_list(settings: Settings) -> int:
@@ -960,6 +980,7 @@ def build_parser(lang: Lang = DEFAULT_LANG) -> argparse.ArgumentParser:
     install.add_argument(
         "--dest", type=Path, default=None, help=tr("cli.help.browser_dest")
     )
+    install.add_argument("--sha256", default=None, help=tr("cli.help.browser_sha"))
 
     parsers = sub.add_parser("parsers", help=tr("cli.help.parsers"))
     parsers_sub = parsers.add_subparsers(dest="parsers_command", required=True)
@@ -1055,11 +1076,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             settings, quiet=args.quiet, offline=args.offline, worker=args.worker
         )
     if args.command == "browser":
+        # The pinned sha belongs to the pinned archive. ``--version``/``--url``
+        # used to move one half only, so a documented rollback downloaded the
+        # other release and failed on the hash — or, with ``.env`` carrying a
+        # version, installed an unverified archive under a new name.
+        sha256 = args.sha256 or settings.browser_sha256
+        # ``--url`` can be paired with ``UWP_BROWSER_SHA256`` in the environment
+        # (a mirror is a deployment-wide choice), but ``--version`` names a
+        # release whose hash the environment cannot know.
+        if args.version and args.sha256 is None:
+            _print(t(_lang(settings), "cli.browser.sha_required"))
+            return 2
         return cmd_browser_install(
             settings,
             version=args.version or settings.browser_version,
-            # ``--version`` alone must change where the archive comes from, or
-            # the SHA check would reject a download of a different release.
             url=args.url
             or (
                 browser_url_for(args.version)
@@ -1067,7 +1097,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 else settings.browser_url
             ),
             dest=args.dest,
-            sha256=settings.browser_sha256,
+            sha256=sha256,
         )
     if args.command == "parsers":
         return cmd_parsers_list(settings)
