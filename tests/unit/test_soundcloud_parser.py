@@ -10,8 +10,13 @@ from pathlib import Path
 
 import pytest
 
+from uwp.i18n import Lang
+from uwp.parsers.registry import ParserRegistry
 from uwp.parsers.soundcloud_trending.parser import (
+    DISCOVER_URL,
+    SIGNIN_URL,
     SoundcloudSettings,
+    SoundcloudTrendingParser,
     build_playlist_url,
     format_duration,
     parse_hydration,
@@ -175,3 +180,89 @@ def test_build_playlist_url(genre, url):
 
 def test_the_default_genre_is_all_genres():
     assert SoundcloudSettings().genre == "all-genres"
+
+
+def test_parser_metadata_and_columns():
+    parser = SoundcloudTrendingParser()
+
+    assert parser.key == "soundcloud_trending"
+    assert parser.url == DISCOVER_URL == "https://soundcloud.com/discover"
+    # The VNC login must open the form; ``/signin`` is 200, ``/sign-in`` is 404.
+    assert parser.auth_url == SIGNIN_URL == "https://soundcloud.com/signin"
+    assert parser.login_url == "https://soundcloud.com/signin"
+    assert parser.requires_login is False
+    assert parser.settings_model is SoundcloudSettings
+    assert [column.key for column in parser.columns] == [
+        "title",
+        "artist",
+        "url",
+        "artist_url",
+        "genre",
+        "duration",
+        "published",
+        "playback_count",
+        "likes_count",
+        "reposts_count",
+        "comment_count",
+    ]
+
+
+def test_the_counters_are_volatile_and_the_rest_is_not():
+    """A live track's play count moves between runs; ``changes`` must ignore it.
+
+    Measured: the page's own HTML rounds the number to ``1.25M``, while the API
+    returns ``1258443``; either way it drifts, so it is not news.
+    """
+    by_key = {column.key: column for column in SoundcloudTrendingParser.columns}
+
+    for name in ("playback_count", "likes_count", "reposts_count", "comment_count"):
+        assert by_key[name].volatile is True, name
+    for name in (
+        "title",
+        "artist",
+        "url",
+        "artist_url",
+        "genre",
+        "duration",
+        "published",
+    ):
+        assert by_key[name].volatile is False, name
+
+
+def test_every_column_has_a_catalogue_key():
+    """A column added without a key would show Russian in an English report."""
+    assert [column.key for column in SoundcloudTrendingParser.columns] == [
+        column.title_key.removeprefix("parser.soundcloud_trending.column.")
+        for column in SoundcloudTrendingParser.columns
+    ]
+
+
+def test_every_column_title_resolves_in_both_languages():
+    """``title_for`` calls ``t``, which raises on an unknown key."""
+    for lang in (Lang.ru, Lang.en):
+        for column in SoundcloudTrendingParser.columns:
+            assert column.title_for(lang), (column.key, lang)
+
+
+def test_the_parser_name_and_description_resolve_in_both_languages():
+    parser = SoundcloudTrendingParser()
+
+    for lang in (Lang.ru, Lang.en):
+        assert parser.title_for(lang)
+        assert parser.description_for(lang)
+    assert parser.title_for(Lang.ru) != parser.title_for(Lang.en)
+
+
+def test_every_settings_field_has_a_short_label_key():
+    for name, field in SoundcloudSettings.model_fields.items():
+        extra = field.json_schema_extra or {}
+        assert extra.get("title_key") == f"parser.soundcloud_trending.field.{name}"
+        assert field.description, f"{name} has no description"
+
+
+def test_parser_is_discovered_with_the_example_still_present():
+    registry = ParserRegistry.discover()
+
+    assert registry.broken() == {}
+    assert registry.get("steam_deals") is not None
+    assert registry.get("soundcloud_trending") is not None

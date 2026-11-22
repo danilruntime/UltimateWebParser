@@ -10,9 +10,11 @@ sees neither fails ``blocked`` instead of writing approximate numbers (see
 import json
 import re
 from dataclasses import dataclass
-from typing import Literal
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, Field
+
+from uwp.parsers.base import BaseParser, Column, ParseContext, ParseResult
 
 DISCOVER_URL = "https://soundcloud.com/discover"
 SIGNIN_URL = "https://soundcloud.com/signin"
@@ -149,3 +151,84 @@ def track_rows(ids: list[int], objects: dict[int, dict]) -> list[dict]:
             }
         )
     return rows
+
+
+class SoundcloudTrendingParser(BaseParser):
+    """Collects one trending-by-genre playlist: title, artist, exact counters."""
+
+    key = "soundcloud_trending"
+    title = "SoundCloud — тренды"
+    description = (
+        "Треки из раздела «в тренде» SoundCloud: исполнитель, жанр, "
+        "длительность, счётчики и дата публикации."
+    )
+    title_key = "parser.soundcloud_trending.title"
+    description_key = "parser.soundcloud_trending.description"
+    # ``url`` is the section the report names; the genre lives in the settings,
+    # the same way Steam's ``url`` is the search page and not one query string.
+    url = DISCOVER_URL
+    auth_url = SIGNIN_URL
+    requires_login = False
+    settings_model = SoundcloudSettings
+    columns: ClassVar[list[Column]] = [
+        Column(
+            "title", "Название", 45, title_key="parser.soundcloud_trending.column.title"
+        ),
+        Column(
+            "artist",
+            "Исполнитель",
+            26,
+            title_key="parser.soundcloud_trending.column.artist",
+        ),
+        Column("url", "Ссылка", 55, title_key="parser.soundcloud_trending.column.url"),
+        Column(
+            "artist_url",
+            "Исполнитель: ссылка",
+            45,
+            title_key="parser.soundcloud_trending.column.artist_url",
+        ),
+        Column("genre", "Жанр", 18, title_key="parser.soundcloud_trending.column.genre"),
+        Column(
+            "duration",
+            "Длительность",
+            12,
+            title_key="parser.soundcloud_trending.column.duration",
+        ),
+        Column(
+            "published",
+            "Дата публикации",
+            14,
+            title_key="parser.soundcloud_trending.column.published",
+        ),
+        Column(
+            "playback_count",
+            "Прослушивания",
+            14,
+            volatile=True,
+            title_key="parser.soundcloud_trending.column.playback_count",
+        ),
+        Column(
+            "likes_count",
+            "Лайки",
+            10,
+            volatile=True,
+            title_key="parser.soundcloud_trending.column.likes_count",
+        ),
+        Column(
+            "reposts_count",
+            "Репосты",
+            10,
+            volatile=True,
+            title_key="parser.soundcloud_trending.column.reposts_count",
+        ),
+        Column(
+            "comment_count",
+            "Комментарии",
+            12,
+            volatile=True,
+            title_key="parser.soundcloud_trending.column.comment_count",
+        ),
+    ]
+
+    async def run(self, ctx: ParseContext) -> ParseResult:  # pragma: no cover
+        raise NotImplementedError

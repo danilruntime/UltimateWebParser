@@ -37,6 +37,23 @@ CATALOG: dict[Lang, dict[str, str]] = {
         "parser.steam_deals.field.max_price": "Макс. цена",
         "parser.steam_deals.field.min_discount_percent": "Мин. скидка, %",
         "parser.steam_deals.field.sort": "Сортировка",
+        "parser.soundcloud_trending.title": "SoundCloud — тренды",
+        "parser.soundcloud_trending.description": (
+            "Треки из раздела «в тренде» SoundCloud: исполнитель, жанр, "
+            "длительность, счётчики и дата публикации."
+        ),
+        "parser.soundcloud_trending.column.title": "Название",
+        "parser.soundcloud_trending.column.artist": "Исполнитель",
+        "parser.soundcloud_trending.column.url": "Ссылка",
+        "parser.soundcloud_trending.column.artist_url": "Исполнитель: ссылка",
+        "parser.soundcloud_trending.column.genre": "Жанр",
+        "parser.soundcloud_trending.column.duration": "Длительность",
+        "parser.soundcloud_trending.column.published": "Дата публикации",
+        "parser.soundcloud_trending.column.playback_count": "Прослушивания",
+        "parser.soundcloud_trending.column.likes_count": "Лайки",
+        "parser.soundcloud_trending.column.reposts_count": "Репосты",
+        "parser.soundcloud_trending.column.comment_count": "Комментарии",
+        "parser.soundcloud_trending.field.genre": "Жанр трендов",
     },
     Lang.en: {
         "parser.steam_deals.title": "Steam — deals",
@@ -64,5 +81,22 @@ CATALOG: dict[Lang, dict[str, str]] = {
         "parser.steam_deals.field.max_price": "Max price",
         "parser.steam_deals.field.min_discount_percent": "Min discount, %",
         "parser.steam_deals.field.sort": "Sort",
+        "parser.soundcloud_trending.title": "SoundCloud — trending",
+        "parser.soundcloud_trending.description": (
+            "Trending SoundCloud tracks: artist, genre, duration, counters "
+            "and the publication date."
+        ),
+        "parser.soundcloud_trending.column.title": "Title",
+        "parser.soundcloud_trending.column.artist": "Artist",
+        "parser.soundcloud_trending.column.url": "Link",
+        "parser.soundcloud_trending.column.artist_url": "Artist: link",
+        "parser.soundcloud_trending.column.genre": "Genre",
+        "parser.soundcloud_trending.column.duration": "Length",
+        "parser.soundcloud_trending.column.published": "Published",
+        "parser.soundcloud_trending.column.playback_count": "Plays",
+        "parser.soundcloud_trending.column.likes_count": "Likes",
+        "parser.soundcloud_trending.column.reposts_count": "Reposts",
+        "parser.soundcloud_trending.column.comment_count": "Comments",
+        "parser.soundcloud_trending.field.genre": "Trending genre",
     },
 }
