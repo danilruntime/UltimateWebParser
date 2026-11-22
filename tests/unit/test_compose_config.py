@@ -165,18 +165,18 @@ def test_entrypoint_chowns_every_directory_it_creates_as_root():
     assert created <= checked, f"created but never chowned: {created - checked}"
 
 
-def test_entrypoint_creates_the_downloads_directory():
-    """The VNC browser saves files here; a missing folder is a cancelled download.
+def test_entrypoint_does_not_create_a_downloads_directory():
+    """The login browser writes nothing, so there is no folder to prepare.
 
-    ``seed_download_preferences`` points Chromium at ``$DATA_DIR/downloads``.
-    If the entrypoint does not create it before the browser starts, the
-    preference names a path that does not exist and Chromium falls back to the
-    unavailable "Save as" dialog.
+    Measured: a page-initiated click saved a file with no admin gesture, and
+    ``download.restrictions`` did not stop it. The directory and the
+    preference that filled it were removed together; leaving the folder would
+    suggest downloads are supported.
     """
     text = (ROOT / "docker" / "entrypoint.sh").read_text(encoding="utf-8")
     created = _entrypoint_paths(text, "prepare_data_dir", "for path in")
 
-    assert "/downloads" in created
+    assert "/downloads" not in created
 
 
 def _entrypoint_paths(text: str, marker: str, loop: str) -> set[str]:

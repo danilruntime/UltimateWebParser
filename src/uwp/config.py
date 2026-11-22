@@ -206,16 +206,6 @@ class Settings(BaseSettings):
     def artifacts_dir(self) -> Path:
         return self.data_dir / "artifacts"
 
-    @property
-    def downloads_dir(self) -> Path:
-        """Where the VNC login browser saves files an admin asked for.
-
-        Chromium's own default is the XDG "Downloads" folder, which does not
-        exist in the container and cannot be chosen through the "Save as"
-        dialog while kiosk mode hides it.
-        """
-        return self.data_dir / "downloads"
-
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     """Build settings from an explicit ``UWP_*`` mapping (tests) or the environment/``.env``.
@@ -241,7 +231,6 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         settings.profiles_dir,
         settings.exports_dir,
         settings.artifacts_dir,
-        settings.downloads_dir,
     ):
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         # ``mkdir(mode=...)`` only applies to the directory it creates and is

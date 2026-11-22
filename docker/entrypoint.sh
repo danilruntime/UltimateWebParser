@@ -19,7 +19,7 @@ UWP_GID="${UWP_GID:-1000}"
 
 prepare_data_dir() {
     for path in "$DATA_DIR" "$DATA_DIR/profiles" "$DATA_DIR/exports" \
-                "$DATA_DIR/artifacts" "$DATA_DIR/downloads" "$DATA_DIR/.cache" \
+                "$DATA_DIR/artifacts" "$DATA_DIR/.cache" \
                 "$DATA_DIR/.config"; do
         mkdir -p "$path"
     done
@@ -36,7 +36,7 @@ if [ "$(id -u)" = "0" ]; then
     # ``TargetClosedError`` from Playwright with no clue in the log.
     needs_chown=0
     for path in "$DATA_DIR" "$DATA_DIR/profiles" "$DATA_DIR/exports" \
-                "$DATA_DIR/artifacts" "$DATA_DIR/downloads" "$DATA_DIR/.cache" \
+                "$DATA_DIR/artifacts" "$DATA_DIR/.cache" \
                 "$DATA_DIR/.config"; do
         if [ "$(stat -c '%u' "$path")" != "$UWP_UID" ]; then
             needs_chown=1

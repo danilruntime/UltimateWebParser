@@ -26,19 +26,16 @@ def test_directories_created(tmp_path):
     assert s.artifacts_dir == tmp_path / "d" / "artifacts"
 
 
-def test_downloads_directory_is_created_below_data(tmp_path):
-    """The VNC browser saves files here; without the folder Chromium cancels.
+def test_no_downloads_directory_is_created_below_data(tmp_path):
+    """The login browser writes nothing, so no folder exists to be filled.
 
-    Measured: a fresh profile has no ``download.default_directory``, and the
-    "Save as" dialog cannot open in kiosk mode, so every download ends with
-    ``interrupt_reason=40`` and no file. The seeder points Chromium at this
-    directory, so it must exist before the browser starts.
+    Measured: a page's own ``a.click()`` saved a file with no admin gesture,
+    and ``download.restrictions`` did not stop it. The folder and the
+    preference that filled it were removed together.
     """
-    s = load_settings({"UWP_DATA_DIR": str(tmp_path / "d")})
+    load_settings({"UWP_DATA_DIR": str(tmp_path / "d")})
 
-    assert s.downloads_dir == tmp_path / "d" / "downloads"
-    assert s.downloads_dir.is_dir()
-    assert s.downloads_dir.stat().st_mode & 0o077 == 0
+    assert not (tmp_path / "d" / "downloads").exists()
 
 
 def test_data_directory_is_private(tmp_path):

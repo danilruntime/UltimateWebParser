@@ -193,16 +193,20 @@ opens a full window on `Ctrl+N` (measured). Chromium policy files are not used:
 180 s and stops the parsers, and a policy is machine-wide rather than per
 profile.
 
-A file you download in that window lands in `data/downloads` on the host. The
-folder is written into the profile's `Default/Preferences`
-(`download.default_directory` and `prompt_for_download: false`) before Chromium
-starts: measured, a fresh profile has no `download` key, so Chromium asks for a
-location, kiosk mode never shows the "Save as" dialog, and the click is recorded
-as `interrupt_reason=40` (`USER_CANCELED`) with no file. Both keys are required —
-with only the directory the dialog still appears, with only the prompt flag
-Chromium picks an XDG folder that does not exist in the image. Parse runs are
-not affected by this: nothing in a parser clicks a download link, and Playwright
-refuses downloads on its own (`accept_downloads` is off by default).
+The window does not save files. A download is refused before it reaches the
+disk: the profile's `Default/Preferences` is written with
+`download.prompt_for_download: true` and **no** `download.default_directory`
+before Chromium starts, so Chromium has nowhere to put the file and the
+"Save as" dialog does not exist in kiosk mode. Measured in the container: a
+page's own `a.click()` saved a 50 KB `SteamSetup.exe` with no gesture from the
+admin, and `download.restrictions` did not stop it (3, 4 and 7 all wrote the
+file); the prompt-without-directory pair leaves the click unanswered and the
+page navigable, and Chromium records it as `interrupt_reason=40`
+(`USER_CANCELED`). `default_directory` is removed rather than overwritten,
+because a profile from an earlier build already names `data/downloads` and any
+directory at all brings the file back. Parse runs are not affected: nothing in
+a parser clicks a download link, and Playwright refuses downloads on its own
+(`accept_downloads` is off by default).
 
 This is a UI boundary, not a sandbox. The visitor still types into the page; the
 worker's environment is hidden from the browser on another layer (`browser_env`

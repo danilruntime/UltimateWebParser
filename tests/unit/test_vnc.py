@@ -165,13 +165,15 @@ async def test_default_factory_clears_a_stale_lock_in_the_profile(tmp_path, monk
     await handle.stop()
 
 
-async def test_default_factory_lets_the_login_browser_save_downloads(
+async def test_default_factory_forbids_downloads_in_the_login_browser(
     tmp_path, monkeypatch
 ):
-    """Measured: without a download directory Chromium cancels every download.
+    """The login window exists to sign in; a page must not write to the host.
 
-    The kiosk window has no "Save as" dialog, so a click on a download link
-    used to end as ``interrupt_reason=40`` with no file on disk.
+    Measured: a page-initiated click saved a 50 KB ``SteamSetup.exe`` into the
+    download directory with no gesture from the admin at all, and
+    ``download.restrictions`` did not stop it (3, 4 and 7 all wrote the file).
+    Only a prompt with no default directory leaves the click unanswered.
     """
     import json
 
@@ -179,7 +181,11 @@ async def test_default_factory_lets_the_login_browser_save_downloads(
 
     settings, profile = await _factory_env(tmp_path)
     profile_dir = Path(profile.user_data_dir)
-    profile_dir.mkdir(parents=True, exist_ok=True)
+    (profile_dir / "Default").mkdir(parents=True, exist_ok=True)
+    # A real Steam profile from before the change already holds this.
+    (profile_dir / "Default" / "Preferences").write_text(
+        json.dumps({"download": {"default_directory": "/data/downloads"}}), "utf-8"
+    )
 
     async def fake_spawn(command, **kw):
         return FakeSpawned(command)
@@ -196,9 +202,8 @@ async def test_default_factory_lets_the_login_browser_save_downloads(
     )
 
     prefs = json.loads((profile_dir / "Default" / "Preferences").read_text("utf-8"))
-    assert prefs["download"]["default_directory"] == str(settings.downloads_dir)
-    assert prefs["download"]["prompt_for_download"] is False
-    assert settings.downloads_dir.is_dir()
+    assert prefs["download"]["prompt_for_download"] is True
+    assert "default_directory" not in prefs["download"]
     await handle.stop()
 
 

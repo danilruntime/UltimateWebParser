@@ -153,21 +153,21 @@ def clear_stale_singleton_lock(user_data_dir: Path) -> bool:
     return True
 
 
-def seed_download_preferences(user_data_dir: Path, downloads_dir: Path) -> None:
-    """Make Chromium save a download instead of silently cancelling it.
+def forbid_download_preferences(user_data_dir: Path) -> None:
+    """Make the login browser refuse a download instead of writing it.
 
-    Measured in the container: a download clicked in the VNC browser left a
-    history entry with ``state=2``, ``interrupt_reason=40``
-    (``DOWNLOAD_INTERRUPT_REASON_USER_CANCELED``), ``received_bytes=0`` and an
-    empty ``target_path``. A fresh profile has no ``download`` key at all, so
-    Chromium falls back to the "Save as" dialog, and kiosk mode hides every
-    dialog — the click is dropped.
+    The kiosk window is for signing in. Measured in the container, a page's own
+    ``a.click()`` saved a 50 KB ``SteamSetup.exe`` with no gesture from the
+    admin, so a site (or a proxy rewriting it) could fill the host disk that
+    holds the database. ``download.restrictions`` is not the lever: 3, 4 and 7
+    all wrote the file. ``prompt_for_download: true`` with **no**
+    ``default_directory`` is: Chromium has nowhere to put the file and no
+    dialog exists to ask, so the click ends as ``interrupt_reason=40``
+    (``USER_CANCELED``) and a navigable page remains.
 
-    Both keys are load-bearing and were measured separately: with only
-    ``default_directory`` the dialog still appears (and cannot be answered),
-    with only ``prompt_for_download: false`` Chromium picks an XDG folder that
-    does not exist in the image. ``--disable-prompt-on-download`` is not a
-    substitute: it does not create the directory preference.
+    ``default_directory`` is removed, not overwritten: a profile that saved
+    downloads before this change already names ``/data/downloads``, and any
+    directory at all brings the file back.
 
     The existing file is merged, not replaced: it carries the profile's
     session and fingerprint settings, and a whole-file rewrite would sign the
@@ -186,10 +186,9 @@ def seed_download_preferences(user_data_dir: Path, downloads_dir: Path) -> None:
     download = prefs.get("download")
     if not isinstance(download, dict):
         download = {}
-    download["default_directory"] = str(downloads_dir)
-    download["prompt_for_download"] = False
+    download.pop("default_directory", None)
+    download["prompt_for_download"] = True
     prefs["download"] = download
-    downloads_dir.mkdir(parents=True, exist_ok=True)
     prefs_path.parent.mkdir(parents=True, exist_ok=True)
     prefs_path.write_text(json.dumps(prefs), "utf-8")
 
