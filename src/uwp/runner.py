@@ -195,7 +195,8 @@ class Runner:
             outcome.error_kind = ErrorKind.config_error
             outcome.error = str(exc)
             # ``browser`` says "fingerprint-chromium not found; run `uwp browser
-            # install`" — correct, but English and written for a terminal.
+            # install`, then set UWP_BROWSER_PATH …" — correct, but English and
+            # written for a terminal.
             outcome.error_code = "error.browser.missing"
             outcome.status = RunStatus.failed
             return outcome

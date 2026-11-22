@@ -38,6 +38,22 @@ def test_non_executable_browser_path_falls_back_to_path(tmp_path, monkeypatch):
     assert resolve_browser(settings) == found
 
 
+def test_the_missing_browser_error_says_how_to_register_the_binary(tmp_path, monkeypatch):
+    """`uwp browser install` writes data/browser/chrome and only prints the path.
+
+    Measured: the message told the reader to run that command and nothing else,
+    so following it led back to the same error — installing does not put the
+    binary on PATH.
+    """
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    with pytest.raises(BrowserUnavailable) as caught:
+        resolve_browser(load_settings({"UWP_DATA_DIR": str(tmp_path)}))
+
+    message = str(caught.value)
+    assert "uwp browser install" in message
+    assert "UWP_BROWSER_PATH" in message
+
+
 def test_browser_found_on_path(tmp_path, monkeypatch):
     found = tmp_path / "fingerprint-chromium"
     found.write_text("#!/bin/sh\n")

@@ -220,7 +220,10 @@ def resolve_browser(settings: Settings) -> Path:
     found = shutil.which("fingerprint-chromium")
     if found:
         return Path(found)
-    raise BrowserUnavailable("fingerprint-chromium not found; run `uwp browser install`")
+    raise BrowserUnavailable(
+        "fingerprint-chromium not found; run `uwp browser install`, then set "
+        "UWP_BROWSER_PATH to the path it prints"
+    )
 
 
 class BrowserSession:
