@@ -88,30 +88,13 @@ jobs:
 
       # A documentation change is not covered by pytest when it is a broken
       # relative link, so check that every tracked markdown file's local links
-      # resolve. Cheaper than a link checker and needs no network.
+      # resolve. The scan lives in a script because a quoted README template
+      # inside a ``` fence is not a link — reading it as one reddened `main`
+      # from v0.1b3 (`docs/superpowers/plans/2026-11-22-…`). Fenced and inline
+      # code are stripped before the check, and `tests/unit/test_markdown_links.py`
+      # pins both directions so a future edit cannot turn it into a no-op.
       - name: Markdown links resolve
-        run: |
-          python - <<'PY'
-          import re, sys
-          from pathlib import Path
-
-          root = Path.cwd()
-          broken = []
-          for path in root.rglob("*.md"):
-              if ".venv" in path.parts or ".git" in path.parts or "node_modules" in path.parts:
-                  continue
-              text = path.read_text(encoding="utf-8")
-              for target in re.findall(r"\]\(([^)#:]+?)\)", text):
-                  if target.startswith(("http", "mailto")):
-                      continue
-                  if not (path.parent / target).exists():
-                      broken.append(f"{path.relative_to(root)} -> {target}")
-          if broken:
-              print("Broken local links:")
-              print("\n".join(broken))
-              sys.exit(1)
-          print("OK")
-          PY
+        run: python scripts/check_markdown_links.py
 
   # Split mode is the documented deployment; a compose edit that breaks the port
   # band or the seccomp mount is caught by tests, but only a real `config`

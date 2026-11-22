@@ -55,7 +55,10 @@ CATALOG: dict[Lang, dict[str, str]] = {
             "/runs — последние прогоны\n"
             "/help — эта справка\n"
             "/language — язык интерфейса\n"
-            "/id — ваш Telegram ID"
+            "/id — ваш Telegram ID\n\n"
+            "Правила использования: "
+            "https://github.com/danilruntime/UltimateWebParser/blob/main/"
+            "DISCLAIMER.ru.md"
         ),
         "bot.menu.unknown_command": (
             "Не понял команду. /help — список команд."
@@ -285,7 +288,10 @@ CATALOG: dict[Lang, dict[str, str]] = {
             "/runs — recent runs\n"
             "/help — this help\n"
             "/language — interface language\n"
-            "/id — your Telegram ID"
+            "/id — your Telegram ID\n\n"
+            "Terms of use: "
+            "https://github.com/danilruntime/UltimateWebParser/blob/main/"
+            "DISCLAIMER.md"
         ),
         "bot.menu.unknown_command": (
             "I did not understand that. /help lists the commands."

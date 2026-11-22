@@ -27,6 +27,8 @@ PAIRS = [
     ),
     ("SECURITY.md", "SECURITY.ru.md"),
     ("THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.ru.md"),
+    ("docs/install.md", "docs/install.ru.md"),
+    ("DISCLAIMER.md", "DISCLAIMER.ru.md"),
 ]
 
 

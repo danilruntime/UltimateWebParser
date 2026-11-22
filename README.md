@@ -25,6 +25,9 @@ The database is created and a disabled example site is seeded — «Steam — de
 on an `en` deployment, «Steam — скидки» on a `ru` one; press «🟢 Enable» on its
 card and the first run is queued at once, and the report arrives in the chat.
 
+Step-by-step instructions, including Windows with Docker Desktop and WSL 2, are
+in [`docs/install.md`](docs/install.md).
+
 [![tests](https://github.com/danilruntime/UltimateWebParser/actions/workflows/tests.yml/badge.svg)](https://github.com/danilruntime/UltimateWebParser/actions/workflows/tests.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![python: 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
@@ -322,6 +325,16 @@ ruff check src tests
 ```
 
 `ruff format` is not used in this project — only `ruff check`.
+
+## Lawful use
+
+This project automates a real browser against sites you choose. Whether that is
+allowed is decided by the site's terms and by the law where you are — not by the
+tool. It ships no CAPTCHA solver and no anti-bot circumvention, and it is not a
+way around a restriction that applies to you. Collected personal data is your
+obligation to handle lawfully, and every consequence for an account, a proxy or
+a dataset is the operator's. The full terms are in
+[`DISCLAIMER.md`](DISCLAIMER.md).
 
 ## License
 

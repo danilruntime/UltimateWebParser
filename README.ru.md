@@ -25,6 +25,9 @@ docker compose -f compose.split.yaml -f compose.split.hostnet.yaml up -d --build
 скидки» на `ru`-развёртывании и «Steam — deals» на `en`; нажмите на его карточке
 «🟢 Включить» — первый прогон встанет в очередь сразу, и отчёт придёт в чат.
 
+Пошаговая установка, в том числе в Windows через Docker Desktop и WSL 2, — в
+[`docs/install.ru.md`](docs/install.ru.md).
+
 [![tests](https://github.com/danilruntime/UltimateWebParser/actions/workflows/tests.yml/badge.svg)](https://github.com/danilruntime/UltimateWebParser/actions/workflows/tests.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![python: 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
@@ -322,6 +325,16 @@ ruff check src tests
 ```
 
 `ruff format` в проекте не используется — только `ruff check`.
+
+## Законное использование
+
+Проект автоматизирует настоящий браузер на сайтах, которые выбираете вы.
+Законно ли это — решают условия сайта и закон вашей страны, а не инструмент.
+Внутри нет решателя капчи и обхода антибот-защиты, и это не способ обойти
+ограничение, которое к вам относится. Собранные персональные данные — ваша
+обязанность обрабатывать законно, а последствия для аккаунта, прокси или
+набора данных несёт оператор. Полные условия —
+в [`DISCLAIMER.ru.md`](DISCLAIMER.ru.md).
 
 ## Лицензия
 

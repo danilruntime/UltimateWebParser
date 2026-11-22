@@ -15,6 +15,12 @@
 
 ## <a id="operating-guide"></a>Руководство по эксплуатации
 
+### <a id="installation"></a>Установка
+
+Пошаговая установка для Linux и для Windows через Docker Desktop и WSL 2 — в
+[`install.ru.md`](install.ru.md). Эта страница предполагает, что стек уже
+запущен, и объясняет, как им пользоваться.
+
 ### <a id="permissions-on-data"></a>Права на `./data`
 
 Docker создаёт каталог как `root`, поэтому контейнер стартует от root, один раз
@@ -501,5 +507,6 @@ README на новый файл заметок, пишет заметки из �
 |---|---|
 | [`../AGENTS.md`](../AGENTS.md) | инструкции по изменению кода; лежат в корне, чтобы агент их нашёл |
 | [`../SECURITY.ru.md`](../SECURITY.ru.md) | модель угроз, рядом с кодом, который она описывает |
+| [`../DISCLAIMER.ru.md`](../DISCLAIMER.ru.md) | законное использование, в корне, где читатель видит его до первого прогона |
 | [`../THIRD_PARTY_NOTICES.ru.md`](../THIRD_PARTY_NOTICES.ru.md) | лицензионные обязательства, в корне, где их ждёт получатель |
 | [`../docker/README-seccomp.ru.md`](../docker/README-seccomp.ru.md) | как пересобрать seccomp-профиль |

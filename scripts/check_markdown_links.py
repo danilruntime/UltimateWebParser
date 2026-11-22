@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""Fail on a broken local markdown link, ignoring fenced and inline code.
+
+The CI check this replaces scanned every ``](...)`` in every tracked ``.md`` and
+was red on ``main`` from v0.1b3 on: a design plan quotes a README template inside
+a ``` fence, and the regex read the template's ``](README.ru.md)`` as a link
+relative to ``docs/superpowers/plans/``. A quoted example is not a link, so the
+scan has to skip code before it decides. Markdown links are what a reader clicks;
+that is what this checks.
+
+Run from the repository root:
+
+    python scripts/check_markdown_links.py            # every tracked .md
+    python scripts/check_markdown_links.py FILE ...   # just these
+"""
+
+from __future__ import annotations
+
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+_LINK = re.compile(r"\]\(([^)#:]+?)\)")
+_FENCE = re.compile(r"^\s*(````+|````*|~~~)")
+_INLINE_CODE = re.compile(r"`[^`\n]*`")
+
+# Directories that are generated, vendored or scratch; none of them is published.
+_SKIP = {".git", ".venv", "node_modules", ".superpowers", ".worktrees", "__pycache__"}
+
+
+def strip_code(text: str) -> str:
+    """Remove fenced blocks and inline code spans, keeping line count stable."""
+    out: list[str] = []
+    fence: str | None = None
+    for line in text.splitlines(keepends=True):
+        match = _FENCE.match(line)
+        if fence is None:
+            if match:
+                fence = match.group(1)[0] * 3
+                out.append("\n" if line.endswith("\n") else "")
+                continue
+            out.append(_INLINE_CODE.sub("", line))
+        else:
+            if match and match.group(1).startswith(fence):
+                fence = None
+            out.append("\n" if line.endswith("\n") else "")
+    return "".join(out)
+
+
+def broken_links(path: Path, root: Path) -> list[str]:
+    """``path -> target`` for every local link that does not resolve."""
+    broken = []
+    for target in _LINK.findall(strip_code(path.read_text(encoding="utf-8"))):
+        if target.startswith(("http", "mailto")):
+            continue
+        if not (path.parent / target).exists():
+            broken.append(f"{path.relative_to(root)} -> {target}")
+    return broken
+
+
+def tracked_markdown(root: Path) -> list[Path]:
+    names = subprocess.run(
+        ["git", "ls-files", "*.md"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    return [root / name for name in names]
+
+
+def main(argv: list[str]) -> int:
+    root = Path.cwd()
+    paths = [Path(arg).resolve() for arg in argv] or tracked_markdown(root)
+    broken = [
+        line
+        for path in paths
+        if not (_SKIP & set(path.relative_to(root).parts))
+        for line in broken_links(path, root)
+    ]
+    if broken:
+        print("Broken local links:")
+        print("\n".join(broken))
+        return 1
+    print("OK")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

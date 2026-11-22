@@ -15,6 +15,12 @@ read why it exists.
 
 ## Operating guide
 
+### Installation
+
+Step-by-step instructions for Linux and for Windows with Docker Desktop and
+WSL 2 are in [`install.md`](install.md). This page assumes the stack is already
+running and explains how to operate it.
+
 ### Permissions on `./data`
 
 Docker creates the directory as `root`, so the container starts as root, sets
@@ -508,5 +514,6 @@ test-first; the measured symptom is quoted in the commit that closed it.
 |---|---|
 | [`../AGENTS.md`](../AGENTS.md) | instructions for changing the code; kept at the root so an agent finds it |
 | [`../SECURITY.md`](../SECURITY.md) | the threat model, next to the code it describes |
+| [`../DISCLAIMER.md`](../DISCLAIMER.md) | lawful use, at the root where a reader sees it before the first run |
 | [`../THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) | licence obligations, at the root where a recipient expects them |
 | [`../docker/README-seccomp.md`](../docker/README-seccomp.md) | how to rebuild the seccomp profile |
