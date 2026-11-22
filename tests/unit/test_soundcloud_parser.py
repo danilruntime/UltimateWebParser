@@ -52,6 +52,27 @@ def test_parse_hydration_reads_the_title_the_id_order_and_the_client():
     assert playlist.client_id is not None and playlist.client_id.startswith("QhVE")
 
 
+def test_parse_hydration_keeps_only_track_entries():
+    """A playlist entry carries ``kind``; anything else has no ``/tracks`` body.
+
+    Measured: all five live genre pages are 100 % ``kind: "track"``, but a
+    ``playlist`` or ``user`` entry in the same list would be requested from
+    ``/tracks?ids=``, never appear in the answer, and turn every run into a
+    partial one.
+    """
+    html = _html().replace(
+        '{"id": 2437199922, "kind": "track"',
+        '{"id": 2437199922, "kind": "playlist"',
+        1,
+    )
+
+    playlist = parse_hydration(html)
+
+    assert playlist is not None
+    assert 2437199922 not in playlist.ids
+    assert len(playlist.ids) == 49
+
+
 def test_parse_hydration_is_none_when_the_block_is_missing_or_broken():
     """A captcha page has no block; a truncated script must not crash the run."""
     assert parse_hydration("<html><body>captcha</body></html>") is None

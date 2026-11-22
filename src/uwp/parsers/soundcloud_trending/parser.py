@@ -110,7 +110,12 @@ def parse_hydration(html: str) -> Playlist | None:
     ids = [
         track["id"]
         for track in tracks
-        if isinstance(track, dict) and isinstance(track.get("id"), int)
+        if isinstance(track, dict)
+        and isinstance(track.get("id"), int)
+        # Every entry carries ``kind`` and the live playlist is all ``track``.
+        # A ``playlist``/``user`` entry would be requested from ``/tracks?ids=``
+        # though, never arrive, and make every run partial.
+        and track.get("kind", "track") == "track"
     ]
 
     client = next(
