@@ -51,6 +51,14 @@ class _RecordingWriter:
         "localhost:8080",
         "metadata.google.internal:80",
         "docker.internal:2375",
+        # glibc's inet_aton accepts all four; Chromium resolves them later, so
+        # the guard has to canonicalise before it decides.
+        "127.1:80",
+        "0x7f000001:80",
+        "2130706433:80",
+        "0177.0.0.1:80",
+        "0:80",
+        "[::ffff:127.0.0.1]:80",
     ],
 )
 def test_internal_connect_targets_are_refused(target):

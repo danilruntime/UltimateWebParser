@@ -10,6 +10,7 @@ import asyncio
 import base64
 import ipaddress
 import logging
+import socket
 import ssl
 from urllib.parse import urlsplit
 
@@ -58,24 +59,41 @@ _INTERNAL_NAMES = frozenset({"localhost", "metadata", "metadata.google.internal"
 
 def _is_internal_host(host: str) -> bool:
     host = host.lower().rstrip(".")
+    # Chromium sends IPv6 literals bracketed to ``CONNECT``; the guard should
+    # not depend on which caller remembered to strip them.
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1]
     if host in _INTERNAL_NAMES:
         return True
     if any(host.endswith(suffix) for suffix in _INTERNAL_SUFFIXES):
         return True
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
+    address = _parse_ip(host)
+    if address is None:
         return False
-    # ``is_private`` covers RFC 1918, loopback and IPv6 ULA; ``is_link_local``
-    # covers 169.254.169.254 (cloud metadata); the rest are special-purpose.
-    return (
-        address.is_private
-        or address.is_loopback
-        or address.is_link_local
-        or address.is_unspecified
-        or address.is_reserved
-        or address.is_multicast
-    )
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        address = address.ipv4_mapped
+    # ``is_global`` rather than a list of flags: a target that is not routable
+    # on the public internet has no business going out through a paid proxy.
+    return not address.is_global
+
+
+def _parse_ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """Parse canonical and glibc-style spellings, or return ``None``.
+
+    ``ipaddress`` rejects ``127.1``, ``0x7f000001``, ``0177.0.0.1`` and
+    ``2130706433``, but ``inet_aton`` accepts all of them — and Chromium hands
+    the bridge whatever the page wrote. A form the guard cannot parse must be
+    resolved by the same rules the browser will use, not assumed public.
+    """
+    try:
+        return ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    try:
+        packed = socket.inet_aton(host)
+    except OSError:
+        return None
+    return ipaddress.IPv4Address(packed)
 
 
 def _parse_target(target: str) -> tuple[str, int]:
