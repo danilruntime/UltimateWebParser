@@ -110,6 +110,42 @@ async def test_launch_enables_the_chromium_sandbox(tmp_path, monkeypatch):
     assert chromium.kwargs["chromium_sandbox"] is True
 
 
+async def test_launch_uses_the_configured_browser_major_not_the_profile_row(
+    tmp_path, monkeypatch
+):
+    """A rollback to another build must move the client hints with it.
+
+    Measured with the pinned 148 binary: the User-Agent follows the binary, but
+    ``--fingerprint-brand-version`` comes from the profile row, so overriding
+    ``UWP_BROWSER_VERSION`` to 150 left the UA saying 148 while ``sec-ch-ua``
+    said 150 — the split this branch set out to remove.
+    """
+    import uwp.browser as browser_mod
+
+    chromium = _FakeChromium()
+    monkeypatch.setattr(
+        browser_mod, "async_playwright", lambda: _FakeStarter(_FakePlaywright(chromium))
+    )
+    exe = tmp_path / "chrome"
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    settings = load_settings(
+        {
+            "UWP_DATA_DIR": str(tmp_path),
+            "UWP_BROWSER_PATH": str(exe),
+            "UWP_BROWSER_VERSION": "150.0.7871.186",
+        }
+    )
+    identity = random_identity(random.Random(7))
+    assert identity.brand_version != "150"
+
+    session = await browser_mod.launch(settings, identity, tmp_path / "prof", None)
+    await session.close()
+
+    flags = chromium.kwargs["args"]
+    assert "--fingerprint-brand-version=150" in flags
+
+
 async def test_launch_does_not_hand_app_secrets_to_the_browser(tmp_path, monkeypatch):
     """A compromised page reads its own process environment.
 

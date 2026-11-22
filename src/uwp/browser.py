@@ -3,6 +3,7 @@ import json
 import os
 import shutil
 import socket
+from dataclasses import replace
 from pathlib import Path
 
 from playwright.async_api import BrowserContext, Page, Playwright, async_playwright
@@ -256,6 +257,13 @@ async def launch(
     executable = resolve_browser(settings)
     prepare_profile(user_data_dir)
     width, height = identity.viewport
+    # The client hints must name the same Chrome as the binary. The profile row
+    # stores the major it was created with, and ``UWP_BROWSER_VERSION`` can be
+    # overridden, so the row alone is not the truth: with the 148 binary and a
+    # row saying 150 the User-Agent says 148 while ``sec-ch-ua`` says 150.
+    identity = replace(
+        identity, brand_version=settings.browser_version.split(".")[0]
+    )
     # Playwright passes ``--user-data-dir`` itself and rejects it in ``args``.
     args = [flag for flag in browser_flags(identity, user_data_dir, proxy_url, headless, settings.no_sandbox)
             if not flag.startswith("--user-data-dir=")]
