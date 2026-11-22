@@ -1,0 +1,1 @@
+"""SoundCloud trending parser package."""
