@@ -51,6 +51,27 @@ If you fork the project for public use, judge for yourself whether keeping
 someone else's markup in the repository is acceptable to you; it can be
 replaced with synthetic HTML without losing the purpose of the tests.
 
+### `tests/fixtures/soundcloud_playlist.html`, `tests/fixtures/soundcloud_tracks.json`
+
+- **Source:** the `soundcloud.com/discover/sets/trending-by-genre:all-genres`
+  page (server HTML captured with an anonymous `curl` request and trimmed to the
+  `window.__sc_hydration` block) and its
+  `api-v2.soundcloud.com/tracks?ids=…` answer for five of that playlist's tracks,
+  trimmed to the fields the parser reads.
+- **Rightsholder:** SoundCloud Limited and the tracks' authors. The markup,
+  titles, artist names and counters are theirs.
+- **Licence:** none granted. The files serve as a test fixture: the parser is
+  checked offline against real data, so the test does not depend on SoundCloud
+  being reachable or on its current trends.
+
+This is not project code and is not distributed under MIT. Both files are public
+data without authentication: they contain no cookies, login tokens or personal
+data, only public track titles, artist names and play counts.
+
+If you fork the project for public use, judge for yourself whether keeping
+someone else's data in the repository is acceptable to you; it can be replaced
+with synthetic data without losing the purpose of the tests.
+
 ## What is installed at build time but not kept in the repository
 
 These components are not part of the sources. They only end up in the built

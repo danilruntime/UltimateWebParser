@@ -325,10 +325,13 @@ ruff check src tests
 
 MIT — полный текст в [`LICENSE`](LICENSE). Это касается кода этого проекта.
 
-Два вложения написаны не нами и под MIT не попадают:
+Четыре вложения написаны не нами и под MIT не попадают:
 `docker/seccomp-uwp.json` — производная профиля Docker (Apache-2.0, изменён),
 фикстуры `tests/fixtures/steam_search*.html` — разметка Steam (Valve
-Corporation, без лицензии, используются как тестовые данные). Что ещё
-устанавливается при сборке и под какими лицензиями — в
+Corporation, без лицензии, используются как тестовые данные), а
+`tests/fixtures/soundcloud_playlist.html` и `soundcloud_tracks.json` — разметка
+и данные треков SoundCloud (SoundCloud Limited и авторы треков, без лицензии,
+используются как тестовые данные). Что ещё устанавливается при сборке и под
+какими лицензиями — в
 [`THIRD_PARTY_NOTICES.ru.md`](THIRD_PARTY_NOTICES.ru.md), там же полный текст
 Apache-2.0.

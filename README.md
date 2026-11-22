@@ -326,10 +326,13 @@ ruff check src tests
 MIT — the full text is in [`LICENSE`](LICENSE). This covers the code of this
 project.
 
-Two included files are not ours and are not covered by MIT:
+Four included files are not ours and are not covered by MIT:
 `docker/seccomp-uwp.json` is a derivative of Docker's profile (Apache-2.0,
-modified), and the fixtures `tests/fixtures/steam_search*.html` are Steam
-markup (Valve Corporation, no licence granted, used as test data). What else is
-installed at build time and under which licences is in
+modified), the fixtures `tests/fixtures/steam_search*.html` are Steam markup
+(Valve Corporation, no licence granted, used as test data), and
+`tests/fixtures/soundcloud_playlist.html` / `soundcloud_tracks.json` are
+SoundCloud markup and track data (SoundCloud Limited and the tracks' authors, no
+licence granted, used as test data). What else is installed at build time and
+under which licences is in
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), along with the full Apache-2.0
 text.

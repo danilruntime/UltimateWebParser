@@ -41,6 +41,29 @@ def test_every_vendored_docker_file_is_attributed():
     assert missing == []
 
 
+def test_every_captured_page_fixture_is_attributed():
+    """The rule in the notices covers ``tests/fixtures/`` too, not only docker/.
+
+    Measured: the SoundCloud capture landed with no mention in either notices
+    file, and the suite stayed green because only ``docker/`` was scanned.
+    """
+    text = NOTICES.read_text(encoding="utf-8")
+
+    captured = sorted(p.name for p in (ROOT / "tests" / "fixtures").iterdir())
+    assert captured, "the fixtures directory went away; update this test"
+    missing = [name for name in captured if name not in text]
+    assert missing == []
+
+
+def test_the_soundcloud_fixtures_state_their_source_and_rightsholder():
+    """A capture is only defensible if the document says whose content it is."""
+    text = NOTICES.read_text(encoding="utf-8")
+
+    assert "soundcloud_playlist.html" in text
+    assert "soundcloud_tracks.json" in text
+    assert "SoundCloud" in text
+
+
 def test_the_image_ships_the_notices_with_the_apache_file():
     """§4(a) binds whoever receives the work — that is the image, not the clone.
 
