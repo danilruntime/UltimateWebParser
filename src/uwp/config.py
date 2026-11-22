@@ -15,8 +15,8 @@ from pydantic_settings import (
 
 from uwp.i18n import Lang, normalize
 
-BROWSER_VERSION = "150.0.7871.186"
-BROWSER_SHA256 = "48eff860053efd9ad498d51370f0a1f59f983df39c02a72ad2a8682cdead4055"
+BROWSER_VERSION = "148.0.7778.215"
+BROWSER_SHA256 = "70d239830332e5820aa34dfcb284161cac0429eee25da642830afe04bda717f4"
 BROWSER_URL = (
     "https://github.com/adryfish/fingerprint-chromium/releases/download/"
     f"{BROWSER_VERSION}/ungoogled-chromium-{BROWSER_VERSION}-1-x86_64_linux.tar.xz"

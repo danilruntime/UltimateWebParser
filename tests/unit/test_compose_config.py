@@ -58,8 +58,8 @@ def test_the_split_worker_healthcheck_knows_it_has_no_token():
 def test_dockerfile_pins_browser_sha():
     text = (ROOT / "Dockerfile").read_text(encoding="utf-8")
 
-    assert "48eff860053efd9ad498d51370f0a1f59f983df39c02a72ad2a8682cdead4055" in text
-    assert "150.0.7871.186" in text
+    assert "70d239830332e5820aa34dfcb284161cac0429eee25da642830afe04bda717f4" in text
+    assert "148.0.7778.215" in text
     assert "sha256sum -c" in text
 
 

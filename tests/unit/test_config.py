@@ -82,14 +82,23 @@ def test_explicit_env_overrides_defaults(tmp_path):
 
 
 def test_browser_constraints(tmp_path):
+    """150 crashes the renderer on SoundCloud's trending page, so 148 is pinned.
+
+    Measured in the container: with ``--fingerprint=<any seed>`` the renderer of
+    150.0.7871.186 dies within a second on
+    ``/discover/sets/trending-by-genre:all-genres`` (``Page.content: Target
+    crashed``), while the same page renders on the unpatched code path and every
+    other SoundCloud page survives. The same build without the pin renders it
+    fine, which is why the version, not the parser, carries the fix.
+    """
     s = load_settings({"UWP_DATA_DIR": str(tmp_path)})
-    assert s.browser_version == "150.0.7871.186"
+    assert s.browser_version == "148.0.7778.215"
     assert s.browser_sha256 == (
-        "48eff860053efd9ad498d51370f0a1f59f983df39c02a72ad2a8682cdead4055"
+        "70d239830332e5820aa34dfcb284161cac0429eee25da642830afe04bda717f4"
     )
     assert s.browser_url == (
         "https://github.com/adryfish/fingerprint-chromium/releases/download/"
-        "150.0.7871.186/ungoogled-chromium-150.0.7871.186-1-x86_64_linux.tar.xz"
+        "148.0.7778.215/ungoogled-chromium-148.0.7778.215-1-x86_64_linux.tar.xz"
     )
     assert s.browser_path is None
 

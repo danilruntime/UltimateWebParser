@@ -2,8 +2,8 @@
 # UltimateWebParser: bot + worker + fingerprint-chromium in one image.
 
 ARG PYTHON_VERSION=3.12
-ARG UWP_BROWSER_VERSION=150.0.7871.186
-ARG UWP_BROWSER_SHA256=48eff860053efd9ad498d51370f0a1f59f983df39c02a72ad2a8682cdead4055
+ARG UWP_BROWSER_VERSION=148.0.7778.215
+ARG UWP_BROWSER_SHA256=70d239830332e5820aa34dfcb284161cac0429eee25da642830afe04bda717f4
 
 # --- browser -----------------------------------------------------------------
 FROM debian:bookworm-slim AS browser
