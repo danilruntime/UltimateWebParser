@@ -47,6 +47,21 @@ def mgr(settings, db):
     return ProfileManager(settings, ProfilesRepo(db))
 
 
+def test_machine_profiles_match_the_pinned_browser_version():
+    """The binary and the client hints must name the same Chrome.
+
+    Measured with the 148 binary and a ``brand_version`` of 150: the User-Agent
+    says ``Chrome/148.0.0.0`` while ``navigator.userAgentData.brands`` and
+    ``sec-ch-ua`` say ``150``. No real browser emits that mix, and it is visible
+    in plain HTTP headers before any JS runs. The table carries the number, so a
+    pin bump that forgets it re-creates the split silently.
+    """
+    from uwp.config import BROWSER_VERSION
+
+    majors = {profile["brand_version"] for profile in MACHINE_PROFILES}
+    assert majors == {BROWSER_VERSION.split(".")[0]}
+
+
 def test_identity_is_coherent():
     for i in range(50):
         ident = random_identity(random.Random(i))

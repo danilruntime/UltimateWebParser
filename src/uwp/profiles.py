@@ -25,7 +25,7 @@ MACHINE_PROFILES: list[dict] = [
     {
         "platform": "windows",
         "brand": "Chrome",
-        "brand_version": "150",
+        "brand_version": "148",
         "locale": "en-US",
         "accept_lang": "en-US,en",
         "timezone": "America/New_York",
@@ -36,7 +36,7 @@ MACHINE_PROFILES: list[dict] = [
     {
         "platform": "windows",
         "brand": "Edge",
-        "brand_version": "150",
+        "brand_version": "148",
         "locale": "en-GB",
         "accept_lang": "en-GB,en",
         "timezone": "Europe/London",
@@ -47,7 +47,7 @@ MACHINE_PROFILES: list[dict] = [
     {
         "platform": "macos",
         "brand": "Chrome",
-        "brand_version": "150",
+        "brand_version": "148",
         "locale": "en-US",
         "accept_lang": "en-US,en",
         "timezone": "America/Los_Angeles",
@@ -58,7 +58,7 @@ MACHINE_PROFILES: list[dict] = [
     {
         "platform": "linux",
         "brand": "Chrome",
-        "brand_version": "150",
+        "brand_version": "148",
         "locale": "de-DE",
         "accept_lang": "de-DE,de",
         "timezone": "Europe/Berlin",
@@ -69,7 +69,7 @@ MACHINE_PROFILES: list[dict] = [
     {
         "platform": "windows",
         "brand": "Chrome",
-        "brand_version": "150",
+        "brand_version": "148",
         "locale": "ru-RU",
         "accept_lang": "ru-RU,ru",
         "timezone": "Europe/Moscow",
@@ -80,7 +80,7 @@ MACHINE_PROFILES: list[dict] = [
     {
         "platform": "windows",
         "brand": "Chrome",
-        "brand_version": "150",
+        "brand_version": "148",
         "locale": "ja-JP",
         "accept_lang": "ja-JP,ja",
         "timezone": "Asia/Tokyo",

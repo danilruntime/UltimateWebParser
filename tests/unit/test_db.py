@@ -480,6 +480,49 @@ async def test_history_rows_are_normalised_by_the_first_run_that_misses_them(db,
     assert back.is_new is True
 
 
+async def test_migration_aligns_stored_browser_major_with_the_pin(monkeypatch):
+    """A profile written under the old pin must stop lying about its Chrome.
+
+    Measured on the 148 binary: a row whose ``brand_version`` is 150 makes the
+    User-Agent say ``Chrome/148.0.0.0`` while ``sec-ch-ua`` and
+    ``navigator.userAgentData`` say 150. The migration rewrites only the major;
+    the seed, platform, brand, locale and timezone stay the profile's identity.
+    """
+    from uwp.db import database as database_module
+
+    real = database_module._load_migrations
+    db = await Database.in_memory()
+    try:
+        # Stop before the migration under test, so the row is written the way a
+        # deployment that predates this fix wrote it.
+        monkeypatch.setattr(
+            database_module, "_load_migrations", lambda: [m for m in real() if m[0] <= 6]
+        )
+        await db.migrate()
+        await ProfilesRepo(db).create(make_profile("legacy"))
+        assert (
+            await db.fetchone("SELECT brand_version FROM profiles WHERE name = 'legacy'")
+        )["brand_version"] == "150"
+
+        monkeypatch.setattr(database_module, "_load_migrations", real)
+        await db.migrate()
+
+        row = await db.fetchone(
+            "SELECT seed, platform, brand, brand_version, timezone, locale"
+            " FROM profiles WHERE name = 'legacy'"
+        )
+        assert row["brand_version"] == "148"
+        assert (
+            row["seed"],
+            row["platform"],
+            row["brand"],
+            row["timezone"],
+            row["locale"],
+        ) == (42, "windows", "Chrome", "Europe/Moscow", "ru-RU")
+    finally:
+        await db.close()
+
+
 async def test_settle_counts_only_rows_that_were_present(db):
     sites, items = SitesRepo(db), ItemsRepo(db)
     sid = await sites.create(make_site("s"))
