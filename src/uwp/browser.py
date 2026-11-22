@@ -1,4 +1,5 @@
 """Launching fingerprint-chromium through Playwright with a profile identity applied."""
+import json
 import os
 import shutil
 import socket
@@ -149,6 +150,47 @@ def clear_stale_singleton_lock(user_data_dir: Path) -> bool:
     for name in SINGLETON_FILES:
         (user_data_dir / name).unlink(missing_ok=True)
     return True
+
+
+def seed_download_preferences(user_data_dir: Path, downloads_dir: Path) -> None:
+    """Make Chromium save a download instead of silently cancelling it.
+
+    Measured in the container: a download clicked in the VNC browser left a
+    history entry with ``state=2``, ``interrupt_reason=40``
+    (``DOWNLOAD_INTERRUPT_REASON_USER_CANCELED``), ``received_bytes=0`` and an
+    empty ``target_path``. A fresh profile has no ``download`` key at all, so
+    Chromium falls back to the "Save as" dialog, and kiosk mode hides every
+    dialog — the click is dropped.
+
+    Both keys are load-bearing and were measured separately: with only
+    ``default_directory`` the dialog still appears (and cannot be answered),
+    with only ``prompt_for_download: false`` Chromium picks an XDG folder that
+    does not exist in the image. ``--disable-prompt-on-download`` is not a
+    substitute: it does not create the directory preference.
+
+    The existing file is merged, not replaced: it carries the profile's
+    session and fingerprint settings, and a whole-file rewrite would sign the
+    admin out.
+    """
+    prefs_path = user_data_dir / "Default" / "Preferences"
+    prefs: dict = {}
+    try:
+        loaded = json.loads(prefs_path.read_text("utf-8"))
+    except (OSError, ValueError):
+        # A missing file is the normal first start; a truncated one is
+        # Chromium's own crash damage and is not a reason to refuse a login.
+        loaded = None
+    if isinstance(loaded, dict):
+        prefs = loaded
+    download = prefs.get("download")
+    if not isinstance(download, dict):
+        download = {}
+    download["default_directory"] = str(downloads_dir)
+    download["prompt_for_download"] = False
+    prefs["download"] = download
+    downloads_dir.mkdir(parents=True, exist_ok=True)
+    prefs_path.parent.mkdir(parents=True, exist_ok=True)
+    prefs_path.write_text(json.dumps(prefs), "utf-8")
 
 
 def prepare_profile(user_data_dir: Path) -> None:

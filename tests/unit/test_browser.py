@@ -367,3 +367,63 @@ async def test_launch_clears_a_stale_lock_of_a_dead_browser(tmp_path, monkeypatc
 
     assert not (profile / "SingletonLock").is_symlink()
 
+
+
+def test_seed_download_preferences_points_chromium_at_a_real_directory(tmp_path):
+    """A fresh profile cannot save a download without an explicit directory.
+
+    Measured in the container: clicking a download link left the entry at
+    ``state=2`` / ``interrupt_reason=40`` (``USER_CANCELED``) with an empty
+    ``target_path``, because the "Save as" dialog never opens in kiosk mode.
+    Seeding both keys makes a 20 MB file land complete.
+    """
+    import json
+
+    from uwp.browser import seed_download_preferences
+
+    profile = tmp_path / "prof"
+    profile.mkdir()
+    downloads = tmp_path / "downloads"
+
+    seed_download_preferences(profile, downloads)
+
+    prefs = json.loads((profile / "Default" / "Preferences").read_text("utf-8"))
+    assert prefs["download"]["default_directory"] == str(downloads)
+    assert prefs["download"]["prompt_for_download"] is False
+    assert downloads.is_dir()
+
+
+def test_seed_download_preferences_keeps_the_rest_of_the_profile(tmp_path):
+    """The file already holds session and fingerprint settings of a real profile."""
+    import json
+
+    from uwp.browser import seed_download_preferences
+
+    profile = tmp_path / "prof"
+    (profile / "Default").mkdir(parents=True)
+    (profile / "Default" / "Preferences").write_text(
+        json.dumps({"profile": {"name": "Steam1"}, "download": {"prompt_for_download": True}}),
+        "utf-8",
+    )
+
+    seed_download_preferences(profile, tmp_path / "downloads")
+
+    prefs = json.loads((profile / "Default" / "Preferences").read_text("utf-8"))
+    assert prefs["profile"] == {"name": "Steam1"}
+    assert prefs["download"]["prompt_for_download"] is False
+
+
+def test_seed_download_preferences_survives_a_corrupt_file(tmp_path):
+    """A truncated Preferences file must not stop the login browser from starting."""
+    import json
+
+    from uwp.browser import seed_download_preferences
+
+    profile = tmp_path / "prof"
+    (profile / "Default").mkdir(parents=True)
+    (profile / "Default" / "Preferences").write_text("{not json", "utf-8")
+
+    seed_download_preferences(profile, tmp_path / "downloads")
+
+    prefs = json.loads((profile / "Default" / "Preferences").read_text("utf-8"))
+    assert prefs["download"]["prompt_for_download"] is False

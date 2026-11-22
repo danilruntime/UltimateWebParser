@@ -165,11 +165,27 @@ def test_entrypoint_chowns_every_directory_it_creates_as_root():
     assert created <= checked, f"created but never chowned: {created - checked}"
 
 
+def test_entrypoint_creates_the_downloads_directory():
+    """The VNC browser saves files here; a missing folder is a cancelled download.
+
+    ``seed_download_preferences`` points Chromium at ``$DATA_DIR/downloads``.
+    If the entrypoint does not create it before the browser starts, the
+    preference names a path that does not exist and Chromium falls back to the
+    unavailable "Save as" dialog.
+    """
+    text = (ROOT / "docker" / "entrypoint.sh").read_text(encoding="utf-8")
+    created = _entrypoint_paths(text, "prepare_data_dir", "for path in")
+
+    assert "/downloads" in created
+
+
 def _entrypoint_paths(text: str, marker: str, loop: str) -> set[str]:
     """The ``$DATA_DIR/...`` list of the ``for`` loop that follows ``marker``."""
     start = text.index(marker)
     loop_at = text.index(loop, start)
-    end = text.index("do", loop_at)
+    # ``do`` as a shell keyword ends the list; a plain ``index("do")`` would
+    # stop inside a directory name such as ``downloads``.
+    end = text.index("; do", loop_at)
     return set(re.findall(r'"\$DATA_DIR(/[^"]*)?"', text[loop_at:end]))
 
 

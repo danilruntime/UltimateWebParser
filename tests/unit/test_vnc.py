@@ -165,6 +165,43 @@ async def test_default_factory_clears_a_stale_lock_in_the_profile(tmp_path, monk
     await handle.stop()
 
 
+async def test_default_factory_lets_the_login_browser_save_downloads(
+    tmp_path, monkeypatch
+):
+    """Measured: without a download directory Chromium cancels every download.
+
+    The kiosk window has no "Save as" dialog, so a click on a download link
+    used to end as ``interrupt_reason=40`` with no file on disk.
+    """
+    import json
+
+    from uwp import vnc
+
+    settings, profile = await _factory_env(tmp_path)
+    profile_dir = Path(profile.user_data_dir)
+    profile_dir.mkdir(parents=True, exist_ok=True)
+
+    async def fake_spawn(command, **kw):
+        return FakeSpawned(command)
+
+    monkeypatch.setattr(vnc, "_spawn", fake_spawn)
+    await _pretend_ready(monkeypatch, vnc)
+    handle = await vnc._default_process_factory(settings)(
+        display=100,
+        port=6100,
+        password="pw",
+        profile=profile,
+        url="https://example.com",
+        proxy_url=None,
+    )
+
+    prefs = json.loads((profile_dir / "Default" / "Preferences").read_text("utf-8"))
+    assert prefs["download"]["default_directory"] == str(settings.downloads_dir)
+    assert prefs["download"]["prompt_for_download"] is False
+    assert settings.downloads_dir.is_dir()
+    await handle.stop()
+
+
 async def test_default_factory_builds_the_full_stack(tmp_path, monkeypatch):
     from uwp import vnc
 

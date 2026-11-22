@@ -202,6 +202,10 @@ be retried; everything else is taken by the window manager before the browser
 sees it. This is a UI boundary, not a sandbox: the visitor still types into the
 page, and the worker's own secrets stay out of the browser environment.
 
+A file downloaded in that window is saved to `data/downloads` on the host instead
+of being silently dropped — kiosk mode never shows the "Save as" dialog, so the
+folder is pre-set in the profile before Chromium starts.
+
 The CLI path, remote access and the small print are in
 [`docs/README.md#vnc-sessions-in-detail`](docs/README.md#vnc-sessions-in-detail).
 

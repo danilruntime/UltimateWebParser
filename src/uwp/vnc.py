@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from uwp import secretbox
-from uwp.browser import prepare_profile
+from uwp.browser import prepare_profile, seed_download_preferences
 from uwp.config import Settings
 from uwp.db.repo.profiles import ProfilesRepo
 from uwp.db.repo.vnc import VncRepo
@@ -467,6 +467,12 @@ def _default_process_factory(
         # start with "Failed to create a ProcessSingleton". A lock that belongs
         # to a browser which is really alive raises a readable error instead.
         prepare_profile(Path(profile.user_data_dir))
+        # Measured: kiosk mode hides the "Save as" dialog, and a profile without
+        # ``download.default_directory`` therefore cancels every download
+        # (``interrupt_reason=40``). Seed the folder before Chromium starts.
+        seed_download_preferences(
+            Path(profile.user_data_dir), settings.downloads_dir
+        )
         # A second deployment (combined plus split) shares the published band;
         # the loser's websockify would die and leave a link that resets the
         # connection. Refuse before spending time on Xvfb and Chromium.

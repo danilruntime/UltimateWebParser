@@ -191,6 +191,17 @@ opens a full window on `Ctrl+N` (measured). Chromium policy files are not used:
 180 s and stops the parsers, and a policy is machine-wide rather than per
 profile.
 
+A file you download in that window lands in `data/downloads` on the host. The
+folder is written into the profile's `Default/Preferences`
+(`download.default_directory` and `prompt_for_download: false`) before Chromium
+starts: measured, a fresh profile has no `download` key, so Chromium asks for a
+location, kiosk mode never shows the "Save as" dialog, and the click is recorded
+as `interrupt_reason=40` (`USER_CANCELED`) with no file. Both keys are required —
+with only the directory the dialog still appears, with only the prompt flag
+Chromium picks an XDG folder that does not exist in the image. Parse runs are
+not affected by this: nothing in a parser clicks a download link, and Playwright
+refuses downloads on its own (`accept_downloads` is off by default).
+
 This is a UI boundary, not a sandbox. The visitor still types into the page; the
 worker's environment is hidden from the browser on another layer (`browser_env`
 allowlist and `PR_SET_DUMPABLE=0`).
