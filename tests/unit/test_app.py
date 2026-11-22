@@ -200,6 +200,40 @@ async def test_maintenance_prunes_old_run_artifacts(tmp_path):
     assert sorted(p.name for p in tmp_path.iterdir()) == ["3", "4"]
 
 
+def test_pruning_removes_empty_directories_beyond_keep(tmp_path):
+    """An empty directory is a run that captured nothing — not evidence.
+
+    Measured: every run created ``data/artifacts/<id>`` even when it succeeded,
+    so 20 successful runs pushed a real screenshot out within the hour.
+    """
+    from uwp.artifacts import prune_artifacts
+
+    for index in range(4):
+        shell = tmp_path / str(index)
+        shell.mkdir()
+        os.utime(shell, (index, index))
+    for index in (10, 11):
+        run = tmp_path / str(index)
+        run.mkdir()
+        (run / "screenshot.png").write_bytes(b"x")
+        os.utime(run, (index, index))
+
+    # ``keep=2`` is a budget for evidence; the four empty shells must not count.
+    assert prune_artifacts(tmp_path, keep=2) == 4
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["10", "11"]
+
+
+def test_pruning_keeps_a_fresh_empty_directory_because_it_holds_a_live_run(tmp_path):
+    """A directory created this second may be a run still writing into it."""
+    from uwp.artifacts import prune_artifacts
+
+    fresh = tmp_path / "1"
+    fresh.mkdir()
+
+    assert prune_artifacts(tmp_path, keep=20) == 0
+    assert fresh.is_dir()
+
+
 def test_artifact_pruning_of_a_missing_directory_is_a_noop(tmp_path):
     from uwp.artifacts import prune_artifacts
 

@@ -90,9 +90,11 @@ class FakePage:
 
     def __init__(self, fail: bool = False):
         self.paths: list[str] = []
+        self.timeouts: list[float | None] = []
         self.fail = fail
 
-    async def screenshot(self, path=None):
+    async def screenshot(self, path=None, timeout=None):
+        self.timeouts.append(timeout)
         if self.fail:
             raise RuntimeError("page is gone")
         self.paths.append(path)
@@ -415,7 +417,9 @@ async def test_parse_context_is_wired(env, tmp_path):
     assert ctx.site is site
     assert ctx.profile.kind == ProfileKind.clean
     assert ctx.artifacts_dir == Path(tmp_path) / "artifacts" / str(ctx.artifacts_dir.name)
-    assert ctx.artifacts_dir.is_dir()
+    # The directory appears when the parser has something to put in it, so a
+    # successful run does not consume a retention slot.
+    assert not ctx.artifacts_dir.exists()
     assert await ctx.known_keys() == {"1", "2"}
     path = ctx.save_artifact("shot.txt", b"hello")
     assert path.parent == ctx.artifacts_dir and path.read_bytes() == b"hello"
@@ -601,14 +605,54 @@ async def test_failed_run_saves_a_screenshot_for_the_admin(env, tmp_path):
     assert out.artifacts_dir == shot.parent
 
 
-async def test_a_broken_screenshot_does_not_change_the_outcome(env):
+async def test_a_crashed_renderer_does_not_cost_the_page_timeout(env):
+    """Measured: a crashed renderer answers no CDP call, so ``screenshot`` waits
+    the full ``UWP_PAGE_TIMEOUT_MS`` (30 s) and only then raises. The failure is
+    already known by then; the picture is evidence, not a step to wait out."""
+    from uwp.runner import _SCREENSHOT_TIMEOUT_MS
+
+    runner, site, job, sessions, _, _, _ = env
+    FakeParser.behavior = "login"
+
+    await runner.run(site, job, proxy=None)
+
+    assert sessions[0].page.timeouts == [_SCREENSHOT_TIMEOUT_MS]
+
+
+async def test_a_broken_screenshot_is_reported_in_the_log(env, caplog):
+    """It used to be ``log.debug`` under ``UWP_LOG_LEVEL=INFO``, so a failure to
+    capture left no trace anywhere: no file, no photo, no log line."""
     runner, site, job, sessions, _, _, _ = env
     FakeParser.behavior = "login"
     runner.launcher = lambda *a, **kw: _broken_session(sessions)
 
+    with caplog.at_level(logging.WARNING, logger="uwp.runner"):
+        out = await runner.run(site, job, proxy=None)
+
+    assert out.status == RunStatus.failed
+    assert any("screenshot" in record.message for record in caplog.records)
+
+
+async def test_an_ok_run_leaves_no_artifact_directory(env, tmp_path):
+    """The directory is evidence of a failure. Creating it on every run made the
+    count-based retention evict real screenshots within the hour."""
+    runner, site, job, *_ = env
+
     out = await runner.run(site, job, proxy=None)
 
-    assert out.status == RunStatus.failed and out.error_kind == ErrorKind.login_required
+    assert out.status == RunStatus.ok
+    assert not (tmp_path / "artifacts" / str(out.run_id)).exists()
+
+
+async def test_a_parser_artifact_still_creates_its_directory(env, tmp_path):
+    """``save_artifact`` must keep working now that the directory is lazy."""
+    runner, site, job, *_ = env
+    await runner.run(site, job, proxy=None)
+    ctx = FakeParser.seen_ctx
+
+    path = ctx.save_artifact("empty.html", b"<html></html>")
+
+    assert path.is_file() and path.parent == ctx.artifacts_dir
 
 
 async def _broken_session(sessions):

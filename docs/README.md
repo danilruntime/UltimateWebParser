@@ -147,7 +147,9 @@ single step:
   `started_at` is older than `UWP_VNC_HISTORY_DAYS` (7 days); the password in
   them was already blanked at stop, see the VNC section below;
 - **artifact directories** — `data/artifacts/<run-id>` is trimmed to the last
-  `UWP_ARTIFACTS_RETENTION` (20).
+  `UWP_ARTIFACTS_RETENTION` (20). Only directories that hold a file count
+  against that number: a run creates its directory when it saves something, so
+  an empty one is a capture that failed and is dropped regardless of `keep`.
 
 Reports are not part of that hourly pass: `data/exports/<site-slug>/` is pruned
 to the last `UWP_EXPORTS_RETENTION` (50) on **every write**, so a site that runs
@@ -252,7 +254,9 @@ queues an event; the bot sends the file to the admins. The name is
 by `UWP_REPORT_NAME_TEMPLATE`. The last `UWP_EXPORTS_RETENTION` (50) per site are
 kept. The directories `data/artifacts/<run-id>` (a screenshot of a failed run
 and whatever else the parser saved) are trimmed to the last
-`UWP_ARTIFACTS_RETENTION` (20).
+`UWP_ARTIFACTS_RETENTION` (20). A screenshot that could not be taken is logged
+at `WARNING`; wait for it is capped at 5 s, because a crashed renderer never
+answers.
 
 The report mode is set per site:
 

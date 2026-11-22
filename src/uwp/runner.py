@@ -22,6 +22,11 @@ from uwp.timeutil import utcnow
 
 log = logging.getLogger(__name__)
 
+# A healthy page answers well under a second (measured: 0.1 s). The timeout
+# exists only so a crashed renderer cannot hold the run for 30 s for a picture
+# that will never arrive.
+_SCREENSHOT_TIMEOUT_MS = 5_000
+
 # Lease length for a persistent profile: the run timeout plus a safety margin.
 LEASE_MARGIN_SECONDS = 60
 
@@ -261,9 +266,22 @@ class Runner:
         """Save what the page looked like when a run failed, for the admin."""
         try:
             artifacts_dir.mkdir(parents=True, exist_ok=True)
-            await session.page.screenshot(path=str(artifacts_dir / "screenshot.png"))
+            # A crashed renderer answers no CDP call at all: measured, the
+            # screenshot then blocks for the full ``UWP_PAGE_TIMEOUT_MS`` (30 s)
+            # before raising. The failure is already known; the picture is
+            # evidence, not a step the run should wait out.
+            await session.page.screenshot(
+                path=str(artifacts_dir / "screenshot.png"),
+                timeout=_SCREENSHOT_TIMEOUT_MS,
+            )
         except Exception:  # a screenshot is nice to have, never required
-            log.debug("screenshot of run in %s failed", artifacts_dir, exc_info=True)
+            # At ``debug`` under the default ``UWP_LOG_LEVEL=INFO`` a failed
+            # capture left no trace anywhere: no file, no photo, no log line.
+            log.warning(
+                "screenshot of run in %s failed; the admin gets text only",
+                artifacts_dir,
+                exc_info=True,
+            )
 
     def _export(
         self,
@@ -345,9 +363,10 @@ class Runner:
         session: Any,
         artifacts_dir: Path,
     ) -> ParseContext:
-        artifacts_dir.mkdir(parents=True, exist_ok=True)
-
         def save_artifact(name: str, data: bytes) -> Path:
+            # Created here, not up front: an empty ``<run_id>`` directory would
+            # otherwise count against the retention of real screenshots.
+            artifacts_dir.mkdir(parents=True, exist_ok=True)
             path = artifacts_dir / Path(name).name
             path.write_bytes(data)
             return path
