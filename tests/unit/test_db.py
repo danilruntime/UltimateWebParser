@@ -70,6 +70,34 @@ async def test_migrate_is_idempotent(db):
     assert row["version"] == max(version for version, _name, _sql in _load_migrations())
 
 
+async def test_migrate_waits_for_a_process_that_holds_the_lock(tmp_path):
+    """Split mode starts bot and worker together and both call `migrate()`.
+
+    The guard is ``flock`` on ``<db>.migrate.lock``: the first process applies
+    every pending script while the second waits, instead of reading MAX(version)
+    before the first one commits and then failing on "table sites already
+    exists". ``executescript`` commits any open transaction, so a SQLite
+    transaction cannot span the read and the apply.
+    """
+    import asyncio
+    import fcntl
+
+    path = tmp_path / "uwp.db"
+    db = Database(path)
+    await db.connect()
+    holder = path.with_name("uwp.db.migrate.lock").open("a+")
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    try:
+        task = asyncio.create_task(db.migrate())
+        await asyncio.sleep(0.2)
+        assert not task.done(), "migrate() ignored the lock another process holds"
+        fcntl.flock(holder, fcntl.LOCK_UN)
+        await asyncio.wait_for(task, timeout=10)
+    finally:
+        holder.close()
+        await db.close()
+
+
 async def test_failing_migration_rolls_back_and_keeps_connection_usable(db, monkeypatch):
     import sqlite3
 

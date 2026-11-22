@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import logging
 import os
 import re
@@ -140,19 +141,59 @@ class Database:
                 raise
             await self.conn.execute("COMMIT")
 
+    @asynccontextmanager
+    async def _migration_lock(self) -> AsyncIterator[None]:
+        """Hold ``<db>.migrate.lock`` for the whole migration pass.
+
+        ``executescript`` commits any open transaction, so the "read
+        MAX(version), then apply" guard cannot live inside one SQLite
+        transaction: a second process (bot and worker in split mode start
+        together) reads the stale version and dies on "table already exists".
+        A file lock outlives that commit. The file is created beside the
+        database and never removed — deleting it would let two processes hold
+        locks on different inodes.
+        """
+        if self.path == ":memory:":
+            # A private in-memory database has exactly one connection, so there
+            # is no second migrator to serialise against.
+            yield
+            return
+        lock_path = Path(f"{self.path}.migrate.lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        handle = await asyncio.to_thread(
+            os.open, lock_path, os.O_CREAT | os.O_RDWR, 0o600
+        )
+        _chmod_private(lock_path)
+        try:
+            while True:
+                try:
+                    await asyncio.to_thread(
+                        fcntl.flock, handle, fcntl.LOCK_EX | fcntl.LOCK_NB
+                    )
+                    break
+                except BlockingIOError:
+                    await asyncio.sleep(0.05)
+            yield
+        finally:
+            # Closing the descriptor releases the lock. Unlocking first would
+            # open a window in which the next process reads a version the
+            # previous one has not finished applying.
+            await asyncio.to_thread(os.close, handle)
+
     async def migrate(self) -> None:
         """Apply pending migrations from ``uwp.migrations`` in filename order."""
-        await self.conn.execute(
-            "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)"
-        )
-        row = await self.fetchone("SELECT MAX(version) AS version FROM schema_version")
-        current = row["version"] if row is not None and row["version"] is not None else 0
-        for version, name, sql in _load_migrations():
-            if version <= current:
-                continue
-            log.info("applying migration %s", name)
-            await self._apply_migration(version, sql)
-            current = version
+        async with self._migration_lock():
+            await self.conn.execute(
+                "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)"
+            )
+            row = await self.fetchone("SELECT MAX(version) AS version FROM schema_version")
+            current = row["version"] if row is not None and row["version"] is not None else 0
+            for version, name, sql in _load_migrations():
+                if version <= current:
+                    continue
+                log.info("applying migration %s", name)
+                await self._apply_migration(version, sql)
+                current = version
 
     async def _apply_migration(self, version: int, sql: str) -> None:
         """Apply one migration script and record its version atomically.
