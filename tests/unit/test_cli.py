@@ -834,3 +834,28 @@ def test_doctor_refuses_a_key_that_is_an_unexpanded_substitution(
     # The remedy may name the command, but the stored value must not be echoed.
     assert "$(openssl rand -hex 32)" not in out
     assert "не подставлен" in out or "не ключ" in out
+
+
+def test_doctor_tells_an_unexpanded_variable_apart_from_shell_syntax(
+    capsys, monkeypatch, tmp_path
+):
+    """Compose expands `${...}` in .env but not `$(...)`, so the causes differ.
+
+    Measured with `docker compose run` and an env file: `B=${HOME}` arrived as
+    `/home/danil`, while `A=$(openssl rand -hex 32)` arrived verbatim. Telling a
+    missing variable to "paste the output of openssl" would be wrong twice —
+    the paste is not the problem, and the advice does not fix it.
+    """
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("UWP_SECRET_KEY", "${MY_KEY}")
+    monkeypatch.setenv("UWP_BOT_TOKEN", "123:abc")
+    monkeypatch.setenv("UWP_ADMIN_IDS", "1")
+    monkeypatch.setenv("UWP_BROWSER_PATH", "/bin/true")
+    monkeypatch.delenv("UWP_TELEGRAM_PROXY", raising=False)
+
+    assert main(["doctor", "--offline"]) == 1
+
+    out = capsys.readouterr().out
+    assert "переменная не задана" in out
+    assert "openssl rand" not in out

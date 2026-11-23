@@ -54,6 +54,21 @@ def _images() -> set[str]:
 
 
 @pytest.mark.parametrize(("english", "russian"), PAIRS)
+def test_doctor_in_the_worker_passes_the_worker_flag(english, russian):
+    """The worker runs with an empty token on purpose, so plain doctor fails there.
+
+    Measured on the shipped image: `doctor --offline --quiet` inside `worker`
+    exits 1 with "UWP_BOT_TOKEN: не задан", while the same command with
+    `--worker` exits 0 — the page would have told a reader that a healthy
+    deployment is broken.
+    """
+    for name in (english, russian):
+        for line in (ROOT / name).read_text(encoding="utf-8").splitlines():
+            if "exec worker" in line and "doctor" in line:
+                assert "--worker" in line, f"{name} needs --worker: {line.strip()}"
+
+
+@pytest.mark.parametrize(("english", "russian"), PAIRS)
 def test_a_dotenv_line_is_never_a_shell_assignment(english, russian):
     """.env is read by Compose, not by a shell: ``$(...)`` stays literal there."""
     for name in (english, russian):

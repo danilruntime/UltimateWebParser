@@ -348,15 +348,25 @@ def cmd_doctor(
             t(lang, "cli.doctor.secret_missing"),
             warning=True,
         )
-    elif "$(" in settings.secret_key or "${" in settings.secret_key:
+    elif "$(" in settings.secret_key:
         # `.env` is read as text, not run by a shell. The install page used to
         # print `UWP_SECRET_KEY=$(openssl rand -hex 32)`, which makes that
-        # literal 23-character string the key: it passes every length check and
-        # decrypts nothing after a restart.
+        # literal 23-character string the key: it passes every length check, and
+        # it is printed on a public page, so anything it encrypts is readable by
+        # anyone who follows the install page.
         check(
             "UWP_SECRET_KEY",
             False,
             t(lang, "cli.doctor.secret_substitution"),
+        )
+    elif "${" in settings.secret_key:
+        # Compose *does* expand `${...}` in .env, so this value arrived
+        # unexpanded — the variable it names is missing from the environment, and
+        # the key is the literal text.
+        check(
+            "UWP_SECRET_KEY",
+            False,
+            t(lang, "cli.doctor.secret_unexpanded"),
         )
     elif len(settings.secret_key) < 16:
         # PBKDF2 makes guessing expensive, but a 4-character secret is still

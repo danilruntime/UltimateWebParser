@@ -58,8 +58,10 @@ UWP_SECRET_KEY=9f2c...      # строка, напечатанная выше, �
 
 `.env` — обычный файл, который читает контейнер, а не shell-скрипт: запись
 `UWP_SECRET_KEY=$(openssl rand -hex 32)` сохранит этот текст как сам ключ —
-23 символа, которые проходят любую проверку длины и ничего не расшифровывают
-после перезапуска.
+23 символа, напечатанные на этой странице, которые проходят любую проверку
+длины и шифруют секреты так, что их расшифрует любой, кто эту страницу прочёл.
+(`${...}` Compose как раз раскрывает, поэтому `UWP_SECRET_KEY=${MY_KEY}`
+сработает; не работает только shell-синтаксис.)
 
 Без неё пароли прокси и VNC лежат в `data/uwp.db` открытым текстом, и
 `uwp doctor` об этом предупреждает. Если задать ключ *после* того, как пароли
@@ -108,8 +110,13 @@ Combined-режим проще и обходится одним файлом, н
 compose="docker compose -f compose.split.yaml -f compose.split.hostnet.yaml"
 $compose ps                        # оба сервиса "healthy"
 $compose logs -f bot               # лог самого бота
-$compose exec worker /entrypoint.sh doctor
+$compose exec worker /entrypoint.sh doctor --worker
 ```
+
+`--worker` здесь не опционален: сервис воркера намеренно работает с пустым
+`UWP_BOT_TOKEN`, поэтому проверка без флага сообщает об отсутствующем токене и
+выходит с ненулевым кодом на здоровом развёртывании. Чтобы проверить токен,
+запустите обычный `doctor` внутри `bot`.
 
 `doctor` проверяет каталоги данных, бинарник браузера и его запуск, стек VNC
 (предупреждение, если нет Xvfb или x11vnc), токен, админов, ключ шифрования и
@@ -190,8 +197,14 @@ docker compose -f compose.split.yaml up -d --build
 
 Windows пробрасывает `localhost` в движок Docker, поэтому ссылку VNC, которую
 присылает бот (`http://localhost:6001/vnc.html`), можно открыть в Edge или
-Chrome прямо в Windows без настройки. То же касается `docker compose logs` и
-`doctor` из терминала Ubuntu.
+Chrome прямо в Windows без настройки. Логи и `doctor` тоже работают из
+терминала Ubuntu — с теми же флагами `-f`, что и выше. Без флагов или без имени
+сервиса вы получите пустой вывод, а не split-режим:
+
+```bash
+docker compose -f compose.split.yaml logs -f bot
+docker compose -f compose.split.yaml exec worker /entrypoint.sh doctor --worker
+```
 
 Если ссылка не открывается, проверьте, что сессия есть
 (`docker compose -f compose.split.yaml exec worker /entrypoint.sh vnc list`), и
@@ -245,6 +258,10 @@ WSL 2 — не порт всего этого, а ядро Linux, которое
 
 ## Обновление
 
+Флаги `-f` те же, с которыми вы запускали. Блок ниже — split-развёртывание с
+оверлеем для loopback-прокси; в Windows и на любом хосте без host networking
+уберите `-f compose.split.hostnet.yaml`, как убирали при запуске:
+
 ```bash
 git pull
 docker compose -f compose.split.yaml -f compose.split.hostnet.yaml up -d --build
@@ -256,7 +273,8 @@ docker compose -f compose.split.yaml -f compose.split.hostnet.yaml up -d --build
 (`schema version N ... a downgrade is not supported`).
 
 Перед мажорным обновлением сделайте копию `data/`. Это каталог обычных файлов,
-и `docker compose down` его не удаляет.
+и `down` его не удаляет — но `down` тоже требует те же флаги `-f`, иначе он не
+найдёт ни одного сервиса.
 
 ## Удаление
 
@@ -269,8 +287,9 @@ rm -rf data
 cookies, отчёты и логи. Удаление необратимо, поэтому сначала выгрузите то, что
 нужно сохранить.
 
-Образ остаётся в кеше, пока его не удалить. Все три compose-файла собирают его
-под именем `ultimate-web-parser:latest`:
+Образ остаётся в кеше, пока его не удалить. Его собирают базовые compose-файлы
+(`compose.yaml` и `compose.split.yaml`) под именем
+`ultimate-web-parser:latest`; два оверлея `hostnet` добавляют только сеть:
 
 ```bash
 docker image rm ultimate-web-parser:latest

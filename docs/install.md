@@ -60,9 +60,10 @@ UWP_SECRET_KEY=9f2c...      # the line printed above, pasted as-is
 ```
 
 `.env` is a plain file read by the container, not a shell script: writing
-`UWP_SECRET_KEY=$(openssl rand -hex 32)` there stores that text as the key
-itself — 23 characters that satisfy every length check and decrypt nothing after
-a restart.
+`UWP_SECRET_KEY=$(openssl rand -hex 32)` there stores that text as the key — 23
+characters printed on this page, which satisfy every length check and encrypt
+secrets that anyone who read this page can decrypt. (`${...}` *is* expanded by
+Compose, so `UWP_SECRET_KEY=${MY_KEY}` would work; only shell syntax is not.)
 
 Without it, proxy and VNC passwords are stored in plaintext in `data/uwp.db`;
 `uwp doctor` warns about that. Setting it *after* passwords exist makes those
@@ -112,8 +113,13 @@ service.
 compose="docker compose -f compose.split.yaml -f compose.split.hostnet.yaml"
 $compose ps                        # both services "healthy"
 $compose logs -f bot               # the bot's own log
-$compose exec worker /entrypoint.sh doctor
+$compose exec worker /entrypoint.sh doctor --worker
 ```
+
+`--worker` is not optional here: the worker service deliberately runs with an
+empty `UWP_BOT_TOKEN`, so a check without it reports a missing token and exits
+non-zero on a healthy deployment. Run plain `doctor` inside `bot` to check the
+token.
 
 `doctor` checks the data directories, the browser binary and its launch, the
 VNC stack (a warning if Xvfb or x11vnc is missing), the token, the admins, the
@@ -194,8 +200,14 @@ build starts; `docker info` should answer without an error.
 
 Windows forwards `localhost` to the Docker engine, so a VNC link the bot sends
 (`http://localhost:6001/vnc.html`) opens in Edge or Chrome on Windows without
-any extra setup. The same is true for `docker compose logs` and `doctor` from the
-Ubuntu terminal.
+any extra setup. The logs and `doctor` work from the Ubuntu terminal too, with
+the same `-f` flags as above. Run them without the flags — or without a service
+name — and you get an empty result rather than split mode:
+
+```bash
+docker compose -f compose.split.yaml logs -f bot
+docker compose -f compose.split.yaml exec worker /entrypoint.sh doctor --worker
+```
 
 If a link does not open, check that the session exists
 (`docker compose -f compose.split.yaml exec worker /entrypoint.sh vnc list`) and
@@ -251,6 +263,10 @@ are kept.
 
 ## Upgrading
 
+Use the same `-f` set you started with. The block below is the split deployment
+with the loopback-proxy overlay; on Windows, and on any host without host
+networking, drop `-f compose.split.hostnet.yaml` as you did at start:
+
 ```bash
 git pull
 docker compose -f compose.split.yaml -f compose.split.hostnet.yaml up -d --build
@@ -262,7 +278,8 @@ exports. A downgrade is not supported: an older image refuses a database that a
 newer one has migrated.
 
 Back up `data/` before a major upgrade. It is a directory of ordinary files, and
-`docker compose down` does not remove it.
+`down` does not remove it — but `down` needs the same `-f` flags too, or it
+finds no services to stop.
 
 ## Uninstalling
 
@@ -275,8 +292,9 @@ rm -rf data
 with live cookies, the reports and the logs. Deleting it is irreversible, so
 export anything you want to keep first.
 
-The image stays cached until you remove it. All three compose files build it
-under the name `ultimate-web-parser:latest`:
+The image stays cached until you remove it. The base compose files (`compose.yaml`
+and `compose.split.yaml`) build it under the name
+`ultimate-web-parser:latest`; the two `hostnet` overlays add networking only:
 
 ```bash
 docker image rm ultimate-web-parser:latest

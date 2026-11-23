@@ -36,7 +36,12 @@ CATALOG: dict[Lang, dict[str, str]] = {
         ),
         "cli.doctor.secret_substitution": (
             "задан текст «$(...)», а не ключ: .env читается как обычный файл, "
-            "подстановку никто не выполнит — вставьте вывод openssl rand -hex 32"
+            "shell-подстановку никто не выполнит — вставьте вывод "
+            "openssl rand -hex 32"
+        ),
+        "cli.doctor.secret_unexpanded": (
+            "остался «${...}»: Compose раскрывает ${...} в .env, значит "
+            "переменная не задана — и ключом стал сам текст"
         ),
         "cli.doctor.db": "база данных",
         "cli.doctor.all_ok": "Всё в порядке.",
@@ -194,7 +199,11 @@ CATALOG: dict[Lang, dict[str, str]] = {
         ),
         "cli.doctor.secret_substitution": (
             "the value is the text “$(...)”, not a key: .env is read as a plain "
-            "file, nothing expands it — paste the output of openssl rand -hex 32"
+            "file, no shell expands it — paste the output of openssl rand -hex 32"
+        ),
+        "cli.doctor.secret_unexpanded": (
+            "still “${...}”: Compose does expand ${...} in .env, so the variable "
+            "is missing — and the literal text became the key"
         ),
         "cli.doctor.db": "database",
         "cli.doctor.all_ok": "Everything is fine.",
