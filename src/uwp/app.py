@@ -177,19 +177,34 @@ async def build_runtime(
     # connection (and its worker thread) behind.
     bot = make_bot(settings) if with_bot else NullBot()
     db = Database(settings.db_path)
-    await db.connect()
-    # Freshness is "no schema yet", so it can only be read before the migration.
-    # Two processes can both answer "yes" here (that is what makes the first
-    # `up` fast); ``seed`` itself is what serialises them, under a write
-    # transaction, so the loser sees the winner's row instead of dying on
-    # "UNIQUE constraint failed: sites.slug".
-    fresh = await is_fresh(db)
-    await db.migrate()
-    # Seed only a brand-new database: a site the admin deleted must stay gone
-    # across restarts, so re-seeding on every start would be a bug.
-    if fresh:
-        await seed(db, settings)
+    try:
+        await db.connect()
+        # Freshness is "no schema yet", so it can only be read before the
+        # migration. Two processes can both answer "yes" here (that is what makes
+        # the first `up` fast); ``seed`` itself is what serialises them, under a
+        # write transaction, so the loser sees the winner's row instead of dying
+        # on "UNIQUE constraint failed: sites.slug".
+        fresh = await is_fresh(db)
+        await db.migrate()
+        # Seed only a brand-new database: a site the admin deleted must stay gone
+        # across restarts, so re-seeding on every start would be a bug.
+        if fresh:
+            await seed(db, settings)
+        return await _wire_runtime(settings, db, bot, eager_vnc=eager_vnc)
+    except BaseException:
+        # ``aiosqlite`` starts a non-daemon thread per connection, and a start
+        # that fails after `connect()` never reaches `Runtime.close()`: the
+        # process printed the refusal and then hung forever (measured on the
+        # downgrade guard, `timeout 15` → 124). A container alive but stuck is
+        # never restarted, so the failure has to close the connection to exit.
+        await db.close()
+        raise
 
+
+async def _wire_runtime(
+    settings: Settings, db: Database, bot: object, *, eager_vnc: bool
+) -> Runtime:
+    """Build every collaborator over an open, migrated database."""
     admins = AdminsRepo(db)
     jobs = JobsRepo(db)
     sites = SitesRepo(db)

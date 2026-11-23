@@ -3,6 +3,7 @@
 import sqlite3
 
 import pytest
+from conftest import worker_threads
 
 from uwp.app import build_runtime
 from uwp.config import load_settings
@@ -290,3 +291,34 @@ async def test_runtime_feeds_the_login_pages_to_vnc(tmp_path):
         )
     finally:
         await rt.close()
+
+
+async def test_a_failed_start_closes_the_database_instead_of_hanging(
+    tmp_path, monkeypatch
+):
+    """The downgrade guard fires inside `build_runtime`, one layer above `connect`.
+
+    Measured: `uwp worker` against a database at schema 999 printed the refusal
+    and then never exited — `timeout 15` returned 124 and the only threads left
+    were MainThread and `_connection_worker_thread`. A container that is alive
+    but stuck is never restarted by `restart: unless-stopped`, so the guard would
+    have turned a loud refusal into a silent outage.
+
+    The test asserts on the thread table, not on the exit code: pytest already
+    owns the process, so a leak shows up as a surviving non-daemon thread.
+    """
+    from uwp import app as app_module
+
+    settings = load_settings({"UWP_DATA_DIR": str(tmp_path), "UWP_ADMIN_IDS": "1"})
+    seeded = Database(settings.db_path)
+    await seeded.connect()
+    await seeded.migrate()
+    await seeded.execute("INSERT INTO schema_version (version) VALUES (999)")
+    await seeded.close()
+
+    before = worker_threads()
+    with pytest.raises(RuntimeError, match="downgrade is not supported"):
+        await app_module.build_runtime(settings, with_bot=False)
+
+    leaked = worker_threads() - before
+    assert leaked == set(), f"a failed start leaked {leaked}"

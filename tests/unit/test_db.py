@@ -1,7 +1,9 @@
 """Tests for the SQLite database layer, migrations and repositories."""
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from conftest import worker_threads
 
 from uwp.db.database import Database
 from uwp.db.repo.admins import AdminsRepo
@@ -246,8 +248,8 @@ async def test_a_locked_database_does_not_leave_a_thread_running(tmp_path):
     makes the exception the only thing the caller sees.
     """
     import sqlite3
-    import threading
 
+    before = worker_threads()
     holder = sqlite3.connect(tmp_path / "held.db", isolation_level=None)
     holder.execute("CREATE TABLE t (x)")
     holder.execute("PRAGMA journal_mode=DELETE")
@@ -260,13 +262,11 @@ async def test_a_locked_database_does_not_leave_a_thread_running(tmp_path):
         holder.rollback()
         holder.close()
 
-    # ``aiosqlite`` names its worker ``Thread-N (_connection_worker_thread)``.
-    leaked = [
-        thread.name
-        for thread in threading.enumerate()
-        if "_connection_worker_thread" in thread.name
-    ]
-    assert leaked == [], f"connect() leaked {leaked}"
+    # Compare against the baseline: the rest of the suite also opens databases,
+    # so an absolute "no worker thread anywhere" assertion would fail as soon as
+    # another test leaks one first.
+    leaked = worker_threads() - before
+    assert leaked == set(), f"connect() leaked {leaked}"
 
 
 async def test_failing_migration_rolls_back_and_keeps_connection_usable(db, monkeypatch):
@@ -381,6 +381,41 @@ async def test_transaction_rolls_back_on_error(db):
             )
             raise RuntimeError("boom")
     assert await db.fetchone("SELECT * FROM admins") is None
+
+
+async def test_a_nested_transaction_refuses_instead_of_deadlocking(db):
+    """The lock is not reentrant, so a second `transaction()` in the same task hangs.
+
+    Measured before the guard: the inner `async with db.transaction()` never
+    returned, and `asyncio.wait_for(..., 1)` timed out. No caller nests today;
+    the guard exists so a future one gets an error, not a silent hang.
+    """
+    with pytest.raises(RuntimeError, match="already active in this task"):
+        # Nested on purpose: the inner enter is what must refuse. `async with a, b`
+        # would read as one statement and hide the shape being tested.
+        async with db.transaction():  # noqa: SIM117
+            async with db.transaction():
+                pass
+
+
+async def test_a_second_task_waits_for_the_transaction_it_does_not_own(db):
+    """Waiting for the lock is not nesting — a bool flag would have refused it."""
+    order: list[str] = []
+    started = asyncio.Event()
+
+    async def contender() -> None:
+        started.set()
+        async with db.transaction():
+            order.append("second")
+
+    async with db.transaction():
+        task = asyncio.create_task(contender())
+        await started.wait()
+        await asyncio.sleep(0.05)  # give the contender time to block on the lock
+        order.append("first")
+    await asyncio.wait_for(task, 5)
+
+    assert order == ["first", "second"]
 
 
 async def test_site_crud(db):
