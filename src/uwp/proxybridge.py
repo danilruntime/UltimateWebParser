@@ -57,26 +57,6 @@ _INTERNAL_SUFFIXES = (
 _INTERNAL_NAMES = frozenset({"localhost", "metadata", "metadata.google.internal"})
 
 
-def _is_internal_host(host: str) -> bool:
-    host = host.lower().rstrip(".")
-    # Chromium sends IPv6 literals bracketed to ``CONNECT``; the guard should
-    # not depend on which caller remembered to strip them.
-    if host.startswith("[") and host.endswith("]"):
-        host = host[1:-1]
-    if host in _INTERNAL_NAMES:
-        return True
-    if any(host.endswith(suffix) for suffix in _INTERNAL_SUFFIXES):
-        return True
-    address = _parse_ip(host)
-    if address is None:
-        return False
-    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
-        address = address.ipv4_mapped
-    # ``is_global`` rather than a list of flags: a target that is not routable
-    # on the public internet has no business going out through a paid proxy.
-    return not address.is_global
-
-
 def _parse_ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
     """Parse canonical and glibc-style spellings, or return ``None``.
 
@@ -91,9 +71,60 @@ def _parse_ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None
         pass
     try:
         packed = socket.inet_aton(host)
-    except OSError:
+    except (OSError, ValueError):
+        # ``inet_aton`` raises ValueError, not OSError, for a NUL byte or a
+        # label it cannot fit; both mean "not an IPv4 literal".
         return None
     return ipaddress.IPv4Address(packed)
+
+
+#: The well-known NAT64 prefix: an IPv6 literal here is an IPv4 address in
+#: disguise, and the upstream proxy is what decodes it.
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")
+
+
+def _embedded_ipv4(
+    address: ipaddress.IPv4Address | ipaddress.IPv6Address,
+) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    """The IPv4 address an IPv6 literal really denotes, if it carries one.
+
+    Three encodings reach the guard: IPv4-mapped (``::ffff:127.0.0.1``),
+    IPv4-compatible (``::127.0.0.1``, which ``is_global`` reported as public on
+    3.14) and NAT64 (``64:ff9b::7f00:1``). Deciding on the wrapper instead of
+    the address it carries let all three through.
+    """
+    if not isinstance(address, ipaddress.IPv6Address):
+        return address
+    if address.ipv4_mapped is not None:
+        return address.ipv4_mapped
+    if int(address) >> 32 == 0:
+        return ipaddress.IPv4Address(int(address))
+    if address in _NAT64:
+        return ipaddress.IPv4Address(int(address) & 0xFFFFFFFF)
+    return address
+
+
+def _is_internal_host(host: str) -> bool:
+    host = host.lower().rstrip(".")
+    # Chromium sends IPv6 literals bracketed to ``CONNECT``; the guard should
+    # not depend on which caller remembered to strip them.
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1]
+    if host in _INTERNAL_NAMES:
+        return True
+    if any(host.endswith(suffix) for suffix in _INTERNAL_SUFFIXES):
+        return True
+    address = _parse_ip(host)
+    if address is None:
+        return False
+    address = _embedded_ipv4(address)
+    # ``is_global`` alone is not the whole answer: on 3.14 a multicast address
+    # such as ``224.0.0.1`` reports global, and multicast is not a scraping
+    # target. So is a reserved range. Everything else that is not routable on
+    # the public internet has no business going out through a paid proxy.
+    return (
+        not address.is_global or address.is_reserved or address.is_multicast
+    )
 
 
 def _parse_target(target: str) -> tuple[str, int]:
@@ -119,16 +150,23 @@ def _parse_target(target: str) -> tuple[str, int]:
 
 def _parse_plain_target(target: str) -> tuple[str, int]:
     """The host of an absolute ``http://``/``https://`` request URI."""
-    parts = urlsplit(target)
-    if parts.scheme not in ("http", "https") or not parts.hostname:
+    try:
+        parts = urlsplit(target)
+        hostname = parts.hostname
+    except ValueError as exc:
+        # ``urlsplit`` raises on an unbalanced IPv6 bracket
+        # (``http://[::1/vnc.html``). Letting it escape `_handle` turned a page's
+        # malformed request into an unhandled exception in the event loop.
+        raise ProxyError(f"request URI is malformed: {exc}") from exc
+    if parts.scheme not in ("http", "https") or not hostname:
         raise ProxyError("plain requests must use an absolute URI")
     try:
         port = parts.port or (443 if parts.scheme == "https" else 80)
     except ValueError as exc:
         raise ProxyError(f"request URI port is invalid: {exc}") from exc
-    if _is_internal_host(parts.hostname):
-        raise ProxyError(f"refusing a request to an internal host: {parts.hostname}")
-    return parts.hostname, port
+    if _is_internal_host(hostname):
+        raise ProxyError(f"refusing a request to an internal host: {hostname}")
+    return hostname, port
 
 
 def _socks5_address(host: str, port: int) -> bytes:
