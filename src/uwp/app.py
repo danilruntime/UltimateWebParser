@@ -178,6 +178,11 @@ async def build_runtime(
     bot = make_bot(settings) if with_bot else NullBot()
     db = Database(settings.db_path)
     await db.connect()
+    # Freshness is "no schema yet", so it can only be read before the migration.
+    # Two processes can both answer "yes" here (that is what makes the first
+    # `up` fast); ``seed`` itself is what serialises them, under a write
+    # transaction, so the loser sees the winner's row instead of dying on
+    # "UNIQUE constraint failed: sites.slug".
     fresh = await is_fresh(db)
     await db.migrate()
     # Seed only a brand-new database: a site the admin deleted must stay gone

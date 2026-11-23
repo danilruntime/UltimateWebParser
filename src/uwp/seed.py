@@ -45,23 +45,30 @@ async def seed(db: Database, settings: Settings) -> bool:
     """Create the admin rows and the example site if they are missing.
 
     Returns ``True`` when the example site was created by this call.
+
+    The "is the table empty, then insert" pair runs inside one write
+    transaction: bot and worker both call this on the first ``up``, and doing
+    the check outside the transaction let both see an empty table and the loser
+    die on ``UNIQUE constraint failed: sites.slug``. ``BEGIN IMMEDIATE`` makes
+    the second caller wait, then see the winner's row.
     """
     admins = AdminsRepo(db)
     for admin_id in settings.admin_ids:
         await admins.add(admin_id)
 
     sites = SitesRepo(db)
-    if await sites.list():
-        return False
-    await sites.create(
-        Site(
-            slug=SEED_SITE_SLUG,
-            name=seed_site_name(settings),
-            parser_key=SEED_PARSER,
-            enabled=False,
-            interval_min_min=45,
-            interval_max_min=90,
+    async with db.transaction():
+        if await sites.list():
+            return False
+        await sites.create(
+            Site(
+                slug=SEED_SITE_SLUG,
+                name=seed_site_name(settings),
+                parser_key=SEED_PARSER,
+                enabled=False,
+                interval_min_min=45,
+                interval_max_min=90,
+            )
         )
-    )
     log.info("seeded the example site %s", SEED_SITE_SLUG)
     return True

@@ -6,6 +6,7 @@ import pytest
 
 from uwp.app import build_runtime
 from uwp.config import load_settings
+from uwp.db.database import Database
 from uwp.db.repo.admins import AdminsRepo
 
 
@@ -116,6 +117,96 @@ async def test_the_worker_never_runs_delivery(monkeypatch):
     await app_module.run_worker_only(load_settings({"UWP_DATA_DIR": "/tmp/x"}))
 
     assert ticked == []
+
+
+async def test_freshness_is_read_before_the_migration(tmp_path, monkeypatch):
+    """`is_fresh()` means "no schema yet", so it cannot move after `migrate()`.
+
+    Bot and worker both call `build_runtime` on the first `up`. Both legitimately
+    answer "fresh" — that is not the bug; the bug was that both then inserted
+    the example site and the loser died on "UNIQUE constraint failed:
+    sites.slug" (measured 1 in 5 forced runs). `seed()` now holds the write
+    transaction, so the second caller sees the first one's row. This test pins
+    the order the freshness read depends on.
+    """
+    from uwp import app as app_module
+
+    calls: list[str] = []
+    real_migrate = Database.migrate
+    real_is_fresh = app_module.is_fresh
+
+    async def recording_migrate(self) -> None:
+        calls.append("migrate")
+        await real_migrate(self)
+
+    async def recording_is_fresh(db) -> bool:
+        calls.append("is_fresh")
+        return await real_is_fresh(db)
+
+    monkeypatch.setattr(Database, "migrate", recording_migrate)
+    monkeypatch.setattr(app_module, "is_fresh", recording_is_fresh)
+
+    runtime = await app_module.build_runtime(
+        load_settings({"UWP_DATA_DIR": str(tmp_path), "UWP_ADMIN_IDS": "1"}),
+        with_bot=False,
+    )
+    try:
+        # Freshness is "the schema_version table does not exist", so asking after
+        # the migration would always answer False and silently stop seeding.
+        assert calls[:2] == ["is_fresh", "migrate"]
+    finally:
+        await runtime.close()
+
+
+async def test_two_first_starts_seed_exactly_one_site(tmp_path, monkeypatch):
+    """The loser of the first-start race must not crash on the unique slug.
+
+    Bot and worker both read a fresh database before either migrates, then both
+    call `seed()`. Measured before the fix: the slower one raised
+    `IntegrityError: UNIQUE constraint failed: sites.slug` and its container
+    died until Docker restarted it. `seed()` now runs in one write transaction,
+    so the second caller blocks, then sees the row and stops.
+    """
+    import asyncio
+
+    from uwp.config import load_settings
+    from uwp.db.repo.sites import SitesRepo
+    from uwp.seed import seed
+
+    settings = load_settings({"UWP_DATA_DIR": str(tmp_path), "UWP_ADMIN_IDS": "1"})
+    first = Database(tmp_path / "uwp.db")
+    second = Database(tmp_path / "uwp.db")
+    await first.connect()
+    await second.connect()
+    await first.migrate()
+
+    real_list = SitesRepo.list
+
+    async def slow_list(self):
+        rows = await real_list(self)
+        # Both callers must see the empty table before either inserts, or the
+        # test proves nothing.
+        await asyncio.sleep(0.05)
+        return rows
+
+    monkeypatch.setattr(SitesRepo, "list", slow_list)
+    failures: list[str] = []
+
+    async def run(db) -> None:
+        try:
+            await seed(db, settings)
+        except Exception as exc:  # noqa: BLE001 - the message is the assertion
+            failures.append(f"{type(exc).__name__}: {exc}")
+
+    try:
+        await asyncio.gather(run(first), run(second))
+        sites = await SitesRepo(first).list()
+    finally:
+        await first.close()
+        await second.close()
+
+    assert failures == [], failures
+    assert [site.slug for site in sites] == ["steam_skidki"]
 
 
 async def test_duplicate_site_rows_do_not_break_the_seed(tmp_path):

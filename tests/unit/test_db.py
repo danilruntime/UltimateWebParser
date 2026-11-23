@@ -98,6 +98,177 @@ async def test_migrate_waits_for_a_process_that_holds_the_lock(tmp_path):
         await db.close()
 
 
+async def test_connect_retries_the_journal_switch_when_another_process_holds_it(
+    tmp_path, monkeypatch
+):
+    """Two first starts race on ``PRAGMA journal_mode=WAL``.
+
+    Measured before the retry: 17 of 50 concurrent opens on a fresh file raised
+    ``database is locked`` within a millisecond. ``busy_timeout`` does not cover
+    that lock — SQLite switches the journal under an exclusive lock that ignores
+    the busy handler — so the loser crashed before any migration could
+    serialise. A short retry is what makes the first ``docker compose up``
+    survive both containers starting at once.
+    """
+    import sqlite3
+
+    import aiosqlite
+
+    from uwp.db import database as database_module
+
+    real_execute = aiosqlite.Connection.execute
+    failures = 0
+
+    async def flaky_execute(self, sql, *args, **kwargs):
+        nonlocal failures
+        if "journal_mode=WAL" in sql and failures < 2:
+            failures += 1
+            raise sqlite3.OperationalError("database is locked")
+        return await real_execute(self, sql, *args, **kwargs)
+
+    monkeypatch.setattr(database_module.aiosqlite.Connection, "execute", flaky_execute)
+    monkeypatch.setattr(database_module, "_CONNECT_RETRY_DELAY", 0.01)
+
+    db = Database(tmp_path / "fresh.db")
+    await db.connect()
+    try:
+        row = await db.fetchone("PRAGMA journal_mode")
+        assert row[0] == "wal"
+        assert failures == 2
+    finally:
+        await db.close()
+
+
+async def test_connect_gives_up_with_the_lock_error_after_the_deadline(
+    tmp_path, monkeypatch
+):
+    """An endless retry would hang the first start instead of crashing it."""
+    import sqlite3
+
+    import aiosqlite
+
+    from uwp.db import database as database_module
+
+    real_execute = aiosqlite.Connection.execute
+
+    async def always_locked(self, sql, *args, **kwargs):
+        if "journal_mode=WAL" in sql:
+            raise sqlite3.OperationalError("database is locked")
+        return await real_execute(self, sql, *args, **kwargs)
+
+    monkeypatch.setattr(
+        database_module.aiosqlite.Connection, "execute", always_locked
+    )
+    monkeypatch.setattr(database_module, "_CONNECT_RETRY_DELAY", 0.01)
+    monkeypatch.setattr(database_module, "_CONNECT_DEADLINE_SECONDS", 0.05)
+
+    db = Database(tmp_path / "locked.db")
+    with pytest.raises(sqlite3.OperationalError, match="locked"):
+        await db.connect()
+
+
+async def test_a_downgraded_image_refuses_a_newer_schema(tmp_path):
+    """The install page promises this refusal, so it has to exist.
+
+    Measured before the fix: an image whose migrations end at 7 opened a
+    database migrated to 99 and ran happily against a schema it did not know —
+    the documented "a downgrade is not supported" was only advice. Refusing is
+    what keeps a mistaken rollback from writing through columns it misreads.
+    """
+    db = Database(tmp_path / "uwp.db")
+    await db.connect()
+    try:
+        await db.migrate()
+        await db.execute("INSERT INTO schema_version (version) VALUES (999)")
+        with pytest.raises(RuntimeError, match="newer"):
+            await db.migrate()
+    finally:
+        await db.close()
+
+
+async def test_a_path_typed_memory_database_leaves_no_lock_file(tmp_path, monkeypatch):
+    """``Path(":memory:")`` made the memory check miss.
+
+    The guard compared ``self.path`` with ``":memory:"`` directly, so a caller
+    that passed a ``Path`` (the type the attribute is annotated with) got a real
+    ``:memory:.migrate.lock`` file in the working directory and a connection to
+    a file named ``:memory:``. Measured before the fix: the file appeared.
+    """
+    from pathlib import Path
+
+    monkeypatch.chdir(tmp_path)
+    db = Database(Path(":memory:"))
+    await db.connect()
+    try:
+        await db.migrate()
+        assert sorted(p.name for p in tmp_path.iterdir()) == []
+    finally:
+        await db.close()
+
+
+async def test_migration_lock_gives_up_with_a_clear_error(tmp_path, monkeypatch):
+    """An unbounded `flock` wait would hang the container instead of crashing.
+
+    Measured: a second process that never releases the lock (a stuck image, a
+    suspended shell) made `migrate()` wait forever with no log line, so the
+    container looked healthy and refused to start. A deadline turns that into
+    one visible error and a restart.
+    """
+    import fcntl
+    import os
+    from pathlib import Path
+
+    from uwp.db import database as database_module
+
+    path = tmp_path / "uwp.db"
+    db = Database(path)
+    await db.connect()
+    handle = os.open(Path(f"{path}.migrate.lock"), os.O_CREAT | os.O_RDWR, 0o600)
+    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    monkeypatch.setattr(database_module, "_MIGRATION_LOCK_DEADLINE_SECONDS", 0.2)
+    try:
+        with pytest.raises(RuntimeError, match="migrat"):
+            await db.migrate()
+    finally:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+        os.close(handle)
+        await db.close()
+
+
+async def test_a_locked_database_does_not_leave_a_thread_running(tmp_path):
+    """Measured: two processes hunting the WAL switch left the loser's
+    connection thread alive, and the interpreter never exited.
+
+    ``aiosqlite`` starts a non-daemon thread per connection. If ``connect()``
+    raises before assigning ``self._conn``, nothing closes that thread, so a
+    crash-looping container cannot even exit and let Docker restart it; a
+    ``timeout 30`` run had to kill the process. Closing the failed connection
+    makes the exception the only thing the caller sees.
+    """
+    import sqlite3
+    import threading
+
+    holder = sqlite3.connect(tmp_path / "held.db", isolation_level=None)
+    holder.execute("CREATE TABLE t (x)")
+    holder.execute("PRAGMA journal_mode=DELETE")
+    holder.execute("BEGIN EXCLUSIVE")
+    try:
+        db = Database(tmp_path / "held.db")
+        with pytest.raises(sqlite3.OperationalError):
+            await db.connect()
+    finally:
+        holder.rollback()
+        holder.close()
+
+    # ``aiosqlite`` names its worker ``Thread-N (_connection_worker_thread)``.
+    leaked = [
+        thread.name
+        for thread in threading.enumerate()
+        if "_connection_worker_thread" in thread.name
+    ]
+    assert leaked == [], f"connect() leaked {leaked}"
+
+
 async def test_failing_migration_rolls_back_and_keeps_connection_usable(db, monkeypatch):
     import sqlite3
 
@@ -449,7 +620,7 @@ async def test_items_present_keys_hold_the_previous_run(db):
     assert await present_keys(db, sid) == {"a", "b"}
 
 
-async def test_migration_backfills_absent_for_history(db, monkeypatch):
+async def test_migration_backfills_absent_for_history(monkeypatch):
     from uwp.db import database as database_module
 
     real = database_module._load_migrations
@@ -457,25 +628,35 @@ async def test_migration_backfills_absent_for_history(db, monkeypatch):
     monkeypatch.setattr(
         database_module, "_load_migrations", lambda: [m for m in real() if m[0] <= 3]
     )
-    await db.migrate()
-    sid = await SitesRepo(db).create(make_site("s"))
-    await db.execute(
-        "INSERT INTO items (site_id, external_key, payload, first_seen_at, last_seen_at)"
-        " VALUES (?, 'old', '{}', ?, ?)",
-        (sid, "2026-11-01T00:00:00Z", "2026-11-01T00:00:00Z"),
-    )
+    # A private database, not the fixture: the fixture already runs every
+    # migration, so migrating "up" from 3 there would be a no-op and the
+    # backfill would never be exercised.
+    db = await Database.in_memory()
+    try:
+        await db.migrate()
+        assert await db.fetchone(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='items'"
+        )
+        sid = await SitesRepo(db).create(make_site("s"))
+        await db.execute(
+            "INSERT INTO items (site_id, external_key, payload, first_seen_at, last_seen_at)"
+            " VALUES (?, 'old', '{}', ?, ?)",
+            (sid, "2026-11-01T00:00:00Z", "2026-11-01T00:00:00Z"),
+        )
 
-    monkeypatch.setattr(database_module, "_load_migrations", real)
-    await db.migrate()
+        monkeypatch.setattr(database_module, "_load_migrations", real)
+        await db.migrate()
 
-    row = await db.fetchone("SELECT absent FROM items WHERE external_key = 'old'")
-    # Presence was never recorded for history, so it must read as neither
-    # vanished nor returned on the first run after the upgrade.
-    assert row["absent"] is None
-    assert await present_keys(db, sid) == set()
+        row = await db.fetchone("SELECT absent FROM items WHERE external_key = 'old'")
+        # Presence was never recorded for history, so it must read as neither
+        # vanished nor returned on the first run after the upgrade.
+        assert row["absent"] is None
+        assert await present_keys(db, sid) == set()
+    finally:
+        await db.close()
 
 
-async def test_history_rows_are_normalised_by_the_first_run_that_misses_them(db, monkeypatch):
+async def test_history_rows_are_normalised_by_the_first_run_that_misses_them(monkeypatch):
     """A legacy NULL row must still be reported when it comes back.
 
     Leaving it NULL forever would hide a returning game for the whole history
@@ -489,22 +670,26 @@ async def test_history_rows_are_normalised_by_the_first_run_that_misses_them(db,
     monkeypatch.setattr(
         database_module, "_load_migrations", lambda: [m for m in real() if m[0] <= 3]
     )
-    await db.migrate()
-    sid = await SitesRepo(db).create(make_site("s"))
-    await db.execute(
-        "INSERT INTO items (site_id, external_key, payload, first_seen_at, last_seen_at)"
-        " VALUES (?, 'old', '{}', ?, ?)",
-        (sid, "2026-11-01T00:00:00Z", "2026-11-01T00:00:00Z"),
-    )
-    monkeypatch.setattr(database_module, "_load_migrations", real)
-    await db.migrate()
-    items = ItemsRepo(db)
+    db = await Database.in_memory()
+    try:
+        await db.migrate()
+        sid = await SitesRepo(db).create(make_site("s"))
+        await db.execute(
+            "INSERT INTO items (site_id, external_key, payload, first_seen_at, last_seen_at)"
+            " VALUES (?, 'old', '{}', ?, ?)",
+            (sid, "2026-11-01T00:00:00Z", "2026-11-01T00:00:00Z"),
+        )
+        monkeypatch.setattr(database_module, "_load_migrations", real)
+        await db.migrate()
+        items = ItemsRepo(db)
 
-    assert await items.settle(sid, set()) == 0
-    row = await db.fetchone("SELECT absent FROM items WHERE external_key = 'old'")
-    assert row["absent"] == 1
+        assert await items.settle(sid, set()) == 0
+        row = await db.fetchone("SELECT absent FROM items WHERE external_key = 'old'")
+        assert row["absent"] == 1
 
-    back = await items.upsert(sid, "old", {}, NOW)
+        back = await items.upsert(sid, "old", {}, NOW)
+    finally:
+        await db.close()
     assert back.is_new is True
 
 
