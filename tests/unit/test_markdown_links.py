@@ -61,6 +61,50 @@ def test_a_link_inside_inline_code_is_ignored(tmp_path):
     assert result.returncode == 0, result.stdout
 
 
+def test_an_unclosed_fence_hides_the_rest_of_the_page(tmp_path):
+    """GitHub renders the remainder as code when a fence never closes.
+
+    The scan has to agree with the renderer, not with the author's intent: a
+    link after an unclosed fence is text on the page, so reporting it as broken
+    would redden CI on a file whose only problem is the missing fence.
+    """
+    (tmp_path / "plan.md").write_text("```markdown\n[gone](missing.md)\n")
+
+    result = _run(tmp_path, "plan.md")
+
+    assert result.returncode == 0, result.stdout
+
+
+def test_a_link_title_is_not_part_of_the_path(tmp_path):
+    """``](docs/install.md "the install page")`` points at the same file."""
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "install.md").write_text("hi\n")
+    (tmp_path / "README.md").write_text(
+        'see [install](docs/install.md "the install page")\n'
+    )
+
+    result = _run(tmp_path, "README.md")
+
+    assert result.returncode == 0, result.stdout
+
+
+def test_a_file_outside_the_working_directory_is_scanned(tmp_path):
+    """``check_markdown_links.py ../other/README.md`` used to raise ValueError.
+
+    ``relative_to(root)`` throws for an absolute path outside the root, so the
+    script died with a traceback instead of printing what it found.
+    """
+    root = tmp_path / "repo"
+    root.mkdir()
+    outside = tmp_path / "elsewhere.md"
+    outside.write_text("see [install](missing.md)\n")
+
+    result = _run(root, str(outside))
+
+    assert result.returncode == 1
+    assert "missing.md" in result.stdout
+
+
 def test_the_check_passes_on_this_repository():
     """The tree that ships must be green, not merely the fixtures above."""
     result = subprocess.run(

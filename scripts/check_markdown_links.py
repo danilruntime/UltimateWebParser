@@ -21,7 +21,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-_LINK = re.compile(r"\]\(([^)#:]+?)\)")
+_LINK = re.compile(r"\]\(([^)#:]+?)(?:\s+\"[^\"]*\")?\)")
 _FENCE = re.compile(r"^\s*(````+|````*|~~~)")
 _INLINE_CODE = re.compile(r"`[^`\n]*`")
 
@@ -48,6 +48,19 @@ def strip_code(text: str) -> str:
     return "".join(out)
 
 
+def _display(path: Path, root: Path) -> str:
+    """The path as the reader would type it.
+
+    ``relative_to`` raises for a file outside the working directory, which is
+    what ``check_markdown_links.py ../other/README.md`` passes: the script used
+    to die with ``ValueError`` before printing what it found.
+    """
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
+
 def broken_links(path: Path, root: Path) -> list[str]:
     """``path -> target`` for every local link that does not resolve."""
     broken = []
@@ -55,7 +68,7 @@ def broken_links(path: Path, root: Path) -> list[str]:
         if target.startswith(("http", "mailto")):
             continue
         if not (path.parent / target).exists():
-            broken.append(f"{path.relative_to(root)} -> {target}")
+            broken.append(f"{_display(path, root)} -> {target}")
     return broken
 
 
@@ -70,13 +83,24 @@ def tracked_markdown(root: Path) -> list[Path]:
     return [root / name for name in names]
 
 
+def _skipped(path: Path, root: Path) -> bool:
+    """True for generated or vendored directories — and for anything outside."""
+    try:
+        parts = path.relative_to(root).parts
+    except ValueError:
+        # An explicit argument outside the tree is not ours to skip: the caller
+        # asked for that file.
+        return False
+    return bool(_SKIP & set(parts))
+
+
 def main(argv: list[str]) -> int:
     root = Path.cwd()
     paths = [Path(arg).resolve() for arg in argv] or tracked_markdown(root)
     broken = [
         line
         for path in paths
-        if not (_SKIP & set(path.relative_to(root).parts))
+        if not _skipped(path, root)
         for line in broken_links(path, root)
     ]
     if broken:
