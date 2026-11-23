@@ -923,3 +923,20 @@ async def test_a_known_reason_missing_one_placeholder_falls_back_to_the_raw_text
 
     assert "profile is open elsewhere" in bot.messages[0][1]
     assert "{pid}" not in bot.messages[0][1]
+
+
+@pytest.mark.parametrize("lang", ["ru", "en"])
+def test_the_browser_missing_notice_names_the_variable_that_fixes_it(lang):
+    """`uwp browser install` writes into `data/browser` and only prints the path.
+
+    Measured: the chat notice said "run `uwp browser install`" and stopped, so an
+    admin who followed it got the same failure back — installing does not put the
+    binary on `PATH`. The terminal error now names `UWP_BROWSER_PATH`; the bot's
+    catalogue is what an admin actually reads, so it must name it too.
+    """
+    from uwp.bot.delivery import _reason_for
+
+    reason = _reason_for({"error_code": "error.browser.missing"}, lang)
+
+    assert "uwp browser install" in reason
+    assert "UWP_BROWSER_PATH" in reason

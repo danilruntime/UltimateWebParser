@@ -96,7 +96,8 @@ CATALOG: dict[Lang, dict[str, str]] = {
         "error.run.timeout": "прогон не уложился в {seconds} с",
         "error.browser.missing": (
             "браузер fingerprint-chromium не найден: запустите "
-            "«uwp browser install»"
+            "«uwp browser install» и укажите UWP_BROWSER_PATH на путь, "
+            "который он напечатает"
         ),
         "error.bridge.unavailable": (
             "прокси-мост не загрузился: {detail}"
@@ -174,7 +175,8 @@ CATALOG: dict[Lang, dict[str, str]] = {
         "error.run.timeout": "the run did not finish within {seconds} s",
         "error.browser.missing": (
             "the fingerprint-chromium browser is missing: run "
-            "“uwp browser install”"
+            "“uwp browser install”, then set UWP_BROWSER_PATH to the path "
+            "it prints"
         ),
         "error.bridge.unavailable": (
             "the proxy bridge did not load: {detail}"

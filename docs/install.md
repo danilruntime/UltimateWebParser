@@ -11,9 +11,11 @@ If you only want to know whether this project is for you, read
 
 ## What you need
 
-- **Linux:** Docker Engine 24 or newer with the Compose v2 plugin. Check with
-  `docker compose version`; the separate `docker-compose` v1 binary is not what
-  the documented commands use.
+- **Linux:** Docker Engine 24 or newer with the Compose v2 plugin, **Compose
+  2.24 or newer**. The compose files use `env_file: required:`, which older
+  Compose releases reject with `additional property required is not allowed`.
+  Check both with `docker info` and `docker compose version`; the separate
+  `docker-compose` v1 binary is not what the documented commands use.
 - **Windows 10 or 11:** Docker Desktop with the **WSL 2 backend** enabled. Docker
   Desktop installs WSL 2 for you on current versions; the Ubuntu distribution is
   installed separately.
@@ -46,11 +48,21 @@ UWP_BOT_TOKEN=123456789:AA...        # from @BotFather
 UWP_ADMIN_IDS=111,222                # your Telegram id; comma-separated
 ```
 
-A third is strongly recommended before you add any proxy or login:
+A third is strongly recommended before you add any proxy or login. Generate a
+key and paste the **output** into `.env`:
 
 ```bash
-UWP_SECRET_KEY=$(openssl rand -hex 32)
+openssl rand -hex 32
 ```
+
+```bash
+UWP_SECRET_KEY=9f2c...      # the line printed above, pasted as-is
+```
+
+`.env` is a plain file read by the container, not a shell script: writing
+`UWP_SECRET_KEY=$(openssl rand -hex 32)` there stores that text as the key
+itself — 23 characters that satisfy every length check and decrypt nothing after
+a restart.
 
 Without it, proxy and VNC passwords are stored in plaintext in `data/uwp.db`;
 `uwp doctor` warns about that. Setting it *after* passwords exist makes those
@@ -91,17 +103,23 @@ The first build downloads Chromium (about 200 MB) and takes a few minutes.
 
 ### Check it runs
 
+The `-f` flags are part of every command: a bare `docker compose` reads
+`compose.yaml`, which starts the single container instead. The service is called
+`worker`, not `uwp-worker` — that is its container name, and `exec` wants the
+service.
+
 ```bash
-docker compose ps                                   # both services "healthy"
-docker compose logs -f bot                          # the bot's own log
-docker compose exec uwp-worker /entrypoint.sh doctor
+compose="docker compose -f compose.split.yaml -f compose.split.hostnet.yaml"
+$compose ps                        # both services "healthy"
+$compose logs -f bot               # the bot's own log
+$compose exec worker /entrypoint.sh doctor
 ```
 
 `doctor` checks the data directories, the browser binary and its launch, the
 VNC stack (a warning if Xvfb or x11vnc is missing), the token, the admins, the
 encryption key and the migrations. It exits non-zero when something is broken.
 
-In combined mode the container is called `uwp`:
+In combined mode the container and its service are both called `uwp`:
 
 ```bash
 docker compose exec uwp /entrypoint.sh doctor
@@ -153,19 +171,21 @@ POSIX modes — those are only real on the Linux side. Keep the repository and
 `data/` under `~/`.
 
 The `.env` entries are the same as on Linux: `UWP_BOT_TOKEN`, `UWP_ADMIN_IDS`,
-and `UWP_SECRET_KEY` from `openssl rand -hex 32`.
+and `UWP_SECRET_KEY` — the output of `openssl rand -hex 32`, pasted into `.env`,
+not a `$(...)` substitution (`nano .env` sets it in place of the example line).
 
 ### Start it
 
 ```bash
-docker compose -f compose.split.yaml -f compose.split.hostnet.yaml up -d --build
+docker compose -f compose.split.yaml up -d --build
 ```
 
 There is no host-network caveat on Docker Desktop: a proxy listening on the
 Windows side is reachable from a container as `host.docker.internal`, so
 `UWP_TELEGRAM_PROXY=socks5://host.docker.internal:1080` works with the plain
-`compose.split.yaml` too. Use the hostnet overlay only if you specifically need
-the bot to share the WSL network namespace.
+`compose.split.yaml`. The `compose.split.hostnet.yaml` overlay is a Linux answer
+to a proxy bound to `127.0.0.1` on the host; do not add it here unless you
+specifically need the bot to share the WSL network namespace.
 
 If Docker Desktop has just been updated, give the engine a moment before the
 build starts; `docker info` should answer without an error.
@@ -178,10 +198,11 @@ any extra setup. The same is true for `docker compose logs` and `doctor` from th
 Ubuntu terminal.
 
 If a link does not open, check that the session exists
-(`docker compose exec uwp-worker /entrypoint.sh vnc list`) and that the port in
-the link matches the published band 6000–6100. Windows may reserve part of that
-band for Hyper-V; `netsh interface ipv4 show excludedportrange protocol=tcp`
-lists the reservations, and the list shifts after a reboot — this is the one
+(`docker compose -f compose.split.yaml exec worker /entrypoint.sh vnc list`) and
+that the port in the link matches the published band 6000–6100. Windows may
+reserve part of that band for Hyper-V;
+`netsh interface ipv4 show excludedportrange protocol=tcp` lists the
+reservations, and the list shifts after a reboot — this is the one
 Windows-specific failure mode that has no Linux equivalent.
 
 `UWP_DATA_DIR` stays `data`: the bind mount `./data:/data:z` is resolved inside
@@ -254,8 +275,12 @@ rm -rf data
 with live cookies, the reports and the logs. Deleting it is irreversible, so
 export anything you want to keep first.
 
-The image stays cached until `docker image rm` — the compose files build it under
-the name `uwp`.
+The image stays cached until you remove it. All three compose files build it
+under the name `ultimate-web-parser:latest`:
+
+```bash
+docker image rm ultimate-web-parser:latest
+```
 
 ## Where to read next
 

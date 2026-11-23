@@ -11,9 +11,11 @@ Python, ни Playwright, ни Chromium.
 
 ## Что нужно
 
-- **Linux:** Docker Engine 24 или новее с плагином Compose v2. Проверка —
-  `docker compose version`; отдельный бинарник `docker-compose` v1 — не то, что
-  используют команды ниже.
+- **Linux:** Docker Engine 24 или новее с плагином Compose v2, **Compose 2.24
+  или новее**. Compose-файлы используют `env_file: required:`, и более старые
+  выпуски Compose отвергают это поле с `additional property required is not
+  allowed`. Проверяйте обе версии: `docker info` и `docker compose version`;
+  отдельный бинарник `docker-compose` v1 — не то, что используют команды ниже.
 - **Windows 10 или 11:** Docker Desktop с включённым бэкендом **WSL 2**. На
   текущих версиях Docker Desktop сам ставит WSL 2; дистрибутив Ubuntu
   устанавливается отдельно.
@@ -43,11 +45,21 @@ UWP_BOT_TOKEN=123456789:AA...        # от @BotFather
 UWP_ADMIN_IDS=111,222                # ваш Telegram id; через запятую
 ```
 
-Третью настоятельно стоит задать до первого прокси или входа:
+Третью настоятельно стоит задать до первого прокси или входа. Сгенерируйте
+ключ и вставьте в `.env` его **вывод**:
 
 ```bash
-UWP_SECRET_KEY=$(openssl rand -hex 32)
+openssl rand -hex 32
 ```
+
+```bash
+UWP_SECRET_KEY=9f2c...      # строка, напечатанная выше, как есть
+```
+
+`.env` — обычный файл, который читает контейнер, а не shell-скрипт: запись
+`UWP_SECRET_KEY=$(openssl rand -hex 32)` сохранит этот текст как сам ключ —
+23 символа, которые проходят любую проверку длины и ничего не расшифровывают
+после перезапуска.
 
 Без неё пароли прокси и VNC лежат в `data/uwp.db` открытым текстом, и
 `uwp doctor` об этом предупреждает. Если задать ключ *после* того, как пароли
@@ -87,17 +99,23 @@ Combined-режим проще и обходится одним файлом, н
 
 ### Проверить, что работает
 
+Флаги `-f` нужны в каждой команде: голый `docker compose` читает
+`compose.yaml`, то есть поднимает одиночный контейнер. Сервис называется
+`worker`, а не `uwp-worker` — `uwp-worker` это имя контейнера, а `exec` ждёт
+имя сервиса.
+
 ```bash
-docker compose ps                                   # оба сервиса "healthy"
-docker compose logs -f bot                          # лог самого бота
-docker compose exec uwp-worker /entrypoint.sh doctor
+compose="docker compose -f compose.split.yaml -f compose.split.hostnet.yaml"
+$compose ps                        # оба сервиса "healthy"
+$compose logs -f bot               # лог самого бота
+$compose exec worker /entrypoint.sh doctor
 ```
 
 `doctor` проверяет каталоги данных, бинарник браузера и его запуск, стек VNC
 (предупреждение, если нет Xvfb или x11vnc), токен, админов, ключ шифрования и
 миграции. При поломке он выходит с ненулевым кодом.
 
-В combined-режиме контейнер называется `uwp`:
+В combined-режиме `uwp` называется и сервис, и контейнер:
 
 ```bash
 docker compose exec uwp /entrypoint.sh doctor
@@ -149,19 +167,21 @@ POSIX-правами, — настоящими они бывают только 
 репозиторий и `data/` в `~/`.
 
 Строки `.env` те же, что в Linux: `UWP_BOT_TOKEN`, `UWP_ADMIN_IDS` и
-`UWP_SECRET_KEY` из `openssl rand -hex 32`.
+`UWP_SECRET_KEY` — вывод `openssl rand -hex 32`, вставленный в `.env`, а не
+подстановка `$(...)` (`nano .env` заменяет им строку-пример).
 
 ### Запустить
 
 ```bash
-docker compose -f compose.split.yaml -f compose.split.hostnet.yaml up -d --build
+docker compose -f compose.split.yaml up -d --build
 ```
 
 На Docker Desktop оговорка про сеть хоста не нужна: прокси, слушающий на
 стороне Windows, доступен из контейнера как `host.docker.internal`, поэтому
-`UWP_TELEGRAM_PROXY=socks5://host.docker.internal:1080` работает и с обычным
-`compose.split.yaml`. Оверлей hostnet нужен, только если боту зачем-то
-требуется сетевой namespace WSL.
+`UWP_TELEGRAM_PROXY=socks5://host.docker.internal:1080` работает с обычным
+`compose.split.yaml`. Оверлей `compose.split.hostnet.yaml` — ответ Linux на
+прокси, слушающий на `127.0.0.1` хоста; здесь его добавлять не нужно, если
+боту не требуется именно сетевой namespace WSL.
 
 Если Docker Desktop только что обновился, дайте движку пару секунд до начала
 сборки; `docker info` должен отвечать без ошибки.
@@ -174,9 +194,9 @@ Chrome прямо в Windows без настройки. То же касаетс
 `doctor` из терминала Ubuntu.
 
 Если ссылка не открывается, проверьте, что сессия есть
-(`docker compose exec uwp-worker /entrypoint.sh vnc list`), и что порт в ссылке
-попадает в опубликованный диапазон 6000–6100. Windows может зарезервировать
-часть этого диапазона под Hyper-V; список резервов показывает
+(`docker compose -f compose.split.yaml exec worker /entrypoint.sh vnc list`), и
+что порт в ссылке попадает в опубликованный диапазон 6000–6100. Windows может
+зарезервировать часть этого диапазона под Hyper-V; список резервов показывает
 `netsh interface ipv4 show excludedportrange protocol=tcp`, и после перезагрузки
 он меняется — это единственный отказ, специфичный для Windows.
 
@@ -232,7 +252,8 @@ docker compose -f compose.split.yaml -f compose.split.hostnet.yaml up -d --build
 
 Миграции только добавляются и применяются при старте, поэтому `data/` остаётся
 на месте — база, профили с cookies и отчёты. Откат не поддерживается: старый
-образ откажется работать с базой, которую мигрировал новый.
+образ откажется запускаться с базой, которую мигрировал новый
+(`schema version N ... a downgrade is not supported`).
 
 Перед мажорным обновлением сделайте копию `data/`. Это каталог обычных файлов,
 и `docker compose down` его не удаляет.
@@ -248,8 +269,12 @@ rm -rf data
 cookies, отчёты и логи. Удаление необратимо, поэтому сначала выгрузите то, что
 нужно сохранить.
 
-Образ остаётся в кеше, пока его не удалит `docker image rm`: compose-файлы
-собирают его под именем `uwp`.
+Образ остаётся в кеше, пока его не удалить. Все три compose-файла собирают его
+под именем `ultimate-web-parser:latest`:
+
+```bash
+docker image rm ultimate-web-parser:latest
+```
 
 ## Что читать дальше
 
