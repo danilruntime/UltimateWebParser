@@ -166,3 +166,26 @@ def test_quoted_bot_labels_match_the_code():
         text = (ROOT / name).read_text(encoding="utf-8")
         missing = [label for label in _quoted_labels(lang) if label not in text]
         assert missing == [], f"{name} does not quote {missing}"
+
+
+@pytest.mark.parametrize(("english", "russian"), PAIRS)
+def test_the_kiosk_caption_matches_the_page_in_the_picture(english: str, russian: str):
+    """A caption that names a different page than the screenshot is a lie.
+
+    The screenshot was recaptured on the sign-in page while the caption still
+    said "the Steam deals page" — a reader comparing the two sees the form, not
+    the list, and stops trusting the rest of the paragraph. Measured before the
+    fix: `docs/images/vnc-desktop.png` showed `store.steampowered.com/login/`.
+    """
+    for name in (english, russian):
+        text = (ROOT / name).read_text(encoding="utf-8")
+        # Every caption directly under the kiosk image, as written in both twins.
+        for line in text.splitlines():
+            if "vnc-desktop.png" in line and line.lstrip().startswith("!"):
+                caption = line.lower()
+                names_sign_in = any(
+                    word in caption for word in ("sign-in", "sign in", "login", "вход")
+                )
+                assert names_sign_in, (
+                    f"{name}: the kiosk image alt text must name the sign-in page"
+                )

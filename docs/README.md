@@ -480,7 +480,7 @@ own messages follow the admin's language, so the refusal above reads
 | File | What it shows |
 |---|---|
 | [`images/report.png`](images/report.png) | a real `.ods` report opened in LibreOffice Calc |
-| [`images/vnc-desktop.png`](images/vnc-desktop.png) | the VNC kiosk: one Chromium window, no panel or tabs, sandbox enabled |
+| [`images/vnc-desktop.png`](images/vnc-desktop.png) | the VNC kiosk on a parser's sign-in page: one Chromium window, no panel or tabs, sandbox enabled |
 
 Both were captured from the running service, not drawn: the report from 50 rows
 of a real Steam run, the kiosk from the same image the deployment uses.

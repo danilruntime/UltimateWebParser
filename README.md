@@ -109,12 +109,12 @@ selector in a config file.
 *A report as Calc opens it: 50 rows, an autofilter on the header, links that
 resolve to the store page, numbers formatted, no truncated cells.*
 
-![The VNC kiosk: Chromium showing the Steam specials page full screen, no tabs, no panel](docs/images/vnc-desktop.png)
+![The VNC kiosk: Chromium showing the Steam sign-in page full screen, no tabs, no panel](docs/images/vnc-desktop.png)
 
 *Manual login over VNC: one kiosk window, no tabs, no desktop panel and no
 DevTools, behind noVNC with the sandbox enabled. The link in chat opens this
-kiosk and loads the page the parser declares for signing in; the picture shows
-the same kiosk on the Steam deals page.*
+kiosk and loads the page the parser declares for signing in — here the Steam
+sign-in form, because that is the page `auth_url` points at.*
 
 ## How it works
 
