@@ -106,6 +106,14 @@ def _embedded_ipv4(
 
 def _is_internal_host(host: str) -> bool:
     host = host.lower().rstrip(".")
+    # A NUL byte is not a hostname: glibc's resolver stops there, so
+    # ``127.0.0.1\x00.example.com`` resolves to loopback and
+    # ``169.254.169.254\x00`` to the metadata service. Whatever follows the NUL
+    # is decoration for every layer below this one, so the prefix is what gets
+    # judged — never "unparseable, therefore public".
+    nul = host.find("\x00")
+    if nul != -1:
+        host = host[:nul]
     # Chromium sends IPv6 literals bracketed to ``CONNECT``; the guard should
     # not depend on which caller remembered to strip them.
     if host.startswith("[") and host.endswith("]"):
@@ -127,6 +135,18 @@ def _is_internal_host(host: str) -> bool:
     )
 
 
+def _has_forbidden_host_char(host: str) -> bool:
+    """True for whitespace and C0 controls, which no hostname may contain.
+
+    ``urlsplit`` accepts ``http://exa mple.com/`` and hands back
+    ``exa mple.com``; forwarding that puts a whitespace-separated authority on
+    the wire, where the upstream proxy and the origin server can read it
+    differently. Chromium never sends one, so a request that does is not a page
+    request.
+    """
+    return any(char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F for char in host)
+
+
 def _parse_target(target: str) -> tuple[str, int]:
     """Split ``host:port`` and reject values that cannot be encoded downstream.
 
@@ -143,6 +163,8 @@ def _parse_target(target: str) -> tuple[str, int]:
         raise ProxyError(f"CONNECT target port out of range: {port}")
     if host.startswith("[") and host.endswith("]"):
         host = host[1:-1]  # IPv6 literal, as sent by Chromium
+    if _has_forbidden_host_char(host):
+        raise ProxyError("CONNECT target host contains whitespace or control characters")
     if _is_internal_host(host):
         raise ProxyError(f"refusing a request to an internal host: {host}")
     return host, port
@@ -160,6 +182,8 @@ def _parse_plain_target(target: str) -> tuple[str, int]:
         raise ProxyError(f"request URI is malformed: {exc}") from exc
     if parts.scheme not in ("http", "https") or not hostname:
         raise ProxyError("plain requests must use an absolute URI")
+    if _has_forbidden_host_char(hostname):
+        raise ProxyError("request URI host contains whitespace or control characters")
     try:
         port = parts.port or (443 if parts.scheme == "https" else 80)
     except ValueError as exc:

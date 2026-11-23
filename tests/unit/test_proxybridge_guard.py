@@ -123,10 +123,7 @@ async def test_an_internal_plain_request_is_refused_too():
 @pytest.mark.parametrize(
     "target",
     [
-        # ``urlsplit`` raises ValueError rather than returning a bad host; it
-        # escaped `_handle` and became an unhandled exception in the loop.
         "http://[::1/vnc.html",
-        "http://exa mple.com/",
     ],
 )
 async def test_a_malformed_absolute_uri_does_not_escape_the_handler(target):
@@ -143,13 +140,61 @@ async def test_a_malformed_absolute_uri_does_not_escape_the_handler(target):
 
 
 @pytest.mark.parametrize(
-    "host",
+    ("target", "reason"),
     [
-        "127.0.0.1\x00.example.com",  # NUL byte: inet_aton raises ValueError
-        "a" * 300,  # not a literal, not internal
+        # ``urlsplit`` accepts a space in the host, so the request line would be
+        # forwarded with a whitespace-separated authority — two parsers can read
+        # that differently. Refuse rather than guess.
+        ("http://exa mple.com/", "absolute"),
+        ("exa mple.com:443", "CONNECT"),
     ],
 )
-def test_an_unparseable_host_is_not_a_crash(host):
+def test_a_host_with_whitespace_is_refused(target, reason):
+    from uwp.proxybridge import _parse_plain_target
+
+    parse = _parse_plain_target if target.startswith("http") else _parse_target
+    with pytest.raises(ProxyError):
+        parse(target)
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        # glibc's resolver stops at the NUL and returns the host before it:
+        # `getaddrinfo("127.0.0.1\0.example.com")` is 127.0.0.1. Swallowing the
+        # ValueError and calling the host "not a literal" made the guard a way
+        # to reach loopback and cloud metadata through the paid proxy.
+        "127.0.0.1\x00.example.com:80",
+        "169.254.169.254\x00:80",
+        "localhost\x00.example.com:80",
+    ],
+)
+def test_a_null_byte_in_the_host_is_refused(target):
+    # Caught before the address check: a NUL is a control character, so the
+    # host is invalid whatever it resolves to.
+    with pytest.raises(ProxyError, match="control characters"):
+        _parse_target(target)
+
+
+@pytest.mark.parametrize(
+    "host",
+    ["127.0.0.1\x00.evil", "169.254.169.254\x00", "localhost\x00.example.com"],
+)
+def test_the_guard_judges_the_prefix_before_a_null_byte(host):
+    """Defence in depth: the host check truncates, it does not give up.
+
+    `_parse_target` already refuses control characters, so this is the second
+    layer — the one that matters if a future caller reaches `_is_internal_host`
+    directly, which is what "unparseable, therefore public" used to mean.
+    """
     from uwp.proxybridge import _is_internal_host
 
-    assert _is_internal_host(host) is False
+    assert _is_internal_host(host) is True
+
+
+def test_a_long_label_is_not_a_literal_and_not_a_crash():
+    from uwp.proxybridge import _is_internal_host
+
+    # Not internal, but also not an encoding the guard should crash on:
+    # `_socks5_address` raises ProxyError for a label over 63 bytes.
+    assert _is_internal_host("a" * 300) is False
