@@ -25,10 +25,14 @@ _MIGRATION_NAME = re.compile(r"^(\d+)_.*\.sql$")
 _CONNECT_RETRY_DELAY = 0.05
 _CONNECT_DEADLINE_SECONDS = 5.0
 
-# A migration takes milliseconds; the file lock only serialises two processes
-# that start together. Waiting longer than this means the holder is stuck, not
-# busy, and a silent hang is worse than a loud failure.
-_MIGRATION_LOCK_DEADLINE_SECONDS = 60.0
+# The file lock only serialises two processes that start together, and the
+# holder applies everything it finds. Most migrations take milliseconds, but
+# ``004_items_absent.sql`` builds an index over the whole history, and on a large
+# database on a slow bind mount that can take minutes — so the deadline is not
+# sized to the fast case. It exists to turn a *stuck* holder into one visible
+# error instead of a silent hang; the waiter that gives up exits and is restarted
+# by ``restart: unless-stopped``, and the next attempt finds the migration done.
+_MIGRATION_LOCK_DEADLINE_SECONDS = 900.0
 
 
 def _is_memory(path: Path | str) -> bool:
@@ -64,6 +68,9 @@ class Database:
         self.path = path
         self._conn: aiosqlite.Connection | None = None
         self._tx_lock = asyncio.Lock()
+        # Which task holds ``_tx_lock``; ``None`` when free. A plain bool would
+        # make a *waiting* task look like a nested caller and refuse it.
+        self._tx_owner: asyncio.Task[Any] | None = None
 
     @classmethod
     async def in_memory(cls) -> Database:
@@ -184,15 +191,30 @@ class Database:
 
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[None]:
-        """Run the enclosed statements atomically (``BEGIN IMMEDIATE`` ... ``COMMIT``)."""
+        """Run the enclosed statements atomically (``BEGIN IMMEDIATE`` ... ``COMMIT``).
+
+        Not reentrant *from the same task*: nesting it inside itself would wait on
+        ``_tx_lock``, which the outer call already holds, forever (measured: a
+        nested ``seed()`` never returned). A second task is different — it is
+        supposed to wait for its turn, so only the owner is refused.
+        """
+        current = asyncio.current_task()
+        if self._tx_owner is current:
+            raise RuntimeError("transaction() is already active in this task")
         async with self._tx_lock:
-            await self.conn.execute("BEGIN IMMEDIATE")
+            # Set inside the lock: the waiter must not claim ownership before
+            # the previous holder releases it.
+            self._tx_owner = current
             try:
-                yield
-            except BaseException:
-                await self.conn.execute("ROLLBACK")
-                raise
-            await self.conn.execute("COMMIT")
+                await self.conn.execute("BEGIN IMMEDIATE")
+                try:
+                    yield
+                except BaseException:
+                    await self.conn.execute("ROLLBACK")
+                    raise
+                await self.conn.execute("COMMIT")
+            finally:
+                self._tx_owner = None
 
     @asynccontextmanager
     async def _migration_lock(self) -> AsyncIterator[None]:
@@ -219,6 +241,10 @@ class Database:
         _chmod_private(lock_path)
         loop = asyncio.get_running_loop()
         deadline = loop.time() + _MIGRATION_LOCK_DEADLINE_SECONDS
+        # A large `items` table makes `004_items_absent.sql` take minutes on a
+        # slow bind mount, and a silent 15-minute wait looks like a hung start.
+        # Say it once, at a point where the operator is still watching the log.
+        warned = False
         try:
             while True:
                 try:
@@ -231,6 +257,15 @@ class Database:
                     # that died holding it has its lock released by the kernel.
                     # Only a live-but-stuck holder reaches the deadline, and it
                     # must not look like a healthy startup.
+                    waited = _MIGRATION_LOCK_DEADLINE_SECONDS - (deadline - loop.time())
+                    if waited >= 10 and not warned:
+                        warned = True
+                        log.warning(
+                            "waiting for %s to finish migrating %s (%.0fs so far)",
+                            lock_path,
+                            self.path,
+                            waited,
+                        )
                     if loop.time() >= deadline:
                         raise RuntimeError(
                             f"another process is still migrating {self.path}; "
