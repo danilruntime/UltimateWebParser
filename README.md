@@ -11,7 +11,8 @@ Calc without cleaning up first.
 
 ## Quick start
 
-Docker with Compose v2 is the only requirement.
+Docker with Compose v2.24 or newer is the only requirement — the compose
+files use `env_file: required:`, which older releases reject.
 
 ```bash
 git clone https://github.com/danilruntime/UltimateWebParser && cd UltimateWebParser

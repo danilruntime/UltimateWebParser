@@ -11,7 +11,8 @@ UltimateWebParser собирает данные с сайтов по распи�
 
 ## Быстрый старт
 
-Нужен только Docker с Compose v2.
+Нужен только Docker с Compose v2.24 или новее — compose-файлы используют
+`env_file: required:`, и более старые выпуски его отвергают.
 
 ```bash
 git clone https://github.com/danilruntime/UltimateWebParser && cd UltimateWebParser
