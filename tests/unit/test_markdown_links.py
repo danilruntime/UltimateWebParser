@@ -1,7 +1,8 @@
 """Documentation links must resolve, but a quoted example is not a link.
 
-CI was red on `main` from v0.1b3: the link step scanned every ``](...)`` in
-every tracked markdown file, and the SoundCloud plan quotes a README template
+CI was red on `main` from 2026-11-22 (commit ``b41656d``; v0.1b3 was clean):
+the link step scanned every ``](...)`` in every tracked markdown file, and the
+SoundCloud plan quotes a README template
 inside a ``` fence. The template's ``](README.ru.md)`` was read relative to
 ``docs/superpowers/plans/`` and reported broken, so every push after that failed
 a check that had nothing to do with the change.
@@ -124,3 +125,32 @@ def test_ci_runs_the_script_and_not_an_inline_copy():
 
     assert "python scripts/check_markdown_links.py" in workflow
     assert "rglob(\"*.md\")" not in workflow
+
+
+def test_the_check_runs_on_an_unpacked_tarball_without_git(tmp_path):
+    """A release tarball has no `.git`, and the check is documented as runnable.
+
+    Measured: `git ls-files` inside a `git archive` export exits 128, so
+    `check=True` raised `CalledProcessError` and a reader who unpacked the
+    release could not run the command the docstring shows.
+    """
+    import shutil
+
+    tree = tmp_path / "release"
+    tree.mkdir()
+    (tree / "README.md").write_text(
+        "See [the disclaimer](DISCLAIMER.md).\n", encoding="utf-8"
+    )
+    (tree / "DISCLAIMER.md").write_text("Terms.\n", encoding="utf-8")
+    (tree / "scripts").mkdir()
+    shutil.copy(SCRIPT, tree / "scripts" / "check_markdown_links.py")
+
+    result = subprocess.run(
+        [sys.executable, str(tree / "scripts" / "check_markdown_links.py")],
+        cwd=tree,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr

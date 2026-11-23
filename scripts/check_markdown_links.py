@@ -2,11 +2,13 @@
 """Fail on a broken local markdown link, ignoring fenced and inline code.
 
 The CI check this replaces scanned every ``](...)`` in every tracked ``.md`` and
-was red on ``main`` from v0.1b3 on: a design plan quotes a README template inside
-a ``` fence, and the regex read the template's ``](README.ru.md)`` as a link
-relative to ``docs/superpowers/plans/``. A quoted example is not a link, so the
-scan has to skip code before it decides. Markdown links are what a reader clicks;
-that is what this checks.
+went red on ``main`` from 2026-11-22 on (commit ``b41656d``, not at v0.1b3): a
+design plan quotes a README template inside a ``` fence, and the regex read the
+template's ``](README.ru.md)`` as a link relative to
+``docs/superpowers/plans/``. Measured: the old snippet finds 0 broken links on
+``v0.1b3`` and 6 on ``b41656d``. A quoted example is not a link, so the scan has
+to skip code before it decides. Markdown links are what a reader clicks; that is
+what this checks.
 
 Run from the repository root:
 
@@ -73,13 +75,22 @@ def broken_links(path: Path, root: Path) -> list[str]:
 
 
 def tracked_markdown(root: Path) -> list[Path]:
-    names = subprocess.run(
-        ["git", "ls-files", "*.md"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.split()
+    """Every markdown file git knows about, or every file if this is not a checkout.
+
+    A source tarball has no `.git`, and CI is not the only caller: a reader who
+    unpacks the release should be able to run the same check. The fallback walks
+    the tree and skips the same generated directories the tracked path ignores.
+    """
+    try:
+        names = subprocess.run(
+            ["git", "ls-files", "*.md"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split()
+    except (OSError, subprocess.CalledProcessError):
+        names = [str(path.relative_to(root)) for path in sorted(root.rglob("*.md"))]
     return [root / name for name in names]
 
 

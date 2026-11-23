@@ -90,7 +90,8 @@ jobs:
       # relative link, so check that every tracked markdown file's local links
       # resolve. The scan lives in a script because a quoted README template
       # inside a ``` fence is not a link — reading it as one reddened `main`
-      # from v0.1b3 (`docs/superpowers/plans/2026-11-22-…`). Fenced and inline
+      # from 2026-11-22 (`docs/superpowers/plans/2026-11-22-…`, commit b41656d;
+      # `v0.1b3` was clean). Fenced and inline
       # code are stripped before the check, and `tests/unit/test_markdown_links.py`
       # pins both directions so a future edit cannot turn it into a no-op.
       - name: Markdown links resolve
