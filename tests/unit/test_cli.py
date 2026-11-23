@@ -809,3 +809,28 @@ def test_browser_install_refuses_an_archive_with_the_wrong_sha(capsys, monkeypat
 
     assert code == 1
     assert not (dest / "chrome").exists()
+
+
+def test_doctor_refuses_a_key_that_is_an_unexpanded_substitution(
+    capsys, monkeypatch, tmp_path
+):
+    """`.env` is not a shell script, so the documented line became the key.
+
+    Measured: `UWP_SECRET_KEY=$(openssl rand -hex 32)` is 23 characters, passes
+    the length check, and `doctor` reported a green tick. Every proxy and VNC
+    password was then encrypted with a published string.
+    """
+    monkeypatch.setenv("UWP_DATA_DIR", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("UWP_SECRET_KEY", "$(openssl rand -hex 32)")
+    monkeypatch.setenv("UWP_BOT_TOKEN", "123:abc")
+    monkeypatch.setenv("UWP_ADMIN_IDS", "1")
+    monkeypatch.setenv("UWP_BROWSER_PATH", "/bin/true")
+    monkeypatch.delenv("UWP_TELEGRAM_PROXY", raising=False)
+
+    assert main(["doctor", "--offline"]) == 1
+
+    out = capsys.readouterr().out
+    # The remedy may name the command, but the stored value must not be echoed.
+    assert "$(openssl rand -hex 32)" not in out
+    assert "не подставлен" in out or "не ключ" in out

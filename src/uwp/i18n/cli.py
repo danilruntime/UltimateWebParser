@@ -34,6 +34,10 @@ CATALOG: dict[Lang, dict[str, str]] = {
         "cli.doctor.secret_short": (
             "всего {length} символов: нужен длинный случайный ключ (32+ символа)"
         ),
+        "cli.doctor.secret_substitution": (
+            "задан текст «$(...)», а не ключ: .env читается как обычный файл, "
+            "подстановку никто не выполнит — вставьте вывод openssl rand -hex 32"
+        ),
         "cli.doctor.db": "база данных",
         "cli.doctor.all_ok": "Всё в порядке.",
         # --- telegram proxy probe ----------------------------------------
@@ -187,6 +191,10 @@ CATALOG: dict[Lang, dict[str, str]] = {
         ),
         "cli.doctor.secret_short": (
             "{length} characters: a long random key is required (32+ characters)"
+        ),
+        "cli.doctor.secret_substitution": (
+            "the value is the text “$(...)”, not a key: .env is read as a plain "
+            "file, nothing expands it — paste the output of openssl rand -hex 32"
         ),
         "cli.doctor.db": "database",
         "cli.doctor.all_ok": "Everything is fine.",
